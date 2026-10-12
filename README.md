@@ -5,7 +5,7 @@ It talks to the Homey directly over the local network with an API key, builds it
 
 ## Install
 
-Every push builds a debug APK. Open the latest run under **Actions → Build**, download `homey-dashboard-debug`, and sideload the APK on the tablet.
+Every push builds a debug APK. The newest one is always at **Releases → Latest test build** (`releases/download/dev/homey-dashboard.apk`); sideload it on the tablet.
 
 To build locally you need the Android SDK (API 35) and JDK 17:
 
