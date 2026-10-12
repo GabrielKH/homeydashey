@@ -1,6 +1,7 @@
 package app.homeydash.homey
 
 import kotlinx.coroutines.test.TestScope
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -46,6 +47,16 @@ class LogicTest {
         val all = DashboardLayout.sections(zones, devices).flatMap { it.devices }.map { it.id }
         assertFalse("d-hidden" in all)
         assertTrue(devices.getValue("d-hidden").hidden)
+        val alsoHidden = DashboardLayout.sections(zones, devices, hidden = setOf("d-plug")).flatMap { it.devices }.map { it.id }
+        assertFalse("d-plug" in alsoHidden)
+    }
+
+    @Test fun `user properties can hide devices`() {
+        val user: JsonObject = HomeyJson.decodeFromString(
+            """{"name": "Gabriel", "properties": {"hiddenDevices": ["d-plug", 3], "deviceHidden": {"d-lamp": true, "d-temp": false}, "favoriteDevices": ["d-temp"]}}""",
+        )
+        assertEquals(setOf("d-plug", "d-lamp"), hiddenDeviceIds(user))
+        assertEquals(emptySet<String>(), hiddenDeviceIds(JsonObject(emptyMap())))
     }
 
     @Test fun `room summaries count lights and read climate`() {

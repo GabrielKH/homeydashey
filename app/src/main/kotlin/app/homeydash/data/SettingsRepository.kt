@@ -3,6 +3,7 @@ package app.homeydash.data
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.homeydash.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
@@ -44,9 +45,20 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[THEME] = mode.name }
     }
 
+    /** Devices hidden from the dashboard on this tablet only. */
+    val hiddenDevices: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN].orEmpty() }
+
+    suspend fun setHidden(deviceId: String, hidden: Boolean) {
+        context.dataStore.edit {
+            val current = it[HIDDEN].orEmpty()
+            it[HIDDEN] = if (hidden) current + deviceId else current - deviceId
+        }
+    }
+
     private companion object {
         val ADDRESS = stringPreferencesKey("address")
         val API_KEY = stringPreferencesKey("api_key")
         val THEME = stringPreferencesKey("theme")
+        val HIDDEN = stringSetPreferencesKey("hidden_devices")
     }
 }

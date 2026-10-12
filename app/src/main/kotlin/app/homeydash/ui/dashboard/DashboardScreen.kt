@@ -108,6 +108,8 @@ fun DashboardScreen(
     info: HomeyInfo,
     themeMode: ThemeMode,
     onThemeMode: (ThemeMode) -> Unit,
+    hiddenOnTablet: Set<String>,
+    onSetHidden: (String, Boolean) -> Unit,
     onForget: () -> Unit,
 ) {
     val snapshot by store.snapshot.collectAsStateWithLifecycle()
@@ -115,14 +117,16 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
     val actions = remember(store) { DashboardActions(store, scope) }
 
-    val sections = remember(snapshot.zones, snapshot.devices) { DashboardLayout.sections(snapshot.zones, snapshot.devices) }
+    val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
+    val sections = remember(snapshot.zones, snapshot.devices, hidden) { DashboardLayout.sections(snapshot.zones, snapshot.devices, hidden) }
     val rooms = remember(sections) { DashboardLayout.rooms(sections) }
-    val players = remember(snapshot.devices) { DashboardLayout.mediaPlayers(snapshot.devices) }
+    val players = remember(snapshot.devices, hidden) { DashboardLayout.mediaPlayers(snapshot.devices, hidden) }
     val moods = remember(snapshot.moods) { DashboardLayout.moods(snapshot.moods) }
     val homeName = remember(snapshot.zones) { snapshot.zones.values.firstOrNull { it.parent == null }?.name ?: "Home" }
 
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showDevices by rememberSaveable { mutableStateOf(false) }
 
     Row(
         Modifier
@@ -188,8 +192,19 @@ fun DashboardScreen(
             info = info,
             themeMode = themeMode,
             onThemeMode = onThemeMode,
+            onChooseDevices = { showSettings = false; showDevices = true },
             onForget = { showSettings = false; onForget() },
             onDismiss = { showSettings = false },
+        )
+    }
+    if (showDevices) {
+        DevicePickerDialog(
+            zones = snapshot.zones,
+            devices = snapshot.devices,
+            hiddenByUser = snapshot.hiddenByUser,
+            hiddenOnTablet = hiddenOnTablet,
+            onSetHidden = onSetHidden,
+            onDismiss = { showDevices = false },
         )
     }
 }

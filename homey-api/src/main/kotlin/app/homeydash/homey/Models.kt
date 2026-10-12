@@ -2,8 +2,10 @@ package app.homeydash.homey
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -111,3 +113,23 @@ data class EnumValue(
     val id: String,
     val title: String? = null,
 )
+
+/**
+ * Device ids the Homey user has hidden in the Homey app's own views, from user
+ * properties such as `hiddenDevices`. The format isn't documented, so this accepts
+ * any property whose name mentions "hidden" and holds a list of ids or an
+ * id-to-true map.
+ */
+fun hiddenDeviceIds(user: JsonObject): Set<String> {
+    val properties = user["properties"] as? JsonObject ?: return emptySet()
+    return properties.entries
+        .filter { (key, _) -> "hidden" in key.lowercase() && "device" in key.lowercase() || key.equals("hidden", ignoreCase = true) }
+        .flatMap { (_, value) ->
+            when (value) {
+                is JsonArray -> value.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                is JsonObject -> value.filterValues { (it as? JsonPrimitive)?.booleanOrNull != false }.keys
+                else -> emptyList()
+            }
+        }
+        .toSet()
+}

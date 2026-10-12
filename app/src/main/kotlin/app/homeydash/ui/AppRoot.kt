@@ -35,6 +35,7 @@ import app.homeydash.ui.theme.GlassTheme
 fun AppRoot(container: AppContainer) {
     val session by container.session.collectAsStateWithLifecycle()
     val themeMode by container.themeMode.collectAsStateWithLifecycle()
+    val hiddenOnTablet by container.hiddenDevices.collectAsStateWithLifecycle()
 
     Box(Modifier.fillMaxSize()) {
         Wallpaper()
@@ -47,6 +48,8 @@ fun AppRoot(container: AppContainer) {
                 info = state.info,
                 themeMode = themeMode,
                 onThemeMode = container::setThemeMode,
+                hiddenOnTablet = hiddenOnTablet,
+                onSetHidden = container::setHidden,
                 onForget = container::forget,
             )
         }

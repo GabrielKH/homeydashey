@@ -47,6 +47,12 @@ class AppContainer(context: Context) {
         scope.launch { settings.setThemeMode(mode) }
     }
 
+    val hiddenDevices: StateFlow<Set<String>> = settings.hiddenDevices.stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    fun setHidden(deviceId: String, hidden: Boolean) {
+        scope.launch { settings.setHidden(deviceId, hidden) }
+    }
+
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
 

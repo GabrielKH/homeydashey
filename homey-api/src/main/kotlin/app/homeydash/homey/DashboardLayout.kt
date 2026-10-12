@@ -61,8 +61,12 @@ object DashboardLayout {
         CardKind.Button, CardKind.Other -> DeviceGroup.Other
     }
 
-    /** Devices the dashboard shows: everything except those hidden in the Homey app. */
-    fun visible(devices: Map<String, Device>): Map<String, Device> = devices.filterValues { !it.hidden }
+    /**
+     * Devices the dashboard shows: everything except those hidden in the Homey app
+     * and the extra ids in [hidden] (hidden per user in Homey, or on the tablet).
+     */
+    fun visible(devices: Map<String, Device>, hidden: Set<String> = emptySet()): Map<String, Device> =
+        devices.filterValues { !it.hidden && it.id !in hidden }
 
     /** A light, or a socket the user marked as a light, that can be switched. */
     fun isSwitchableLight(device: Device): Boolean =
@@ -71,10 +75,10 @@ object DashboardLayout {
 
     /**
      * Zones in tree order (parents before children, siblings by name), each with
-     * its visible devices sorted by name. Zones without visible devices are left out.
+     * its [visible] devices sorted by name. Zones without visible devices are left out.
      */
-    fun sections(zones: Map<String, Zone>, devices: Map<String, Device>): List<ZoneSection> {
-        val shown = visible(devices)
+    fun sections(zones: Map<String, Zone>, devices: Map<String, Device>, hidden: Set<String> = emptySet()): List<ZoneSection> {
+        val shown = visible(devices, hidden)
         val byZone = shown.values.groupBy { it.zone }
         val result = mutableListOf<ZoneSection>()
 
@@ -130,8 +134,8 @@ object DashboardLayout {
     }
 
     /** Media players, the playing ones first. */
-    fun mediaPlayers(devices: Map<String, Device>): List<Device> =
-        visible(devices).values
+    fun mediaPlayers(devices: Map<String, Device>, hidden: Set<String> = emptySet()): List<Device> =
+        visible(devices, hidden).values
             .filter { cardKind(it) == CardKind.Media }
             .sortedWith(compareByDescending<Device> { it.capability("speaker_playing")?.booleanValue == true }.thenBy { it.name.lowercase() })
 

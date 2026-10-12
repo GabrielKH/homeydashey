@@ -15,6 +15,8 @@ data class HomeySnapshot(
     val devices: Map<String, Device> = emptyMap(),
     /** Empty when there are none or the API key may not read moods. */
     val moods: Map<String, Mood> = emptyMap(),
+    /** Devices hidden in the Homey app's user settings (on top of each device's own `hidden` flag). */
+    val hiddenByUser: Set<String> = emptySet(),
     val loaded: Boolean = false,
     val error: String? = null,
 )
@@ -57,8 +59,9 @@ class HomeyStore(
             val devices = client.devices()
             // Moods need their own permission on the API key; the dashboard works without them.
             val moods = runCatching { client.moods() }.getOrDefault(emptyMap())
+            val hiddenByUser = runCatching { hiddenDeviceIds(client.userMe()) }.getOrDefault(emptySet())
             devices.keys.forEach { realtime.subscribe(HomeyRealtime.deviceUri(it)) }
-            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, moods = moods, loaded = true)
+            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, moods = moods, hiddenByUser = hiddenByUser, loaded = true)
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = e.message ?: e.toString()) }
         }

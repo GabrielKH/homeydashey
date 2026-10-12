@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -44,6 +45,9 @@ class HomeyClient(
     suspend fun devices(): Map<String, Device> = get("api/manager/devices/device")
 
     suspend fun device(id: String): Device = get("api/manager/devices/device/$id")
+
+    /** The API key's user, whose `properties` hold per-user app settings. */
+    suspend fun userMe(): JsonObject = get("api/manager/users/user/me")
 
     suspend fun moods(): Map<String, Mood> = get("api/manager/moods/mood")
 

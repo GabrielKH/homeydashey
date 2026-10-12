@@ -29,6 +29,7 @@ fun SettingsDialog(
     info: HomeyInfo,
     themeMode: ThemeMode,
     onThemeMode: (ThemeMode) -> Unit,
+    onChooseDevices: () -> Unit,
     onForget: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -80,10 +81,22 @@ fun SettingsDialog(
                 color = g.fg,
             )
             Text(
-                "Devices you hide in the Homey app stay off this dashboard.",
+                "Devices you hide in the Homey app stay off this dashboard. You can also hide devices on this tablet only.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = g.muted,
             )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(onChooseDevices)
+                    .glass(PillShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SymIcon(Sym.visibilityOff, size = 20.dp)
+                Text("Choose devices to show", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
                     Modifier
