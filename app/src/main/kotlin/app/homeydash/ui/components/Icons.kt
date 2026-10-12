@@ -143,6 +143,7 @@ object Sym {
     const val power = "\ue63c"
     const val powerSettingsNew = "\ue8ac"
     const val refresh = "\ue5d5"
+    const val remove = "\ue15b"
     const val restaurant = "\ue56c"
     const val rollerShades = "\uec12"
     const val router = "\ue328"
