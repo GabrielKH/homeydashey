@@ -26,8 +26,18 @@ class HomeyClient(
 ) {
     val baseUrl: HttpUrl = baseUrl.trimEnd('/').toHttpUrl()
 
-    /** Unauthenticated; also confirms the address really is a Homey. */
-    suspend fun systemInfo(): HomeyInfo = get("api/manager/system/local", authenticated = false)
+    /**
+     * Unauthenticated; also confirms the address really is a Homey. Like the official
+     * homey-api library, this reads the Homey id from the `X-Homey-ID` header of the ping.
+     */
+    suspend fun systemInfo(): HomeyInfo = withContext(Dispatchers.IO) {
+        val request = request("api/manager/system/ping", authenticated = false).get().build()
+        http.newCall(request).execute().use { response ->
+            val id = response.header("X-Homey-ID")
+                ?: throw HomeyConnectException("${baseUrl.host} answered, but it doesn't look like a Homey.")
+            HomeyInfo(homeyId = id, homeyVersion = response.header("X-Homey-Version"))
+        }
+    }
 
     suspend fun zones(): Map<String, Zone> = get("api/manager/zones/zone")
 

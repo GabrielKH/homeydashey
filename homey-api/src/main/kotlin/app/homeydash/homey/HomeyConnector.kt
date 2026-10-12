@@ -25,6 +25,8 @@ class HomeyConnector(private val http: OkHttpClient) {
             val client = HomeyClient(url, token.trim(), http)
             val info = try {
                 client.systemInfo()
+            } catch (e: HomeyConnectException) {
+                throw e
             } catch (e: Exception) {
                 lastError = e
                 continue
@@ -39,6 +41,10 @@ class HomeyConnector(private val http: OkHttpClient) {
             }
             return HomeySession(client, info)
         }
-        throw HomeyConnectException("Couldn't reach a Homey at ${candidates.first()}.", lastError)
+        val reason = lastError?.let { it.message ?: it.javaClass.simpleName }?.let { " ($it)" }.orEmpty()
+        throw HomeyConnectException(
+            "Couldn't reach a Homey at ${candidates.first()}$reason. Check the tablet is on the same Wi-Fi as the Homey.",
+            lastError,
+        )
     }
 }

@@ -37,6 +37,9 @@ sealed interface HomeyEvent {
  * Homey's realtime API over Socket.IO, as specified at
  * https://api.developer.homey.app/http-and-socket.io/socket.io-specification.md
  *
+ * Homey runs a Socket.IO 2 server (the official homey-api library uses socket.io-client 2.x),
+ * so this uses the 1.0.x Java client, which speaks that protocol.
+ *
  * 1. Connect to the base URL (websocket transport only).
  * 2. Emit `handshakeClient {token, homeyId}`; the answer names the namespace (usually `/api`).
  * 3. In that namespace, emit `subscribe <uri>` and listen on the event named after the uri.
@@ -61,12 +64,12 @@ class HomeyRealtime(
 
     fun connect() {
         if (root != null) return
-        val options = IO.Options.builder()
-            .setTransports(arrayOf(WebSocket.NAME))
-            .setReconnection(true)
-            .setReconnectionDelay(1_000)
-            .setReconnectionDelayMax(10_000)
-            .build()
+        val options = IO.Options().apply {
+            transports = arrayOf(WebSocket.NAME)
+            reconnection = true
+            reconnectionDelay = 1_000
+            reconnectionDelayMax = 10_000
+        }
         options.callFactory = http
         options.webSocketFactory = http
 

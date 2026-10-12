@@ -8,8 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
-/** Answer of the unauthenticated `GET /api/manager/system/local` endpoint. */
-@Serializable
+/** Identity of the Homey, from the headers of `GET /api/manager/system/ping`. */
 data class HomeyInfo(
     val homeyId: String,
     val homeyVersion: String? = null,

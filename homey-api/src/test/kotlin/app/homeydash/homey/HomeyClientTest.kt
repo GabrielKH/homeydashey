@@ -38,10 +38,20 @@ class HomeyClientTest {
         assertNull(devices.getValue("d-temp").capability("measure_humidity")?.numberValue)
     }
 
-    @Test fun `system info is fetched without the key`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"homeyId":"abc","homeyVersion":"12.4.0","homeyModelId":"homey5q"}"""))
-        assertEquals("abc", client.systemInfo().homeyId)
-        assertNull(server.takeRequest().getHeader("Authorization"))
+    @Test fun `system info comes from the ping headers without the key`() = runTest {
+        server.enqueue(MockResponse().setBody("{}").addHeader("X-Homey-ID", "abc").addHeader("X-Homey-Version", "12.4.0"))
+        val info = client.systemInfo()
+        assertEquals("abc", info.homeyId)
+        assertEquals("12.4.0", info.homeyVersion)
+        val request = server.takeRequest()
+        assertEquals("/api/manager/system/ping", request.path)
+        assertNull(request.getHeader("Authorization"))
+    }
+
+    @Test fun `a server that is not a Homey is rejected`() = runTest {
+        server.enqueue(MockResponse().setBody("hello"))
+        val error = runCatching { HomeyConnector(OkHttpClient()).connect(server.url("/").toString(), "key") }.exceptionOrNull()
+        assertTrue(error is HomeyConnectException && "doesn't look like a Homey" in error.message!!)
     }
 
     @Test fun `sets a capability with a PUT`() = runTest {
@@ -61,7 +71,7 @@ class HomeyClientTest {
     }
 
     @Test fun `connector rejects a bad key with a clear message`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"homeyId":"abc"}"""))
+        server.enqueue(MockResponse().addHeader("X-Homey-ID", "abc"))
         server.enqueue(MockResponse().setResponseCode(401))
         val error = runCatching { HomeyConnector(OkHttpClient()).connect(server.url("/").toString(), "nope") }.exceptionOrNull()
         assertTrue(error is HomeyConnectException && "API key" in error.message!!)
