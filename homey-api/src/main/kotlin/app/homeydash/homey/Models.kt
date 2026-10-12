@@ -39,6 +39,9 @@ data class Device(
     val ready: Boolean = true,
     val uiIndicator: String? = null,
     val iconObj: IconObj? = null,
+    /** Hidden in the Homey app (device settings → Hide device); the dashboard leaves these out. */
+    val hidden: Boolean = false,
+    val images: List<DeviceImage> = emptyList(),
 ) {
     /** Class used for picking a card: a socket switching a lamp reports `virtualClass = light`. */
     val effectiveClass: String get() = virtualClass ?: deviceClass
@@ -51,6 +54,30 @@ data class Device(
         return copy(capabilitiesObj = capabilitiesObj + (capabilityId to current.copy(value = value)))
     }
 }
+
+/** An image a device publishes, such as a speaker's album art. */
+@Serializable
+data class DeviceImage(
+    val id: String,
+    val imageObj: ImageObj? = null,
+)
+
+@Serializable
+data class ImageObj(
+    val id: String? = null,
+    /** Path on the Homey, e.g. `/api/image/<id>`. */
+    val url: String? = null,
+    val lastUpdated: Long? = null,
+)
+
+/** A saved scene for a zone ("Moods" in the Homey app). */
+@Serializable
+data class Mood(
+    val id: String,
+    val name: String,
+    val zone: String? = null,
+    val preset: String? = null,
+)
 
 @Serializable
 data class IconObj(

@@ -37,7 +37,19 @@ object Fixtures {
               "measure_humidity": {"id": "measure_humidity", "type": "number", "value": null, "units": "%"}
             }
           },
-          "d-lost": {"id": "d-lost", "name": "Lost device", "zone": "z-gone", "class": "other", "capabilities": []}
+          "d-lost": {"id": "d-lost", "name": "Lost device", "zone": "z-gone", "class": "other", "capabilities": []},
+          "d-hidden": {
+            "id": "d-hidden", "name": "Hidden relay", "zone": "z-kitchen", "class": "light", "hidden": true,
+            "capabilities": ["onoff"],
+            "capabilitiesObj": {"onoff": {"id": "onoff", "type": "boolean", "value": true, "setable": true}}
+          }
+        }
+    """.trimIndent()
+
+    val moods = """
+        {
+          "m-cook": {"id": "m-cook", "name": "Cooking", "zone": "z-kitchen", "preset": null, "devices": {}},
+          "m-movie": {"id": "m-movie", "name": "Movie", "zone": "z-living", "devices": {"d-lamp": {"state": {"onoff": false}}}}
         }
     """.trimIndent()
 }

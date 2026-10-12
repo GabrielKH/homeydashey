@@ -1,11 +1,16 @@
 package app.homeydash.ui.dashboard
 
+import android.graphics.BitmapFactory
+import android.util.LruCache
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,92 +21,159 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.homeydash.homey.ConnectionState
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.HomeyInfo
 import app.homeydash.homey.HomeyStore
-import app.homeydash.homey.ZoneSection
-import app.homeydash.ui.theme.DashboardTheme
+import app.homeydash.homey.Mood
+import app.homeydash.homey.RoomSummary
+import app.homeydash.ui.components.PillShape
+import app.homeydash.ui.components.RoundButton
+import app.homeydash.ui.components.Sym
+import app.homeydash.ui.components.SymIcon
+import app.homeydash.ui.components.glass
+import app.homeydash.ui.components.pressable
+import app.homeydash.ui.components.zoneIcon
+import app.homeydash.ui.theme.GlassTheme
+import app.homeydash.ui.theme.ThemeMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 
-/** Callback cards use to change a device: (deviceId, capabilityId, value). */
-typealias SetCapability = (String, String, JsonElement) -> Unit
+/** Everything a card can do to the Homey. One instance per dashboard. */
+@Stable
+class DashboardActions(private val store: HomeyStore, private val scope: CoroutineScope) {
+    /** The mood tapped last; Homey doesn't report an active mood, so the dashboard remembers it. */
+    var lastMood by mutableStateOf<String?>(null)
+        private set
+
+    private val images = LruCache<String, ImageBitmap>(12)
+
+    fun set(deviceId: String, capabilityId: String, value: JsonElement) {
+        scope.launch { store.setCapability(deviceId, capabilityId, value) }
+    }
+
+    fun setAll(deviceIds: List<String>, capabilityId: String, value: JsonElement) {
+        scope.launch { store.setAll(deviceIds, capabilityId, value) }
+    }
+
+    fun setMood(mood: Mood) {
+        lastMood = mood.id
+        scope.launch { store.setMood(mood) }
+    }
+
+    /** Album art and other Homey images, decoded off the main thread and kept for a few tracks. */
+    suspend fun loadImage(path: String, cacheKey: String): ImageBitmap? {
+        images.get(cacheKey)?.let { return it }
+        return runCatching {
+            val bytes = store.image(path)
+            withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+        }.getOrNull()?.also { images.put(cacheKey, it) }
+    }
+}
+
+private const val OVERVIEW = "overview"
+private const val MOODS = "moods"
+private const val MEDIA = "media"
+private const val ROOM = "room:"
 
 @Composable
-fun DashboardScreen(store: HomeyStore, info: HomeyInfo, onForget: () -> Unit) {
+fun DashboardScreen(
+    store: HomeyStore,
+    info: HomeyInfo,
+    themeMode: ThemeMode,
+    onThemeMode: (ThemeMode) -> Unit,
+    onForget: () -> Unit,
+) {
     val snapshot by store.snapshot.collectAsStateWithLifecycle()
     val connection by store.connection.collectAsStateWithLifecycle()
-    val sections = remember(snapshot.zones, snapshot.devices) {
-        DashboardLayout.sections(snapshot.zones, snapshot.devices)
-    }
     val scope = rememberCoroutineScope()
-    val setCapability: SetCapability = remember(store) {
-        { deviceId, capabilityId, value -> scope.launch { store.setCapability(deviceId, capabilityId, value) } }
-    }
-    val gridState = rememberLazyGridState()
-    // Index of each zone's header in the grid, for jumping from the rail.
-    val headerIndex = remember(sections) {
-        var index = 0
-        sections.associate { section -> (section.zone.id to index).also { index += 1 + section.devices.size } }
-    }
+    val actions = remember(store) { DashboardActions(store, scope) }
+
+    val sections = remember(snapshot.zones, snapshot.devices) { DashboardLayout.sections(snapshot.zones, snapshot.devices) }
+    val rooms = remember(sections) { DashboardLayout.rooms(sections) }
+    val players = remember(snapshot.devices) { DashboardLayout.mediaPlayers(snapshot.devices) }
+    val moods = remember(snapshot.moods) { DashboardLayout.moods(snapshot.moods) }
+    val homeName = remember(snapshot.zones) { snapshot.zones.values.firstOrNull { it.parent == null }?.name ?: "Home" }
+
+    var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
 
     Row(
         Modifier
             .fillMaxSize()
-            .safeDrawingPadding(),
+            .safeDrawingPadding()
+            .padding(20.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        ZoneRail(
-            title = info.homeyModelName ?: "Homey",
-            sections = sections,
+        Sidebar(
+            homeName = homeName,
             connection = connection,
-            onZone = { zoneId -> headerIndex[zoneId]?.let { scope.launch { gridState.animateScrollToItem(it) } } },
-            onForget = onForget,
+            rooms = rooms,
+            hasMoods = moods.isNotEmpty(),
+            hasMedia = players.isNotEmpty(),
+            destination = destination,
+            onNavigate = { destination = it },
+            onSettings = { showSettings = true },
         )
-        Box(Modifier.fillMaxSize()) {
-            when {
-                !snapshot.loaded && snapshot.error == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                else -> LazyVerticalGrid(
-                    state = gridState,
-                    columns = GridCells.Adaptive(minSize = 230.dp),
-                    contentPadding = PaddingValues(start = 8.dp, end = 24.dp, top = 24.dp, bottom = 96.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    sections.forEach { section ->
-                        item(key = "zone:${section.zone.id}", span = { GridItemSpan(maxLineSpan) }, contentType = "header") {
-                            Text(
-                                section.zone.name,
-                                style = MaterialTheme.typography.titleLarge,
-                                color = DashboardTheme.style.onCard,
-                                modifier = Modifier.padding(top = 12.dp, start = 4.dp),
-                            )
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            if (!snapshot.loaded) {
+                if (snapshot.error == null) {
+                    CircularProgressIndicator(Modifier.align(Alignment.Center), color = GlassTheme.colors.fg)
+                }
+            } else {
+                AnimatedContent(
+                    targetState = destination,
+                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                    label = "page",
+                ) { target ->
+                    when {
+                        target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
+                        target == MEDIA -> MediaScreen(players, snapshot.zones, actions)
+                        target.startsWith(ROOM) -> {
+                            val id = target.removePrefix(ROOM)
+                            val room = rooms.firstOrNull { it.zone.id == id }
+                            if (room == null) {
+                                // The room was deleted or emptied; go back home.
+                                LaunchedEffect(id) { destination = OVERVIEW }
+                            } else {
+                                RoomScreen(room, sections, snapshot.zones, snapshot.moods, actions)
+                            }
                         }
-                        items(section.devices, key = { it.id }, contentType = { DashboardLayout.cardKind(it) }) { device ->
-                            DeviceCard(device, setCapability)
-                        }
+                        else -> OverviewScreen(
+                            rooms = rooms,
+                            moods = moods,
+                            player = players.firstOrNull(),
+                            zones = snapshot.zones,
+                            connection = connection,
+                            actions = actions,
+                            onRoom = { destination = ROOM + it },
+                        )
                     }
                 }
             }
@@ -110,74 +182,132 @@ fun DashboardScreen(store: HomeyStore, info: HomeyInfo, onForget: () -> Unit) {
             }
         }
     }
+
+    if (showSettings) {
+        SettingsDialog(
+            info = info,
+            themeMode = themeMode,
+            onThemeMode = onThemeMode,
+            onForget = { showSettings = false; onForget() },
+            onDismiss = { showSettings = false },
+        )
+    }
 }
 
 @Composable
-private fun ZoneRail(
-    title: String,
-    sections: List<ZoneSection>,
+private fun Sidebar(
+    homeName: String,
     connection: ConnectionState,
-    onZone: (String) -> Unit,
-    onForget: () -> Unit,
+    rooms: List<RoomSummary>,
+    hasMoods: Boolean,
+    hasMedia: Boolean,
+    destination: String,
+    onNavigate: (String) -> Unit,
+    onSettings: () -> Unit,
 ) {
-    val style = DashboardTheme.style
+    val g = GlassTheme.colors
     Column(
         Modifier
-            .width(240.dp)
+            .width(232.dp)
             .fillMaxHeight()
-            .padding(start = 24.dp, top = 24.dp, bottom = 16.dp, end = 8.dp),
+            .glass()
+            .padding(horizontal = 12.dp, vertical = 18.dp),
     ) {
-        Text(title, style = MaterialTheme.typography.headlineMedium, color = style.onCard)
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)) {
-            val live = connection == ConnectionState.Connected
-            Box(
-                Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(if (live) style.online else style.offline),
-            )
-            Text(
-                when (connection) {
-                    ConnectionState.Connected -> "Live"
-                    ConnectionState.Connecting -> "Connecting…"
-                    ConnectionState.Disconnected -> "Reconnecting…"
-                },
-                color = style.onCardMuted,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(start = 8.dp),
-            )
+        Row(Modifier.padding(start = 10.dp, end = 10.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            SymIcon(Sym.home, filled = true, size = 28.dp)
+            Column(Modifier.padding(start = 10.dp)) {
+                Text(homeName, style = MaterialTheme.typography.titleLarge, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val live = connection == ConnectionState.Connected
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (live) g.ok else g.danger))
+                    Text(
+                        when (connection) {
+                            ConnectionState.Connected -> "Live"
+                            ConnectionState.Connecting -> "Connecting…"
+                            ConnectionState.Disconnected -> "Reconnecting…"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = g.muted,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
+            }
         }
+        NavItem(Sym.spaceDashboard, "Overview", destination == OVERVIEW) { onNavigate(OVERVIEW) }
+        if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS) { onNavigate(MOODS) }
+        if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA) { onNavigate(MEDIA) }
+        Text(
+            "ROOMS",
+            style = MaterialTheme.typography.labelMedium,
+            color = g.muted,
+            modifier = Modifier.padding(start = 12.dp, top = 18.dp, bottom = 6.dp),
+        )
         LazyColumn(Modifier.weight(1f)) {
-            items(sections, key = { it.zone.id }) { section ->
-                Text(
-                    section.zone.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = style.onCard,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onZone(section.zone.id) }
-                        .padding(start = 12.dp + 12.dp * (section.depth - 1).coerceAtLeast(0), top = 12.dp, bottom = 12.dp, end = 12.dp),
-                )
+            items(rooms, key = { it.zone.id }) { room ->
+                NavItem(
+                    icon = zoneIcon(room.zone),
+                    label = room.zone.name,
+                    selected = destination == ROOM + room.zone.id,
+                    indent = (room.depth - 1).coerceIn(0, 2),
+                    badge = room.lightsOn.takeIf { it > 0 }?.toString(),
+                ) { onNavigate(ROOM + room.zone.id) }
             }
         }
         Spacer(Modifier.size(8.dp))
-        TextButton(onClick = onForget) { Text("Change Homey") }
+        NavItem(Sym.settings, "Settings", selected = false, onClick = onSettings)
+    }
+}
+
+@Composable
+private fun NavItem(
+    icon: String,
+    label: String,
+    selected: Boolean,
+    indent: Int = 0,
+    badge: String? = null,
+    onClick: () -> Unit,
+) {
+    val g = GlassTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 14.dp * indent, bottom = 2.dp)
+            .pressable(onClick)
+            .then(if (selected) Modifier.glass(RoundedCornerShape(16.dp)) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SymIcon(icon, filled = selected, size = 23.dp, tint = if (selected) g.fg else g.muted)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = g.fg,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(start = 12.dp),
+        )
+        badge?.let {
+            Box(Modifier.background(g.onSoft, PillShape).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = g.fg)
+            }
+        }
     }
 }
 
 @Composable
 private fun ErrorBanner(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    val style = DashboardTheme.style
+    val g = GlassTheme.colors
     Row(
         modifier
-            .padding(24.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(style.cardColor)
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+            .padding(16.dp)
+            .background(g.wallBase, RoundedCornerShape(20.dp))
+            .glass(RoundedCornerShape(20.dp))
+            .padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(message, color = style.offline, modifier = Modifier.weight(1f, fill = false))
-        TextButton(onClick = onDismiss) { Text("Dismiss") }
+        SymIcon(Sym.error, filled = true, size = 22.dp, tint = g.danger)
+        Text(message, color = g.fg, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f, fill = false))
+        RoundButton(Sym.close, onDismiss, size = 40.dp, filledIcon = false)
     }
 }

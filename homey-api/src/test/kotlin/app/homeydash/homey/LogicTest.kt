@@ -6,6 +6,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -38,6 +40,33 @@ class LogicTest {
         assertEquals(listOf("Kitchen", "Living room", "Other"), sections.map { it.zone.name })
         assertEquals(listOf("Coffee machine", "Kitchen lamp"), sections[0].devices.map { it.name })
         assertEquals(1, sections[0].depth)
+    }
+
+    @Test fun `devices hidden in Homey stay off the dashboard`() {
+        val all = DashboardLayout.sections(zones, devices).flatMap { it.devices }.map { it.id }
+        assertFalse("d-hidden" in all)
+        assertTrue(devices.getValue("d-hidden").hidden)
+    }
+
+    @Test fun `room summaries count lights and read climate`() {
+        val rooms = DashboardLayout.rooms(DashboardLayout.sections(zones, devices))
+        val kitchen = rooms.first { it.zone.id == "z-kitchen" }
+        assertEquals(listOf("d-lamp"), kitchen.lights.map { it.id })
+        assertEquals(1, kitchen.lightsOn)
+        assertEquals(21.5, rooms.first { it.zone.id == "z-living" }.temperature)
+        assertEquals(listOf("Home"), DashboardLayout.parents(zones, "z-kitchen").map { it.name })
+        assertEquals(setOf("z-home", "z-kitchen", "z-living", "z-attic"), DashboardLayout.subtree(zones, "z-home"))
+    }
+
+    @Test fun `moods parse and filter by zone`() {
+        val moods: Map<String, Mood> = HomeyJson.decodeFromString(Fixtures.moods)
+        assertEquals(listOf("Cooking", "Movie"), DashboardLayout.moods(moods).map { it.name })
+        assertEquals(listOf("Cooking"), DashboardLayout.moods(moods, "z-kitchen").map { it.name })
+        val changed = HomeyRealtime.parseEvent(
+            HomeyRealtime.MOODS_URI, "mood.update",
+            buildJsonObject { put("id", "m-cook"); put("name", "Cook"); put("zone", "z-kitchen") },
+        )
+        assertEquals(HomeyEvent.MoodChanged(Mood("m-cook", "Cook", "z-kitchen")), changed)
     }
 
     @Test fun `socket events become typed events`() {

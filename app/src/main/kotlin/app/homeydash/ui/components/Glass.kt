@@ -1,0 +1,207 @@
+package app.homeydash.ui.components
+
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import app.homeydash.ui.theme.GlassColors
+import app.homeydash.ui.theme.GlassTheme
+
+val PanelShape = RoundedCornerShape(26.dp)
+val TileShape = RoundedCornerShape(24.dp)
+val PillShape = RoundedCornerShape(percent = 50)
+
+/** Soft colour fields behind everything; drawn once, which is what makes the panels read as glass. */
+@Composable
+fun Wallpaper(modifier: Modifier = Modifier) {
+    val g = GlassTheme.colors
+    Canvas(modifier.fillMaxSize()) {
+        drawRect(g.wallBase)
+        fun blob(color: Color, x: Float, y: Float, r: Float) {
+            val center = Offset(size.width * x, size.height * y)
+            val radius = size.maxDimension * r
+            drawCircle(Brush.radialGradient(listOf(color, color.copy(alpha = 0f)), center, radius), radius, center)
+        }
+        blob(g.wallA, 0.10f, 0.15f, 0.55f)
+        blob(g.wallB, 0.90f, 0.20f, 0.50f)
+        blob(g.wallC, 0.60f, 1.05f, 0.62f)
+    }
+}
+
+/** Translucent panel: a diagonal tint, a hairline, and a bright top edge. */
+fun Modifier.glass(shape: Shape = PanelShape): Modifier = composed {
+    val g = GlassTheme.colors
+    val fill = remember(g) { glassFill(g) }
+    val edge = remember(g) { Brush.verticalGradient(0f to g.glassEdge, 0.35f to g.glassLine, 1f to g.glassLine) }
+    this
+        .clip(shape)
+        .background(fill)
+        .border(1.dp, edge, shape)
+}
+
+private fun glassFill(g: GlassColors) = Brush.linearGradient(listOf(g.glassTop, g.glassBottom), Offset.Zero, Offset.Infinite)
+
+/** The warm fill of something that is on: the active mood, a lit bubble. */
+@Composable
+fun onBrush(): Brush {
+    val g = GlassTheme.colors
+    return remember(g) { Brush.linearGradient(listOf(g.on, g.onDeep), Offset.Zero, Offset.Infinite) }
+}
+
+/**
+ * Tap and long-press with a slight press-in, like iOS controls. Taps and long
+ * presses also give a light haptic tick.
+ */
+fun Modifier.pressable(
+    onClick: (() -> Unit)?,
+    onLongClick: (() -> Unit)? = null,
+    role: Role = Role.Button,
+    enabled: Boolean = true,
+): Modifier = composed {
+    if (onClick == null && onLongClick == null) return@composed this
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.96f else 1f, spring(stiffness = 900f), label = "press")
+    val haptics = LocalHapticFeedback.current
+    this
+        .graphicsLayer { scaleX = scale; scaleY = scale }
+        .combinedClickable(
+            interactionSource = interaction,
+            indication = null,
+            enabled = enabled,
+            role = role,
+            onLongClick = onLongClick?.let { { haptics.performHapticFeedback(HapticFeedbackType.LongPress); it() } },
+            onClick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick?.invoke() },
+        )
+}
+
+/** A glass panel that can be tapped. */
+@Composable
+fun GlassPanel(
+    modifier: Modifier = Modifier,
+    shape: Shape = PanelShape,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier
+            .pressable(onClick, onLongClick)
+            .glass(shape),
+        content = content,
+    )
+}
+
+/** An icon in a circle: glass when off, warm and filled when on. */
+@Composable
+fun Bubble(
+    icon: String,
+    on: Boolean,
+    modifier: Modifier = Modifier,
+    size: Dp = 46.dp,
+    onColor: Color? = null,
+    tint: Color? = null,
+) {
+    val g = GlassTheme.colors
+    val bg = if (on) {
+        if (onColor != null) Modifier.background(onColor, CircleShape) else Modifier.background(onBrush(), CircleShape)
+    } else {
+        Modifier.glass(CircleShape)
+    }
+    Box(modifier.size(size).then(bg), contentAlignment = Alignment.Center) {
+        SymIcon(
+            icon,
+            filled = on,
+            size = size * 0.5f,
+            tint = when {
+                on && onColor == null -> g.onInk
+                on -> Color.White
+                else -> tint ?: g.fg
+            },
+        )
+    }
+}
+
+/** Round glass button for media and steppers; [primary] is the solid play button. */
+@Composable
+fun RoundButton(
+    icon: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 48.dp,
+    primary: Boolean = false,
+    filledIcon: Boolean = true,
+    enabled: Boolean = true,
+    contentDescription: String? = null,
+) {
+    val g = GlassTheme.colors
+    Box(
+        modifier
+            .size(size)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .pressable(onClick, enabled = enabled)
+            .then(if (primary) Modifier.background(g.fg, CircleShape) else Modifier.glass(CircleShape)),
+        contentAlignment = Alignment.Center,
+    ) {
+        SymIcon(icon, filled = filledIcon, size = size * if (primary) 0.55f else 0.48f, tint = if (primary) g.wallBase else g.fg)
+    }
+}
+
+/** Small status pill for headers: an icon and a short value. */
+@Composable
+fun GlassChip(icon: String, text: String, tint: Color, modifier: Modifier = Modifier, filled: Boolean = true, onClick: (() -> Unit)? = null) {
+    Row(
+        modifier
+            .pressable(onClick)
+            .glass(PillShape)
+            .padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SymIcon(icon, filled = filled, size = 20.dp, tint = tint)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = GlassTheme.colors.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+fun SectionLabel(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        color = GlassTheme.colors.muted,
+        modifier = modifier.padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
+    )
+}

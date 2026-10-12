@@ -2,6 +2,7 @@ package app.homeydash.homey
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,6 +13,8 @@ import kotlinx.serialization.json.JsonElement
 data class HomeySnapshot(
     val zones: Map<String, Zone> = emptyMap(),
     val devices: Map<String, Device> = emptyMap(),
+    /** Empty when there are none or the API key may not read moods. */
+    val moods: Map<String, Mood> = emptyMap(),
     val loaded: Boolean = false,
     val error: String? = null,
 )
@@ -37,6 +40,7 @@ class HomeyStore(
         eventsJob = scope.launch { realtime.events.collect(::apply) }
         realtime.subscribe(HomeyRealtime.DEVICES_URI)
         realtime.subscribe(HomeyRealtime.ZONES_URI)
+        realtime.subscribe(HomeyRealtime.MOODS_URI)
         scope.launch { reload() }
         realtime.connect()
     }
@@ -51,8 +55,10 @@ class HomeyStore(
         try {
             val zones = client.zones()
             val devices = client.devices()
+            // Moods need their own permission on the API key; the dashboard works without them.
+            val moods = runCatching { client.moods() }.getOrDefault(emptyMap())
             devices.keys.forEach { realtime.subscribe(HomeyRealtime.deviceUri(it)) }
-            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, loaded = true)
+            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, moods = moods, loaded = true)
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = e.message ?: e.toString()) }
         }
@@ -70,6 +76,21 @@ class HomeyStore(
         }
     }
 
+    suspend fun setMood(mood: Mood) {
+        try {
+            client.setMood(mood.id)
+        } catch (e: Exception) {
+            _snapshot.update { it.copy(error = "Couldn't set ${mood.name}: ${e.message}") }
+        }
+    }
+
+    /** Toggles several devices at once, e.g. every light in a room. */
+    suspend fun setAll(deviceIds: Collection<String>, capabilityId: String, value: JsonElement) = coroutineScope {
+        deviceIds.forEach { id -> launch { setCapability(id, capabilityId, value) } }
+    }
+
+    suspend fun image(path: String): ByteArray = client.image(path)
+
     fun clearError() = _snapshot.update { it.copy(error = null) }
 
     internal fun apply(event: HomeyEvent) {
@@ -86,6 +107,8 @@ class HomeyStore(
             is HomeyEvent.DeviceDeleted -> _snapshot.update { it.copy(devices = it.devices - event.deviceId) }
             is HomeyEvent.ZoneChanged -> _snapshot.update { it.copy(zones = it.zones + (event.zone.id to event.zone)) }
             is HomeyEvent.ZoneDeleted -> _snapshot.update { it.copy(zones = it.zones - event.zoneId) }
+            is HomeyEvent.MoodChanged -> _snapshot.update { it.copy(moods = it.moods + (event.mood.id to event.mood)) }
+            is HomeyEvent.MoodDeleted -> _snapshot.update { it.copy(moods = it.moods - event.moodId) }
             HomeyEvent.Reconnected -> scope.launch { reload() }
         }
     }

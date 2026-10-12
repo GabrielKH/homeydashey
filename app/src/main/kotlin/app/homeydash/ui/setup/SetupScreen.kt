@@ -24,12 +24,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import app.homeydash.ui.theme.DashboardTheme
+import app.homeydash.ui.components.glass
+import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.launch
 
 /** First launch: ask for the Homey's address and a local API key, once. */
@@ -40,7 +40,7 @@ fun SetupScreen(onConnect: suspend (address: String, apiKey: String) -> Unit) {
     var busy by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val style = DashboardTheme.style
+    val g = GlassTheme.colors
 
     fun submit() {
         if (busy) return
@@ -67,13 +67,17 @@ fun SetupScreen(onConnect: suspend (address: String, apiKey: String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(Modifier.widthIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Text("Connect to your Homey", style = MaterialTheme.typography.headlineMedium, color = style.onCard)
+        Column(
+            Modifier.widthIn(max = 560.dp).glass().padding(32.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Text("Connect to your Homey", style = MaterialTheme.typography.headlineMedium, color = g.fg)
             Text(
                 "In the Homey web app, open Settings → API Keys and create a key that can view zones and " +
-                    "devices and control devices. Your Homey's address is in Settings → General, for example " +
-                    "192.168.1.20.",
-                color = style.onCardMuted,
+                    "devices, control devices, and view and set moods. Your Homey's address is in " +
+                    "Settings → General, for example 192.168.1.20.",
+                color = g.muted,
+                style = MaterialTheme.typography.bodyLarge,
             )
             OutlinedTextField(
                 value = address,
@@ -93,9 +97,9 @@ fun SetupScreen(onConnect: suspend (address: String, apiKey: String) -> Unit) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 modifier = Modifier.fillMaxWidth(),
             )
-            error?.let { Text(it, color = style.offline) }
+            error?.let { Text(it, color = g.danger) }
             Button(onClick = { submit() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                if (busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text("Connect")
+                if (busy) CircularProgressIndicator(color = g.onInk, strokeWidth = 2.dp) else Text("Connect")
             }
         }
     }

@@ -45,6 +45,22 @@ class HomeyClient(
 
     suspend fun device(id: String): Device = get("api/manager/devices/device/$id")
 
+    suspend fun moods(): Map<String, Mood> = get("api/manager/moods/mood")
+
+    suspend fun setMood(id: String) {
+        execute(request("api/manager/moods/mood/$id/set").post("{}".toRequestBody(JSON_TYPE)).build())
+    }
+
+    /** Raw bytes of an image the Homey serves, e.g. album art; [path] is an `ImageObj.url`. */
+    suspend fun image(path: String): ByteArray = withContext(Dispatchers.IO) {
+        val url = baseUrl.resolve(path) ?: throw IOException("Bad image path $path")
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw HomeyHttpException(response.code, "Homey answered ${response.code} for $path")
+            response.body?.bytes() ?: ByteArray(0)
+        }
+    }
+
     suspend fun setCapability(deviceId: String, capabilityId: String, value: JsonElement) {
         val body = buildJsonObject { put("value", value) }.toString()
         execute(

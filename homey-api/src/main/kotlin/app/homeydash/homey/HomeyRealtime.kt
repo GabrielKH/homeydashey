@@ -28,6 +28,8 @@ sealed interface HomeyEvent {
     data class DeviceDeleted(val deviceId: String) : HomeyEvent
     data class ZoneChanged(val zone: Zone) : HomeyEvent
     data class ZoneDeleted(val zoneId: String) : HomeyEvent
+    data class MoodChanged(val mood: Mood) : HomeyEvent
+    data class MoodDeleted(val moodId: String) : HomeyEvent
 
     /** The socket came back after a drop; updates may have been missed, so reload. */
     data object Reconnected : HomeyEvent
@@ -135,6 +137,7 @@ class HomeyRealtime(
     companion object {
         const val DEVICES_URI = "homey:manager:devices"
         const val ZONES_URI = "homey:manager:zones"
+        const val MOODS_URI = "homey:manager:moods"
         fun deviceUri(deviceId: String) = "homey:device:$deviceId"
 
         /** Pure mapping from a raw socket event to a [HomeyEvent]; null for events we ignore. */
@@ -156,6 +159,10 @@ class HomeyRealtime(
                     HomeyEvent.ZoneChanged(HomeyJson.decodeFromJsonElement(Zone.serializer(), data))
                 uri == ZONES_URI && event == "zone.delete" ->
                     HomeyEvent.ZoneDeleted((data as JsonObject).getValue("id").jsonPrimitive.content)
+                uri == MOODS_URI && (event == "mood.create" || event == "mood.update") ->
+                    HomeyEvent.MoodChanged(HomeyJson.decodeFromJsonElement(Mood.serializer(), data))
+                uri == MOODS_URI && event == "mood.delete" ->
+                    HomeyEvent.MoodDeleted((data as JsonObject).getValue("id").jsonPrimitive.content)
                 else -> null
             }
         }.getOrNull()

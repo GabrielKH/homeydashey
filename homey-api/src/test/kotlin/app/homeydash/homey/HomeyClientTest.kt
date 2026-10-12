@@ -64,6 +64,22 @@ class HomeyClientTest {
         assertEquals("""{"value":0.75}""", request.body.readUtf8())
     }
 
+    @Test fun `sets a mood with a POST`() = runTest {
+        server.enqueue(MockResponse().setBody("{}"))
+        client.setMood("m-cook")
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/manager/moods/mood/m-cook/set", request.path)
+    }
+
+    @Test fun `fetches images with the key`() = runTest {
+        server.enqueue(MockResponse().setBody("png"))
+        assertEquals("png", String(client.image("/api/image/abc")))
+        val request = server.takeRequest()
+        assertEquals("/api/image/abc", request.path)
+        assertEquals("Bearer secret-key", request.getHeader("Authorization"))
+    }
+
     @Test fun `errors carry the status code`() = runTest {
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"Invalid token"}"""))
         val error = runCatching { client.zones() }.exceptionOrNull()
