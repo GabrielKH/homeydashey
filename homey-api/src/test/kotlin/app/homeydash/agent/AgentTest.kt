@@ -301,4 +301,20 @@ class AgentTest {
         assertEquals("Anna", FaceMatcher.match(floatArrayOf(0.1f, 0.99f, 0f), listOf(gabriel, anna))?.name)
         assertNull(FaceMatcher.match(floatArrayOf(0f, 0f, 1f), listOf(gabriel, anna)))
     }
+
+    @Test fun `wake name phrases, grammar and vocabulary check`() {
+        assertTrue(WakeName.heard("Hey Nova", "Nova"))
+        assertTrue(WakeName.heard("nova", " nova! "))
+        assertFalse(WakeName.heard("hey there", "Nova"))
+        assertEquals("[\"hey nova\",\"hi nova\",\"okay nova\",\"nova\",\"[unk]\"]", WakeName.grammar("Nova"))
+        assertEquals(listOf("jarvizz"), WakeName.unknownWords("Jarvizz", setOf("hey", "nova")))
+        assertTrue(WakeName.phrases("  ").isEmpty())
+    }
+
+    @Test fun `voices match by speaker vector`() {
+        val g = KnownPerson("1", "Gabriel", Role.Owner, emptyList(), voice = listOf(floatArrayOf(1f, 0.2f, 0f)))
+        assertEquals("Gabriel", FaceMatcher.matchVoice(floatArrayOf(0.9f, 0.3f, 0.1f), listOf(g))?.name)
+        assertNull(FaceMatcher.matchVoice(floatArrayOf(0f, 0f, 1f), listOf(g)))
+        assertNull(FaceMatcher.match(floatArrayOf(1f, 0.2f, 0f), listOf(g)))
+    }
 }

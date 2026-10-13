@@ -2,8 +2,17 @@ package app.homeydash.agent
 
 import kotlin.math.sqrt
 
-/** Someone enrolled for face recognition: a few face "fingerprints" (embeddings), never photos. */
-data class KnownPerson(val id: String, val name: String, val role: Role, val samples: List<FloatArray>)
+/**
+ * Someone the tablet knows: a few face and voice "fingerprints" (embeddings), never photos
+ * or recordings. Either list may be empty.
+ */
+data class KnownPerson(
+    val id: String,
+    val name: String,
+    val role: Role,
+    val samples: List<FloatArray>,
+    val voice: List<FloatArray> = emptyList(),
+)
 
 /** Matches a face embedding against the people enrolled on this tablet. */
 object FaceMatcher {
@@ -27,10 +36,50 @@ object FaceMatcher {
         return if (d == 0f) 0f else dot / d
     }
 
-    /** The best match for [embedding], or null when nobody is close enough. */
+    /** The best face match for [embedding], or null when nobody is close enough. */
     fun match(embedding: FloatArray, people: List<KnownPerson>, threshold: Float = THRESHOLD): KnownPerson? =
-        people.map { p -> p to (p.samples.maxOfOrNull { similarity(embedding, it) } ?: 0f) }
+        best(embedding, people, threshold) { it.samples }
+
+    /** Cosine similarity above which two Vosk speaker vectors count as the same voice. */
+    const val VOICE_THRESHOLD = 0.55f
+
+    /** The best voice match for a Vosk speaker vector, or null. */
+    fun matchVoice(vector: FloatArray, people: List<KnownPerson>, threshold: Float = VOICE_THRESHOLD): KnownPerson? =
+        best(vector, people, threshold) { it.voice }
+
+    private fun best(v: FloatArray, people: List<KnownPerson>, threshold: Float, samples: (KnownPerson) -> List<FloatArray>): KnownPerson? =
+        people.map { p -> p to (samples(p).maxOfOrNull { similarity(v, it) } ?: 0f) }
             .filter { it.second >= threshold }
             .maxByOrNull { it.second }
             ?.first
+}
+
+/**
+ * The assistant's name, said to wake it ("Hey Nova"). Spotted on the tablet by a small
+ * offline speech model limited to these phrases, so it hears nothing else.
+ */
+object WakeName {
+    /** Phrases that wake the assistant for [name]. */
+    fun phrases(name: String): List<String> {
+        val n = clean(name)
+        if (n.isEmpty()) return emptyList()
+        return listOf("hey $n", "hi $n", "okay $n", n)
+    }
+
+    /** The Vosk grammar: the wake phrases plus "[unk]" so everything else is ignored. */
+    fun grammar(name: String): String =
+        (phrases(name) + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
+
+    /** Whether a recognised [text] is the wake name. */
+    fun heard(text: String, name: String): Boolean {
+        val t = clean(text)
+        return t.isNotEmpty() && phrases(name).any { it == t }
+    }
+
+    /** The words of [name] the speech model doesn't know; it can only wake on known words. */
+    fun unknownWords(name: String, vocabulary: Set<String>): List<String> =
+        clean(name).split(' ').filter { it.isNotEmpty() && it !in vocabulary }
+
+    fun clean(text: String): String =
+        text.lowercase().replace(Regex("[^a-z' ]"), " ").split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
 }
