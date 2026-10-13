@@ -72,3 +72,24 @@ object CardLayout {
     fun customTitles(section: ZoneSection, arrangement: CardArrangement): List<String> =
         section.devices.mapNotNull { arrangement.groups[it.id] }.distinct()
 }
+
+/** The overview's free order of cards (weather, calendar, player, pinned devices, rooms), by key. */
+object OverviewOrder {
+
+    /** The saved order of what is there now; cards not placed yet go at the end. */
+    fun arrange(saved: List<String>, available: List<String>): List<String> {
+        val present = available.toSet()
+        val placed = saved.filter { it in present }.distinct()
+        return placed + available.filter { it !in placed }
+    }
+
+    /** [order] with [key] dropped at [target]'s place, or null when either is missing. */
+    fun move(order: List<String>, key: String, target: String): List<String>? {
+        if (key == target || key !in order) return null
+        val keys = order.toMutableList()
+        val at = keys.indexOf(target).takeIf { it >= 0 } ?: return null
+        keys.remove(key)
+        keys.add(at, key)
+        return keys
+    }
+}
