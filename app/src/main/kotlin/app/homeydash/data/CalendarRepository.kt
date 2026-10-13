@@ -24,7 +24,32 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class CalendarInfo(val id: Long, val name: String, val account: String, val color: Int, val visible: Boolean)
+data class CalendarInfo(
+    val id: Long,
+    val name: String,
+    val account: String,
+    val color: Int,
+    /** Shown in the tablet's calendar app. */
+    val visible: Boolean,
+    /** The account syncs this calendar's events to the tablet. */
+    val synced: Boolean,
+    /** Events from the start of this month to two months ahead. */
+    val events: Int = 0,
+) {
+    companion object {
+        /**
+         * The calendars shown when none are chosen: the ones the calendar app shows. Some
+         * tablets mark none as shown (Google Calendar keeps its own list), so then every
+         * calendar that has events.
+         */
+        fun defaults(calendars: List<CalendarInfo>): Set<Long> =
+            calendars.filter { it.visible }.map { it.id }.toSet()
+                .ifEmpty { calendars.filter { it.events > 0 }.map { it.id }.toSet() }
+
+        fun shown(calendars: List<CalendarInfo>, chosen: Set<String>): Set<Long> =
+            if (chosen.isEmpty()) defaults(calendars) else chosen.mapNotNull { it.toLongOrNull() }.toSet()
+    }
+}
 
 /** One occurrence of an event. All-day events have [begin] and [end] at UTC midnight. */
 data class CalendarEvent(
@@ -90,9 +115,12 @@ class CalendarRepository(
         job = scope.launch {
             val chosen = settings.calendars.first()
             val (calendars, events) = withContext(Dispatchers.IO) {
+                val all = runCatching { queryEvents(null) }.getOrDefault(emptyList())
+                val counts = all.groupingBy { it.calendarId }.eachCount()
                 val calendars = runCatching { queryCalendars() }.getOrDefault(emptyList())
-                val shown = if (chosen.isEmpty()) calendars.filter { it.visible }.map { it.id }.toSet() else chosen.mapNotNull { it.toLongOrNull() }.toSet()
-                calendars to runCatching { queryEvents(shown) }.getOrDefault(emptyList())
+                    .map { it.copy(events = counts[it.id] ?: 0) }
+                val shown = CalendarInfo.shown(calendars, chosen)
+                calendars to all.filter { it.calendarId in shown }
             }
             _calendars.value = calendars
             _events.value = events
@@ -122,6 +150,7 @@ class CalendarRepository(
             CalendarContract.Calendars.ACCOUNT_NAME,
             CalendarContract.Calendars.CALENDAR_COLOR,
             CalendarContract.Calendars.VISIBLE,
+            CalendarContract.Calendars.SYNC_EVENTS,
         )
         val result = mutableListOf<CalendarInfo>()
         context.contentResolver.query(CalendarContract.Calendars.CONTENT_URI, projection, null, null, null)?.use { c ->
@@ -132,6 +161,7 @@ class CalendarRepository(
                     account = c.getString(2) ?: "",
                     color = c.getInt(3),
                     visible = c.getInt(4) == 1,
+                    synced = c.getInt(5) == 1,
                 )
             }
         }
@@ -144,20 +174,20 @@ class CalendarRepository(
         val chosen = settings.calendars.first()
         return withContext(Dispatchers.IO) {
             runCatching {
-                val shown = if (chosen.isEmpty()) queryCalendars().filter { it.visible }.map { it.id }.toSet() else chosen.mapNotNull { it.toLongOrNull() }.toSet()
-                queryEvents(shown, from, until)
+                val calendars = if (chosen.isEmpty()) _calendars.value.ifEmpty { queryCalendars() } else emptyList()
+                queryEvents(CalendarInfo.shown(calendars, chosen), from, until)
             }.getOrDefault(emptyList())
         }
     }
 
-    // From the start of this month (for the month view) to two months ahead.
-    private fun queryEvents(calendarIds: Set<Long>): List<CalendarEvent> {
+    // From the start of this month (for the month view) to two months ahead; null is every calendar.
+    private fun queryEvents(calendarIds: Set<Long>?): List<CalendarEvent> {
         val monthStart = LocalDate.now(ZoneId.systemDefault()).withDayOfMonth(1)
         return queryEvents(calendarIds, monthStart, monthStart.plusMonths(2))
     }
 
-    private fun queryEvents(calendarIds: Set<Long>, fromDay: LocalDate, untilDay: LocalDate): List<CalendarEvent> {
-        if (calendarIds.isEmpty()) return emptyList()
+    private fun queryEvents(calendarIds: Set<Long>?, fromDay: LocalDate, untilDay: LocalDate): List<CalendarEvent> {
+        if (calendarIds?.isEmpty() == true) return emptyList()
         // A day either side covers all-day events, which are stored at UTC midnight.
         val zone = ZoneId.systemDefault()
         val from = fromDay.atStartOfDay(zone).toInstant().toEpochMilli() - DAY
@@ -179,7 +209,7 @@ class CalendarRepository(
         context.contentResolver.query(builder.build(), projection, null, null, "${CalendarContract.Instances.BEGIN} ASC")?.use { c ->
             while (c.moveToNext()) {
                 val calendarId = c.getLong(7)
-                if (calendarId !in calendarIds) continue
+                if (calendarIds != null && calendarId !in calendarIds) continue
                 val event = CalendarEvent(
                     id = c.getLong(0),
                     title = c.getString(1)?.takeIf { it.isNotBlank() } ?: "(No title)",

@@ -1,9 +1,17 @@
 package app.homeydash.ui.dashboard
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -479,7 +487,18 @@ fun CalendarCard(
 ) {
     val g = GlassTheme.colors
     val context = LocalContext.current
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onPermissionResult() }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        // Once refused for good, Android answers at once without asking, so open the app's settings instead.
+        if (!granted && permanentlyRefused(context, Manifest.permission.READ_CALENDAR)) openAppSettings(context)
+        onPermissionResult()
+    }
+    // Picks up a permission allowed in Android Settings when the dashboard comes back.
+    if (!hasPermission) {
+        LifecycleResumeEffect(Unit) {
+            onPermissionResult()
+            onPauseOrDispose { }
+        }
+    }
     val zone = remember { ZoneId.systemDefault() }
     val today = LocalDate.now(zone)
     val timeFormat = remember(context) { DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a") }
@@ -731,17 +750,24 @@ fun CalendarsDialog(
     onDismiss: () -> Unit,
 ) {
     val g = GlassTheme.colors
-    val effective = if (selected.isEmpty()) calendars.filter { it.visible }.map { it.id.toString() }.toSet() else selected
+    val context = LocalContext.current
+    val effective = CalendarInfo.shown(calendars, selected).map { it.toString() }.toSet()
     GlassDialog(onDismiss = onDismiss, width = 560.dp) {
         DialogHeader(title = "Calendars", subtitle = "Choose what the overview shows", onClose = onDismiss)
         if (calendars.isEmpty()) {
             Text(
-                "No calendars on this tablet yet. Add your Google account in Android Settings → Accounts and turn on calendar sync.",
+                "Android shares no calendars with the dashboard on this tablet. Calendars appear here once a Google account syncs Calendar to the tablet: Settings → Accounts → Google → Account sync → Calendar.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = g.muted,
             )
+            OpenSettingsChip("Open account sync") { context.startActivity(Intent(Settings.ACTION_SYNC_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             return@GlassDialog
         }
+        Text(
+            "Android shares ${calendars.size} calendar${if (calendars.size == 1) "" else "s"} with the dashboard. Event counts are from the start of this month to two months ahead.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
         LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(calendars, key = { it.id }) { calendar ->
                 val id = calendar.id.toString()
@@ -757,16 +783,54 @@ fun CalendarsDialog(
                     Box(Modifier.size(14.dp).background(Color(calendar.color).copy(alpha = 1f), CircleShape))
                     Column(Modifier.weight(1f)) {
                         Text(calendar.name, style = MaterialTheme.typography.titleSmall, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(calendar.account, style = MaterialTheme.typography.bodyMedium, color = g.muted, maxLines = 1)
+                        val state = when {
+                            !calendar.synced -> "not synced to this tablet"
+                            calendar.events == 0 -> "no events"
+                            calendar.events == 1 -> "1 event"
+                            else -> "${calendar.events} events"
+                        }
+                        Text("${calendar.account} · $state", style = MaterialTheme.typography.bodyMedium, color = g.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Toggle(on)
                 }
             }
         }
         Text(
-            "A family calendar shows here once it is synced in the Google Calendar app on this tablet.",
+            "Missing a calendar, or it says not synced? Turn on its Sync in the Google Calendar app (Settings → the calendar → Sync), then check account sync.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
+        OpenSettingsChip("Open account sync") { context.startActivity(Intent(Settings.ACTION_SYNC_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
+}
+
+@Composable
+private fun OpenSettingsChip(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = GlassTheme.colors.fg,
+        modifier = Modifier
+            .pressable({ runCatching { onClick() }; Unit })
+            .glass(PillShape)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    )
+}
+
+/** Opens the app's own page in Android Settings, where a refused permission can be allowed. */
+internal fun openAppSettings(context: Context) {
+    runCatching {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+}
+
+/** True when Android won't show the permission prompt again, so only Settings can allow it. */
+internal fun permanentlyRefused(context: Context, permission: String): Boolean {
+    var c = context
+    while (c is ContextWrapper && c !is Activity) c = c.baseContext
+    val activity = c as? Activity ?: return false
+    return !ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)
 }
