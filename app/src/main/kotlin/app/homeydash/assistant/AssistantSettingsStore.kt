@@ -12,6 +12,7 @@ import app.homeydash.agent.BrainMode
 import app.homeydash.agent.Connection
 import app.homeydash.agent.FaceStyle
 import app.homeydash.agent.FollowUp
+import app.homeydash.agent.MicSensitivity
 import app.homeydash.agent.VoiceStyle
 import app.homeydash.agent.Language
 import app.homeydash.agent.Provider
@@ -56,6 +57,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         wakeName = p[WAKE_NAME] ?: AgentSettings().wakeName,
         onlyKnownVoices = p[KNOWN_VOICES] == "true",
         followUp = enumOr(p[FOLLOW_UP], FollowUp.Short),
+        micSensitivity = p[MIC_SENSITIVITY]?.toIntOrNull() ?: MicSensitivity.DEFAULT,
         face = enumOr(p[FACE], FaceStyle.Orb),
         voice = enumOr(p[VOICE], VoiceStyle.Natural),
         classicRed = p[CLASSIC_RED] == "true",
@@ -77,6 +79,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[WAKE_NAME] = s.wakeName
         p[KNOWN_VOICES] = s.onlyKnownVoices.toString()
         p[FOLLOW_UP] = s.followUp.name
+        p[MIC_SENSITIVITY] = s.micSensitivity.toString()
         p[FACE] = s.face.name
         p[VOICE] = s.voice.name
         p[CLASSIC_RED] = s.classicRed.toString()
@@ -116,6 +119,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WAKE_NAME = stringPreferencesKey("wake_name")
         val KNOWN_VOICES = stringPreferencesKey("known_voices")
         val FOLLOW_UP = stringPreferencesKey("follow_up")
+        val MIC_SENSITIVITY = stringPreferencesKey("mic_sensitivity")
         val FACE = stringPreferencesKey("face")
         val VOICE = stringPreferencesKey("voice")
         val CLASSIC_RED = stringPreferencesKey("classic_red")

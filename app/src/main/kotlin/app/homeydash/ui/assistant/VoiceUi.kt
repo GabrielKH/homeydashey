@@ -50,6 +50,7 @@ import app.homeydash.ui.dashboard.Toggle
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 private const val VOICE_SAMPLES = 4
 
@@ -71,7 +72,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
     val on = enabled && micGranted(context) && lifecycle.isAtLeast(Lifecycle.State.RESUMED) &&
         assistant.state == AssistantState.Idle && !assistant.conversing && !wake.enrolling
     if (on) {
-        LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, people) {
+        LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, settings.micSensitivity, people) {
             // Give the speech recogniser or text-to-speech a moment to let go of the audio.
             delay(600)
             val voices = people.filter { it.voice.isNotEmpty() }
@@ -86,6 +87,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                     }
                 },
                 onError = {},
+                sensitivity = settings.micSensitivity,
             )
             try {
                 awaitCancellation()
@@ -181,6 +183,21 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
         }
         Toggle(settings.onlyKnownVoices, onClick = { update { it.copy(onlyKnownVoices = !it.onlyKnownVoices) } })
     }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Microphone sensitivity", style = MaterialTheme.typography.labelLarge, color = g.fg)
+        app.homeydash.ui.dashboard.GlassSlider(
+            settings.micSensitivity / 100f,
+            { v -> update { it.copy(micSensitivity = (v * 100).roundToInt().coerceIn(0, 100)) } },
+            Modifier.weight(1f),
+        )
+        Text("${settings.micSensitivity}%", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    }
+    Text(
+        "Higher hears the name from across the room but wakes more by mistake, for example from the TV. " +
+            "It listens through the tablet's voice input, which mixes its microphones where the tablet supports it, set for a wide room.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
 }
 
 @Composable
@@ -237,6 +254,7 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                     }
                 },
                 onError = { error = it },
+                sensitivity = settings.micSensitivity,
             )
             onDispose {
                 wake.stop(token)

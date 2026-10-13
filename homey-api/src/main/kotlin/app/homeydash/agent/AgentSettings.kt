@@ -49,6 +49,20 @@ enum class FollowUp(val label: String, val detail: String, val ms: Long) {
     }
 }
 
+/**
+ * How readily the wake name is heard, 0–100: higher boosts the microphone and accepts
+ * less certain matches, for a big room; lower ignores more of the TV and chatter.
+ */
+object MicSensitivity {
+    const val DEFAULT = 50
+
+    /** Microphone gain, 0.25× at 0 to 4× at 100, 1× in the middle. */
+    fun gain(sensitivity: Int): Float = Math.pow(2.0, (sensitivity.coerceIn(0, 100) - 50) / 25.0).toFloat()
+
+    /** How sure the recogniser must be of each word, 0.75 at 0 to 0.45 at 100. */
+    fun minConfidence(sensitivity: Int): Double = 0.75 - sensitivity.coerceIn(0, 100) * 0.003
+}
+
 /** How far the assistant may go with something sensitive. */
 enum class Access(val label: String) { Off("Off"), LocalOnly("Local AI only"), On("On") }
 
@@ -89,6 +103,8 @@ data class AgentSettings(
     val onlyKnownVoices: Boolean = false,
     /** Keep listening for the next question after a spoken answer. */
     val followUp: FollowUp = FollowUp.Short,
+    /** How readily the wake name is heard; see [MicSensitivity]. */
+    val micSensitivity: Int = MicSensitivity.DEFAULT,
     /** How the assistant looks and sounds. */
     val face: FaceStyle = FaceStyle.Orb,
     val voice: VoiceStyle = VoiceStyle.Natural,

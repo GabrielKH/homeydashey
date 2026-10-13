@@ -393,4 +393,14 @@ class AgentTest {
         assertFalse(FollowUp.ends("thanks, turn off the lights"))
         assertFalse(FollowUp.ends(""))
     }
+
+    @Test
+    fun `mic sensitivity boosts gain and lowers the bar`() {
+        assertEquals(1f, MicSensitivity.gain(50), 1e-4f)
+        assertEquals(4f, MicSensitivity.gain(100), 1e-4f)
+        assertEquals(0.25f, MicSensitivity.gain(0), 1e-4f)
+        assertEquals(0.6, MicSensitivity.minConfidence(50), 1e-9)
+        assertTrue(MicSensitivity.minConfidence(100) < MicSensitivity.minConfidence(0))
+        assertEquals(4f, MicSensitivity.gain(250), 1e-4f)
+    }
 }
