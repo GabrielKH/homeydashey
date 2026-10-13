@@ -59,8 +59,8 @@ object MicSensitivity {
     /** Microphone gain, 0.25× at 0 to 4× at 100, 1× in the middle. */
     fun gain(sensitivity: Int): Float = Math.pow(2.0, (sensitivity.coerceIn(0, 100) - 50) / 25.0).toFloat()
 
-    /** How sure the recogniser must be of each word, 0.75 at 0 to 0.45 at 100. */
-    fun minConfidence(sensitivity: Int): Double = 0.75 - sensitivity.coerceIn(0, 100) * 0.003
+    /** How sure the recogniser must be of each word, 0.8 at 0 to 0.55 at 100. */
+    fun minConfidence(sensitivity: Int): Double = 0.8 - sensitivity.coerceIn(0, 100) * 0.0025
 }
 
 /** How far the assistant may go with something sensitive. */
@@ -86,8 +86,10 @@ data class AgentSettings(
     val mode: BrainMode = BrainMode.Smart,
     val language: Language = Language.Auto,
     val secrets: Map<Secret, Access> = emptyMap(),
-    /** Devices kept away from the assistant, on top of the ones hidden on the dashboard. */
+    /** Devices kept away from the assistant. */
     val hiddenDevices: Set<String> = emptySet(),
+    /** The assistant also sees devices hidden on the dashboard or in the Homey app. */
+    val seeHiddenDevices: Boolean = true,
     /** The speaker that answers, or null for the tablet itself. */
     val speakerId: String? = null,
     /** Volume for answers on a speaker, 0–100. */

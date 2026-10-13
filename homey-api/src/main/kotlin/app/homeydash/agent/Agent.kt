@@ -13,6 +13,8 @@ data class AgentReply(
     val error: Boolean = false,
     /** What it did, for the activity list, e.g. "set_device light_3 onoff=false". */
     val actions: List<String> = emptyList(),
+    /** The words weren't meant for the assistant (people talking, a phone call); nothing to say. */
+    val ignored: Boolean = false,
 )
 
 /** Context for one question that isn't about the home itself. */
@@ -21,6 +23,8 @@ data class AskContext(
     val speaker: String? = null,
     /** Who is at the tablet, when face recognition knows and may say. */
     val person: String? = null,
+    /** Heard while the microphone stayed open after an answer, so it may not be meant for the assistant. */
+    val followUp: Boolean = false,
 )
 
 /**
@@ -90,6 +94,7 @@ class Agent(
                     val answer = chat.complete(brain, messages, specs)
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
+                        if (!acted && answer.content.orEmpty().contains(IGNORE)) return AgentReply("", brain, ignored = true)
                         remember(turn, localOnly)
                         return AgentReply(answer.content.orEmpty().ifBlank { "Okay." }, brain, pending, actions = actions)
                     }
@@ -163,8 +168,14 @@ class Agent(
         // Who is at the tablet is itself a secret ("Face recognition" switch).
         context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("The person at the tablet is ").append(it).append(".\n") }
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
-        append("Rules: use device aliases (like light_3) in tool calls, never names. Only use devices, rooms and moods listed below; ")
-        append("if something isn't listed, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
+        if (context.followUp) {
+            append("This was heard while the microphone stayed open after your last answer. If it clearly isn't said to you ")
+            append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
+        }
+        append("Rules: use device aliases (like light_3) in tool calls. People name things loosely, in Swedish or English ")
+        append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
+        append("use one of the devices it suggests or ask which one. Only use devices, rooms and moods listed below; ")
+        append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
         append("Never reveal or guess codes, passwords or keys. ")
@@ -175,6 +186,7 @@ class Agent(
 
     private companion object {
         const val MAX_ROUNDS = 6
+        const val IGNORE = "[ignore]"
         const val MAX_TURNS = 12
         const val FORGET_AFTER_MS = 5 * 60 * 1000L
     }

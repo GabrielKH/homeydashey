@@ -34,6 +34,8 @@ data class AgentDevice(
     val deviceClass: String,
     val capabilities: List<AgentCapability>,
     val secret: Secret?,
+    /** Hidden on the dashboard or in the Homey app; room-wide changes leave it alone. */
+    val hiddenOnDashboard: Boolean = false,
 ) {
     fun capability(id: String): AgentCapability? = capabilities.firstOrNull { it.id == id }
 }
@@ -54,19 +56,35 @@ class HomeView(
 ) {
     private val byAlias = devices.associateBy { it.alias }
 
-    fun device(alias: String): AgentDevice? = byAlias[alias.trim()]
-        // Small models sometimes answer with the name instead of the alias.
-        ?: devices.firstOrNull { it.name.equals(alias.trim(), ignoreCase = true) }
+    /**
+     * A device by its alias, or by its name said loosely ("lampan i köket"), which small
+     * models and speech recognition often give instead. Null when nothing clearly matches.
+     */
+    fun device(alias: String): AgentDevice? {
+        val q = alias.trim()
+        byAlias[q.lowercase()]?.let { return it }
+        devices.firstOrNull { it.name.equals(q, ignoreCase = true) }?.let { return it }
+        val norm = NameMatch.normalize(q)
+        devices.filter { NameMatch.normalize(it.name) == norm }.singleOrNull()?.let { return it }
+        return NameMatch.best(q, devices) { NameMatch.score(q, it.name, it.room) }
+    }
+
+    /** Devices whose names come closest to [query], for suggesting what was meant. */
+    fun similarDevices(query: String, limit: Int = 5): List<AgentDevice> =
+        NameMatch.rank(query, devices) { NameMatch.score(query, it.name, it.room) }.take(limit).map { it.first }
 
     fun aliasOf(deviceId: String): String? = devices.firstOrNull { it.id == deviceId }?.alias
 
     fun mood(alias: String): AgentMood? =
-        moods.firstOrNull { it.alias == alias.trim() } ?: moods.firstOrNull { it.mood.name.equals(alias.trim(), ignoreCase = true) }
+        moods.firstOrNull { it.alias == alias.trim().lowercase() }
+            ?: moods.firstOrNull { it.mood.name.equals(alias.trim(), ignoreCase = true) }
+            ?: NameMatch.best(alias, moods) { NameMatch.score(alias, it.mood.name, it.room) }
 
-    /** A room id by its name, case-insensitively. */
+    /** A room id by its name, loosely: "köket" finds "Kök". */
     fun room(name: String): String? =
         rooms.entries.firstOrNull { it.value.equals(name.trim(), ignoreCase = true) }?.key
             ?: rooms.keys.firstOrNull { it == name.trim() }
+            ?: NameMatch.best(name, rooms.entries.toList()) { NameMatch.score(name, it.value) }?.key
 
     fun allows(secret: Secret) = settings.allows(secret, local)
 
@@ -101,7 +119,8 @@ class HomeView(
             val roomNames = zones.mapValues { it.value.name }
             val counters = mutableMapOf<String, Int>()
             val shown = devices.values
-                .filter { !it.hidden && it.id !in hidden && it.id !in settings.hiddenDevices }
+                // The assistant sees devices hidden on the dashboard too, unless the owner chose otherwise.
+                .filter { it.id !in settings.hiddenDevices && (settings.seeHiddenDevices || (!it.hidden && it.id !in hidden)) }
                 // Sorted by id, so aliases stay the same while the devices do.
                 .sortedBy { it.id }
                 .mapNotNull { device ->
@@ -119,6 +138,7 @@ class HomeView(
                         deviceClass = device.effectiveClass,
                         capabilities = device.capabilities.mapNotNull { id -> device.capability(id)?.let(::visibleCapability) },
                         secret = secret,
+                        hiddenOnDashboard = device.hidden || device.id in hidden,
                     )
                 }
                 .sortedWith(compareBy({ it.room ?: "" }, { it.name.lowercase() }))

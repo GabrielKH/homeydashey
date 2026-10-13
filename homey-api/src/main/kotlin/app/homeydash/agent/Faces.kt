@@ -66,9 +66,23 @@ object WakeName {
         return listOf("hey $n", "hi $n", "okay $n", n)
     }
 
-    /** The Vosk grammar: the wake phrases plus "[unk]" so everything else is ignored. */
-    fun grammar(name: String): String =
-        (phrases(name) + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
+    /**
+     * The Vosk grammar: the wake phrases, everyday words for other speech to land on
+     * instead of the name, and "[unk]". Without the decoys, any sound close enough is
+     * forced onto the name; [vocabulary] keeps only words the model knows.
+     */
+    fun grammar(name: String, vocabulary: Set<String>? = null): String {
+        val own = clean(name).split(' ').toSet()
+        val decoys = DECOYS.filter { it !in own && (vocabulary == null || it in vocabulary) }
+        return (phrases(name) + decoys + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
+    }
+
+    /** Short everyday words; also ones that sound like common names, so they don't wake it. */
+    private val DECOYS = listOf(
+        "yes", "no", "okay", "hello", "hey", "hi", "so", "now", "know", "go", "oh", "the", "and", "you", "what", "call",
+        "phone", "nine", "over", "home", "hold", "love", "good", "right", "well", "yeah", "noah", "nora", "nova scotia",
+        "number", "never", "nothing", "anna", "hannah", "emma", "max", "mom", "dad", "stop", "play", "today", "tomorrow",
+    )
 
     /** Whether a recognised [text] is the wake name. */
     fun heard(text: String, name: String): Boolean {

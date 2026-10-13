@@ -146,9 +146,10 @@ class AgentTools(
 
     private suspend fun setDevice(alias: String, capabilityId: String, raw: JsonElement?): ToolResult {
         val device = view.device(alias) ?: return unknown(alias)
-        val capability = device.capability(capabilityId)
+        val capability = capabilityOf(device, capabilityId)
             ?: return ok("${device.name} has no $capabilityId. It has: ${device.capabilities.filter { it.setable }.joinToString { it.id }}.")
         if (!capability.setable) return ok("$capabilityId on ${device.name} can only be read.")
+        @Suppress("NAME_SHADOWING") val capabilityId = capability.id
         val value = coerce(capability, raw) ?: return ok("\"${raw?.let(::text)}\" isn't a valid value for $capabilityId on ${device.name}.")
         val lo = localOnly(device.secret)
 
@@ -172,13 +173,17 @@ class AgentTools(
 
     private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String): ToolResult {
         val roomId = view.room(room) ?: return ok("There's no room called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
-        val targets = view.devices.filter { d ->
-            d.roomId == roomId && d.secret == null && (cls.isBlank() || d.deviceClass == cls) && d.capability(capabilityId)?.setable == true
+        val wantedClass = classOf(cls)
+        val targets = view.devices.mapNotNull { d ->
+            if (d.roomId != roomId || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
+            // "Everything off in the kitchen" shouldn't reach a hidden fridge plug; name the class to include them.
+            if (d.hiddenOnDashboard && wantedClass == null) return@mapNotNull null
+            capabilityOf(d, capabilityId)?.takeIf { it.setable }?.let { d to it }
         }
         if (targets.isEmpty()) return ok("Nothing in ${view.rooms[roomId]} has $capabilityId.")
-        val changed = targets.mapNotNull { d ->
-            val value = coerce(d.capability(capabilityId)!!, raw) ?: return@mapNotNull null
-            home.setCapability(d.id, capabilityId, value)
+        val changed = targets.mapNotNull { (d, c) ->
+            val value = coerce(c, raw) ?: return@mapNotNull null
+            home.setCapability(d.id, c.id, value)
             d.name
         }
         return ok("Changed ${changed.size}: ${changed.joinToString()}.")
@@ -320,7 +325,14 @@ class AgentTools(
         return view.devices.any { d -> d.secret != null && d.name.length > 2 && d.name.lowercase() in q }
     }
 
-    private fun unknown(alias: String) = ok("I can't see a device called $alias. Use an alias from the list.")
+    private fun unknown(alias: String): ToolResult {
+        val near = view.similarDevices(alias)
+        return ok(
+            if (near.isEmpty()) "I can't see a device called $alias. Use an alias from the list."
+            else "\"$alias\" could be: " + near.joinToString { "${it.alias} \"${it.name}\"" + (it.room?.let { r -> " ($r)" } ?: "") } +
+                ". Pick one, or ask the user which they mean.",
+        )
+    }
 
     private fun ok(text: String) = ToolResult(text)
 
@@ -352,6 +364,36 @@ class AgentTools(
                 }
                 "enum" -> c.choices?.firstOrNull { it.equals(s, ignoreCase = true) }?.let(::JsonPrimitive)
                 else -> JsonPrimitive(s)
+            }
+        }
+
+        /** Everyday words models use for capabilities, mapped to Homey's ids. */
+        private val CAPABILITY_WORDS = mapOf(
+            "on" to "onoff", "off" to "onoff", "power" to "onoff", "switch" to "onoff", "state" to "onoff", "on_off" to "onoff",
+            "brightness" to "dim", "level" to "dim", "dimmer" to "dim", "dimming" to "dim",
+            "temperature" to "target_temperature", "temp" to "target_temperature", "setpoint" to "target_temperature",
+            "volume" to "volume_set", "mute" to "volume_mute", "play" to "speaker_playing", "playing" to "speaker_playing",
+            "color" to "light_hue", "colour" to "light_hue", "hue" to "light_hue", "saturation" to "light_saturation",
+            "color_temperature" to "light_temperature", "colour_temperature" to "light_temperature",
+            "position" to "windowcoverings_set", "blinds" to "windowcoverings_set",
+        )
+
+        /** The capability [id] names on [d], also when the model used an everyday word for it. */
+        fun capabilityOf(d: AgentDevice, id: String): AgentCapability? {
+            val key = id.trim().lowercase()
+            d.capability(key)?.let { return it }
+            CAPABILITY_WORDS[key]?.let { d.capability(it) }?.let { return it }
+            // A sub-capability like onoff.1 when only that exists.
+            return d.capabilities.filter { it.id.substringBefore('.') == key }.singleOrNull()
+        }
+
+        /** A device class from what the model sent: "lights" and "lamps" mean light. */
+        private fun classOf(cls: String): String? {
+            val c = cls.trim().lowercase().removeSuffix("s")
+            return when {
+                c.isBlank() -> null
+                c == "lamp" || c == "lampa" || c == "lampor" || c == "ljus" -> "light"
+                else -> c
             }
         }
 

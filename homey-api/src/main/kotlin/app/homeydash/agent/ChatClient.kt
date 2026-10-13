@@ -63,6 +63,26 @@ class ChatClient(http: OkHttpClient) {
         }
     }
 
+    private var warmed = 0L
+
+    /**
+     * Loads a local Ollama model into memory ahead of the question, so the answer doesn't
+     * wait for it; called when the assistant starts listening. Other providers need nothing.
+     */
+    suspend fun warm(connection: Connection) = withContext(Dispatchers.IO) {
+        if (connection.provider != Provider.Ollama) return@withContext
+        val now = System.currentTimeMillis()
+        if (now - warmed < WARM_EVERY_MS) return@withContext
+        warmed = now
+        val base = connection.baseUrl.trimEnd('/').removeSuffix("/v1")
+        val body = buildJsonObject {
+            put("model", connection.model)
+            put("keep_alive", "2h")
+        }.toString()
+        val request = Request.Builder().url("$base/api/generate").post(body.toRequestBody(JSON)).build()
+        runCatching { localHttp.newCall(request).execute().close() }.onFailure { warmed = 0L }
+    }
+
     /** Checks a connection with a tiny question; returns null when it works, else what went wrong. */
     suspend fun test(connection: Connection): String? = try {
         complete(connection, listOf(ChatMessage.user("Reply with the word OK.")), emptyList())
@@ -73,6 +93,7 @@ class ChatClient(http: OkHttpClient) {
 
     companion object {
         private val JSON = "application/json".toMediaType()
+        private const val WARM_EVERY_MS = 5 * 60 * 1000L
         private val Lenient = Json { ignoreUnknownKeys = true; isLenient = true }
 
         /** [noThinking] turns off a local model's reasoning step, so spoken answers come quickly. */

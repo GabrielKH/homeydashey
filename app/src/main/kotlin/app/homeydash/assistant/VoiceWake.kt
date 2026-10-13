@@ -173,11 +173,11 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         stop()
         val gen = generation
         scope.launch(Dispatchers.Main) {
-            val loaded = withContext(Dispatchers.IO) { runCatching { load() } }
+            val loaded = withContext(Dispatchers.IO) { runCatching { load(); models.vocabulary } }
             if (gen != generation) return@launch
             loaded.exceptionOrNull()?.let { onError("Couldn't load the voice model: ${it.message}"); return@launch }
             val rec = try {
-                Recognizer(model, RATE.toFloat(), WakeName.grammar(name)).apply {
+                Recognizer(model, RATE.toFloat(), WakeName.grammar(name, loaded.getOrNull())).apply {
                     setSpeakerModel(speakerModel)
                     setWords(true)
                 }

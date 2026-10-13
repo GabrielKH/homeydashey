@@ -148,6 +148,7 @@ class Assistant(
         services.output.stop()
         job?.cancel()
         services.onActive?.invoke()
+        warmUp()
         open = true
         partial = ""
         state = AssistantState.Listening
@@ -178,6 +179,12 @@ class Assistant(
                 }
             }
         })
+    }
+
+    /** Loads a local model while the question is still being said, so the answer starts sooner. */
+    private fun warmUp() {
+        val local = settings.local?.takeIf { it.usable && settings.mode != BrainMode.Internet } ?: return
+        scope.launch { services.chat.warm(local) }
     }
 
     /** Listens again if the conversation is still open, otherwise goes quiet. */
@@ -243,6 +250,8 @@ class Assistant(
 
     fun send(text: String, byVoice: Boolean = false) {
         if (text.isBlank()) return
+        // Heard with the microphone left open after an answer: may be people talking, not a question.
+        val followUp = byVoice && conversing
         lastByVoice = byVoice
         // A typed question ends a spoken conversation.
         if (!byVoice) {
@@ -260,7 +269,7 @@ class Assistant(
                     text.trim(), s,
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
-                    context = AskContext(speaker = speakerName(s), person = person),
+                    context = AskContext(speaker = speakerName(s), person = person, followUp = followUp),
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -319,6 +328,12 @@ class Assistant(
     }
 
     private suspend fun show(reply: AgentReply) {
+        if (reply.ignored) {
+            // Not meant for the assistant: drop what was heard and keep listening quietly.
+            if (lines.lastOrNull()?.fromUser == true) lines.removeAt(lines.lastIndex)
+            listenAgainOrRest()
+            return
+        }
         pending = services.agent.pending
         val brain: Connection? = reply.brain
         lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local)

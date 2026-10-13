@@ -58,7 +58,7 @@ class SpeechInput(private val context: Context) {
     fun start(language: Language, preferOnDevice: Boolean, listener: Listener) {
         val attempts = attempts(language, preferOnDevice)
         val key = language to preferOnDevice
-        listenWith(attempts, (working[key] ?: 0).coerceAtMost(attempts.size - 1), key, listener)
+        listenWith(attempts, (working[key] ?: 0).coerceAtMost(attempts.size - 1), key, listener, retries = 0)
     }
 
     private fun attempts(language: Language, preferOnDevice: Boolean): List<Attempt> {
@@ -79,27 +79,39 @@ class SpeechInput(private val context: Context) {
         }
     }
 
-    private fun listenWith(attempts: List<Attempt>, index: Int, key: Pair<Language, Boolean>, listener: Listener) {
+    private fun listenWith(attempts: List<Attempt>, index: Int, key: Pair<Language, Boolean>, listener: Listener, retries: Int) {
         stop()
         val a = attempts[index]
         val r = if (a.onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = r
+        // Callbacks from a recogniser that was already replaced are ignored.
+        val current = { recognizer === r }
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 working[key] = index
             }
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) = listener.onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
+            override fun onRmsChanged(rmsdB: Float) {
+                if (current()) listener.onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
+            }
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() = listener.onLevel(0f)
+            override fun onEndOfSpeech() {
+                if (current()) listener.onLevel(0f)
+            }
             override fun onError(error: Int) {
+                if (!current()) return
+                // The recognition service hiccups (busy, restarting, dropped connection); try again quietly.
+                if (error in TRANSIENT && retries < MAX_RETRIES) {
+                    main.postDelayed({ if (current()) listenWith(attempts, index, key, listener, retries + 1) }, RETRY_DELAY_MS * (retries + 1))
+                    return
+                }
                 val missingLanguage = error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
-                if (missingLanguage && recognizer === r) {
+                if (missingLanguage) {
                     // Ask Android to fetch the pack for next time, where it can.
                     if (a.onDevice && Build.VERSION.SDK_INT >= 33) runCatching { r.triggerModelDownload(intent(a)) }
                     if (index + 1 < attempts.size) {
                         working[key] = index + 1
-                        listenWith(attempts, index + 1, key, listener)
+                        listenWith(attempts, index + 1, key, listener, retries = 0)
                         return
                     }
                 }
@@ -109,13 +121,20 @@ class SpeechInput(private val context: Context) {
                         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The assistant needs the microphone permission."
                         SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the network."
                         SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> MISSING_LANGUAGE
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy."
-                        else -> "Speech recognition failed ($error)."
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy; another app may be using it."
+                        SpeechRecognizer.ERROR_AUDIO -> "The microphone didn't record (error 3)."
+                        SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
+                            "Google's speech service didn't answer (error $error). Check the tablet's internet."
+                        else -> "Speech recognition failed (error $error)."
                     },
                 )
             }
-            override fun onResults(results: Bundle?) = listener.onResult(best(results))
-            override fun onPartialResults(partialResults: Bundle?) = listener.onPartial(best(partialResults))
+            override fun onResults(results: Bundle?) {
+                if (current()) listener.onResult(best(results))
+            }
+            override fun onPartialResults(partialResults: Bundle?) {
+                if (current()) listener.onPartial(best(partialResults))
+            }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
         r.startListening(intent(a))
@@ -126,7 +145,20 @@ class SpeechInput(private val context: Context) {
         recognizer = null
     }
 
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
     companion object {
+        private const val MAX_RETRIES = 2
+        private const val RETRY_DELAY_MS = 350L
+        private val TRANSIENT = setOf(
+            SpeechRecognizer.ERROR_CLIENT,
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+            SpeechRecognizer.ERROR_SERVER,
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
+            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS,
+            SpeechRecognizer.ERROR_AUDIO,
+        )
+
         const val MISSING_LANGUAGE =
             "Speech recognition on this tablet has no Swedish or English yet. Tap \"Speech settings\" and add them there."
 
