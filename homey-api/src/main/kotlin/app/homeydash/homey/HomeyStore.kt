@@ -71,8 +71,11 @@ class HomeyStore(
         }
     }
 
-    /** Sets a capability, showing the new value at once and rolling back if Homey refuses. */
-    suspend fun setCapability(deviceId: String, capabilityId: String, value: JsonElement) {
+    /**
+     * Sets a capability, showing the new value at once and rolling back if Homey refuses.
+     * With [rethrow], the refusal is also thrown, so the assistant can say it failed.
+     */
+    suspend fun setCapability(deviceId: String, capabilityId: String, value: JsonElement, rethrow: Boolean = false) {
         val before = _snapshot.value.devices[deviceId]
         apply(HomeyEvent.CapabilityChanged(deviceId, capabilityId, value))
         try {
@@ -80,6 +83,7 @@ class HomeyStore(
         } catch (e: Exception) {
             if (before != null) apply(HomeyEvent.DeviceChanged(before))
             _snapshot.update { it.copy(error = "Couldn't change ${before?.name ?: "device"}: ${e.message}") }
+            if (rethrow) throw e
         }
     }
 

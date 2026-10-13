@@ -323,6 +323,14 @@ private fun Bubble(line: Line, partial: Boolean = false) {
                 .then(if (line.fromUser) Modifier.background(g.fg.copy(alpha = if (partial) 0.55f else 0.9f), shape) else Modifier.glass(shape))
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         )
+        if (line.actions.isNotEmpty()) {
+            Text(
+                line.actions.joinToString("\n"),
+                style = MaterialTheme.typography.bodySmall,
+                color = g.muted,
+                modifier = Modifier.widthIn(max = 340.dp).padding(horizontal = 6.dp),
+            )
+        }
         if (line.speechSettings) SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
     }
 }

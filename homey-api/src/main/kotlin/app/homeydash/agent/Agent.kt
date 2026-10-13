@@ -73,6 +73,9 @@ class Agent(
             }
         }
 
+        // Plain on, off and dim commands are done straight away, without the AI.
+        quick(text, view(true), tools)?.let { return it }
+
         val brains = settings.brains()
         if (brains.isEmpty()) {
             return AgentReply("Set up the assistant first: Settings, then Assistant.", error = true)
@@ -103,12 +106,13 @@ class Agent(
                             return@repeat
                         }
                         remember(turn, localOnly)
+                        if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
                         return AgentReply(answer.content.orEmpty().ifBlank { "Okay." }, brain, pending, actions = actions)
                     }
                     for (call in answer.toolCalls) {
                         acted = true
                         val result = toolbox.run(call)
-                        actions += "${call.name} ${call.arguments}"
+                        actions += "${call.name} ${call.arguments} → ${result.text.take(140)}"
                         localOnly = localOnly || result.localOnly
                         result.pending?.let { pending = it }
                         turn += ChatMessage.tool(call.id, result.text)
@@ -126,6 +130,16 @@ class Agent(
             }
         }
         return AgentReply(lastError ?: "No connection answered.", error = true)
+    }
+
+    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools): AgentReply? {
+        val action = QuickCommand.parse(text, view) ?: return null
+        val call = QuickCommand.call(action)
+        val result = tools(view).run(call)
+        val ok = result.text.startsWith("Done") || result.text.startsWith("Changed")
+        val reply = if (ok) QuickCommand.done(action, view) else result.text
+        remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
+        return AgentReply(reply, error = !ok, actions = listOf("${call.name} ${call.arguments} → ${result.text.take(140)} (without the AI)"))
     }
 
     /** Runs or drops the action waiting for a yes. */

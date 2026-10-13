@@ -161,8 +161,28 @@ class ChatClient(http: OkHttpClient) {
 
         private val TOOL_CALL_TAG = Regex("""<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>""")
 
-        /** Tool calls written into the answer text, as <tool_call>{…}</tool_call> or bare JSON, and the text left over. */
+        private val XML_FUNCTION = Regex("""<function=([\w.-]+)>([\s\S]*?)</function>""")
+        private val XML_PARAMETER = Regex("""<parameter=([\w.-]+)>\s*([\s\S]*?)\s*</parameter>""")
+        private val TOOL_CALL_BLOCK = Regex("""<tool_call>[\s\S]*?(</tool_call>|$)""")
+
+        /**
+         * Tool calls written into the answer text, and the text left over: Qwen's XML form
+         * (<function=set_device><parameter=device>light_3</parameter></function>),
+         * <tool_call>{json}</tool_call>, or bare JSON.
+         */
         fun callsInText(content: String): Pair<List<ToolCall>, String> {
+            val xml = XML_FUNCTION.findAll(content).mapIndexed { i, m ->
+                val args = XML_PARAMETER.findAll(m.groupValues[2]).associate { p -> p.groupValues[1] to JsonPrimitive(p.groupValues[2].trim()) }
+                ToolCall("call_text_$i", m.groupValues[1], JsonObject(args))
+            }.toList()
+            if (xml.isNotEmpty()) {
+                val rest = content.replace(TOOL_CALL_BLOCK, "").replace(XML_FUNCTION, "").trim()
+                return xml to rest
+            }
+            return jsonCallsInText(content)
+        }
+
+        private fun jsonCallsInText(content: String): Pair<List<ToolCall>, String> {
             val tagged = TOOL_CALL_TAG.findAll(content).toList()
             val raws = if (tagged.isNotEmpty()) tagged.map { it.groupValues[1] } else listOf(content.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim())
             val calls = raws.mapIndexedNotNull { i, raw ->

@@ -457,6 +457,10 @@ class AgentTest {
         assertEquals("Okej.", rest)
         assertEquals("set_room", ChatClient.callsInText("""{"name":"set_room","arguments":"{\"room\":\"kök\"}"}""").first.single().name)
         assertTrue(ChatClient.callsInText("Lampan är tänd.").first.isEmpty())
+        val xml = ChatClient.callsInText("Jag tänder den.\n<tool_call>\n<function=set_device>\n<parameter=device>\nlight_1\n</parameter>\n<parameter=value>\ntrue\n</parameter>\n</function>\n</tool_call>")
+        assertEquals("set_device", xml.first.single().name)
+        assertEquals("light_1", (xml.first.single().arguments["device"] as JsonPrimitive).content)
+        assertEquals("Jag tänder den.", xml.second)
     }
 
     @Test fun `a promise without a tool call gets one nudge`() = runTest {
@@ -467,9 +471,33 @@ class AgentTest {
         server.start()
         val home = FakeHome()
         val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
-        val reply = Agent(ChatClient(OkHttpClient())).ask("turn on the kitchen lamp", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) })
+        val reply = Agent(ChatClient(OkHttpClient())).ask("it's dark by the stove", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) })
         assertEquals("Done.", reply.text)
         assertEquals(Triple("d-lamp", "onoff", JsonPrimitive(true)), home.sets.single())
         server.shutdown()
+    }
+
+    @Test fun `plain on, off and dim commands run without the AI`() = runTest {
+        val v = view()
+        val lamp = QuickCommand.parse("Tänd kitchen lamp!", v)!!
+        assertEquals("Kitchen lamp", lamp.device?.name)
+        assertEquals(true, lamp.on)
+        assertTrue(lamp.swedish)
+        assertEquals(0.3, QuickCommand.parse("sätt kitchen lamp till 30 %", v)!!.dim!!, 1e-9)
+        assertEquals(false, QuickCommand.parse("turn the spots off", v)!!.on)
+        val room = QuickCommand.parse("turn off the lights in the kitchen", v)!!
+        assertNull(room.device)
+        assertEquals("z-kitchen", room.roomId)
+        assertNull(QuickCommand.parse("what's the weather", v))
+        assertNull(QuickCommand.parse("turn on the garage door", v))
+        // Speech often drops the "på": a bare "sätt" on a lamp turns it on.
+        assertEquals(true, QuickCommand.parse("sätt kitchen lamp", v)!!.on)
+        assertNull(QuickCommand.parse("sätt en timer", v))
+
+        // Through the agent: no AI is set up at all, and it still works.
+        val home = FakeHome()
+        val reply = Agent(ChatClient(OkHttpClient())).ask("släck spots", AgentSettings(), { view(local = it) }, { AgentTools(it, home, FakeDashboard()) })
+        assertEquals("Spots är släckt.", reply.text)
+        assertEquals(Triple("d-spot", "onoff", JsonPrimitive(false)), home.sets.single())
     }
 }

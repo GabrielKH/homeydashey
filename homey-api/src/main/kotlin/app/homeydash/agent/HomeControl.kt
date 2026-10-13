@@ -57,7 +57,7 @@ class StoreHomeControl(
     private val cards: () -> Map<String, List<FlowCardAction>>,
 ) : HomeControl {
     override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) =
-        store.setCapability(deviceId, capability, value)
+        store.setCapability(deviceId, capability, value, rethrow = true)
 
     override suspend fun setMood(mood: Mood) = store.setMood(mood)
 

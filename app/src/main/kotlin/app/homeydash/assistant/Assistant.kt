@@ -70,6 +70,8 @@ data class Line(
     val local: Boolean? = null,
     /** Speech recognition lacks a language: the line offers a way to Android's speech settings. */
     val speechSettings: Boolean = false,
+    /** What the assistant did for this answer and what Homey said, shown small under it. */
+    val actions: List<String> = emptyList(),
 )
 
 /** A kitchen timer started by voice or by hand. */
@@ -374,7 +376,7 @@ class Assistant(
         }
         pending = services.agent.pending
         val brain: Connection? = reply.brain
-        lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local)
+        lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions)
         if (settings.speak && !reply.error) say(reply.text)
         state = AssistantState.Idle
         // A spoken question, or a yes/no question, is followed by listening for the next one.
