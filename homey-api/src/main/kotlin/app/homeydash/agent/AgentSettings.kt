@@ -83,6 +83,9 @@ data class AgentSettings(
     }
 
     /** The connections to try for one question, in order. */
+    /** The connection that looks things up on the internet; never in "Local only" mode. */
+    fun webSearch(): Connection? = internet?.takeIf { it.usable && mode != BrainMode.Local }
+
     fun brains(): List<Connection> {
         val l = local?.takeIf { it.usable }
         val i = internet?.takeIf { it.usable }

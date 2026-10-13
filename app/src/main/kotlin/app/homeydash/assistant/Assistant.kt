@@ -28,6 +28,7 @@ import app.homeydash.agent.PendingAction
 import app.homeydash.agent.Role
 import app.homeydash.agent.Secret
 import app.homeydash.agent.StoreHomeControl
+import app.homeydash.agent.WebSearch
 import app.homeydash.homey.Device
 import app.homeydash.homey.HomeyStore
 import kotlinx.coroutines.CancellationException
@@ -50,6 +51,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val output = SpeechOutput(appContext)
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
+    val web = WebSearch(http)
     val voiceModels = VoiceModels(appContext, http, scope)
     val wake = WakeListener(voiceModels, scope)
 }
@@ -173,7 +175,7 @@ class Assistant(
                 services.agent.ask(
                     text.trim(), s,
                     view = { local -> view(s, local) },
-                    tools = { v -> AgentTools(v, home, bridge) },
+                    tools = { v -> tools(v) },
                     context = AskContext(speaker = speakerName(s), person = person),
                 )
             } catch (e: CancellationException) {
@@ -203,8 +205,10 @@ class Assistant(
     /** What a brain would get, for Settings → Assistant → What the assistant sees. */
     fun preview(local: Boolean): Pair<HomeView, AgentTools> {
         val v = view(settings, local)
-        return v to AgentTools(v, home, bridge)
+        return v to tools(v)
     }
+
+    private fun tools(v: HomeView) = AgentTools(v, home, bridge, web = services.web.lookup(v.settings.webSearch()))
 
     private fun view(s: AgentSettings, local: Boolean): HomeView {
         val snap = store.snapshot.value

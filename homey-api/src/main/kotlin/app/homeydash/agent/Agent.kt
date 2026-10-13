@@ -77,6 +77,7 @@ class Agent(
         for ((index, brain) in brains.withIndex()) {
             val homeView = view(brain.local)
             val toolbox = tools(homeView)
+            toolbox.privateContext = brain.local && history.any { it.localOnly }
             val specs = toolbox.specs()
             val earlier = history.filter { brain.local || !it.localOnly }.flatMap { it.messages }
             val turn = mutableListOf(ChatMessage.user(text))
@@ -166,7 +167,8 @@ class Agent(
         append("if something isn't listed, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
-        append("Never reveal or guess codes, passwords or keys.\n")
+        append("Never reveal or guess codes, passwords or keys. ")
+        append("For general questions you can't answer for sure, use ask_internet if you have it instead of guessing.\n")
         append("\nThe home now (alias \"name\" class: capability=value [set range]):\n")
         append(view.describe())
     }

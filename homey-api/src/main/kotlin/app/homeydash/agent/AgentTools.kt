@@ -31,7 +31,15 @@ class AgentTools(
     private val home: HomeControl,
     private val dashboard: DashboardControl,
     private val today: () -> LocalDate = { LocalDate.now() },
+    /** Looks things up on the internet; null when no internet AI is set up. */
+    private val web: WebLookup? = null,
 ) {
+    /**
+     * Set once this conversation has seen something kept to the local AI; from then on
+     * nothing is looked up on the internet, so it can't slip out inside a question.
+     */
+    var privateContext = false
+
     fun specs(): List<ToolSpec> = buildList {
         add(tool("set_device", "Change one device: switch, dim, colour, temperature, volume, play/pause, blinds. Use the device alias and a capability marked [set].") {
             string("device", "Device alias, e.g. light_3")
@@ -90,12 +98,21 @@ class AgentTools(
         })
         if (view.allows(Secret.Presence)) add(tool("who_is_home", "Which Homey users are home or asleep.") {})
         if (view.allows(Secret.Variables)) add(tool("variables", "Homey Logic variables and their values.") {})
+        if (web != null) add(tool(
+            "ask_internet",
+            "Look up something you don't know on the internet: news, sport, opening hours, facts, recipes, prices. " +
+                "Send only a short general question. Never put anything about this home in it: no devices, rooms, people, calendar or tool results.",
+        ) {
+            string("question", "A self-contained general question")
+            required("question")
+        })
     }
 
     private val guest get() = view.settings.guest
 
     suspend fun run(call: ToolCall): ToolResult =
-        if (guest && call.name in GUEST_BLOCKED) ok("Guests can't do that.") else runAllowed(call)
+        (if (guest && call.name in GUEST_BLOCKED) ok("Guests can't do that.") else runAllowed(call))
+            .also { if (it.localOnly) privateContext = true }
 
     private suspend fun runAllowed(call: ToolCall): ToolResult = try {
         val a = call.arguments
@@ -116,6 +133,7 @@ class AgentTools(
             "calendar" -> calendar(a.str("start_date"), a.num("days"))
             "who_is_home" -> whoIsHome()
             "variables" -> variables()
+            "ask_internet" -> askInternet(a.str("question"))
             else -> ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -285,11 +303,29 @@ class AgentTools(
         return ToolResult(text, localOnly(Secret.Variables))
     }
 
+    private suspend fun askInternet(question: String): ToolResult {
+        val lookup = web ?: return ok("No internet AI is set up.")
+        if (question.isBlank()) return ok("Ask a question.")
+        if (privateContext) {
+            return ok("This conversation includes private things, so nothing is looked up on the internet now. Answer from what you know.")
+        }
+        if (mentionsHome(question)) return ok("Leave this home's devices, rooms and people out of internet questions; ask a general question instead.")
+        return ok(lookup.answer(question, view.settings.language))
+    }
+
+    /** Whether a question names a device alias or a guarded device, which must stay home. */
+    private fun mentionsHome(question: String): Boolean {
+        val q = question.lowercase()
+        if (ALIAS.containsMatchIn(q)) return true
+        return view.devices.any { d -> d.secret != null && d.name.length > 2 && d.name.lowercase() in q }
+    }
+
     private fun unknown(alias: String) = ok("I can't see a device called $alias. Use an alias from the list.")
 
     private fun ok(text: String) = ToolResult(text)
 
     companion object {
+        private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)_\d+\b""")
         private val GUEST_BLOCKED = setOf("list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */

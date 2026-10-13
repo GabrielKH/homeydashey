@@ -129,9 +129,10 @@ private fun Main(
     Segmented(BrainMode.entries, settings.mode, { it.label }) { m -> update { it.copy(mode = m) } }
     Text(
         when (settings.mode) {
-            BrainMode.Smart -> "Your PC first. When it's off or can't answer, the internet AI takes over."
+            BrainMode.Smart -> "Your PC first. When it's off or can't answer, the internet AI takes over. " +
+                "For things it doesn't know, like news or opening hours, your PC asks the internet AI with web search, sending only the question."
             BrainMode.Local -> "Only Ollama on your PC. Nothing leaves the house, except speech recognition when the tablet can't do it on its own."
-            BrainMode.Internet -> "Only Gemini or OpenAI."
+            BrainMode.Internet -> "Only Gemini or OpenAI, which can search the web."
         },
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,

@@ -317,4 +317,46 @@ class AgentTest {
         assertNull(FaceMatcher.matchVoice(floatArrayOf(0f, 0f, 1f), listOf(g)))
         assertNull(FaceMatcher.match(floatArrayOf(1f, 0.2f, 0f), listOf(g)))
     }
+
+    @Test fun `ask_internet sends only general questions and stops after private results`() = runTest {
+        val asked = mutableListOf<String>()
+        val web = WebLookup { q, _ -> asked += q; "Open until 20." }
+        val settings = AgentSettings(secrets = mapOf(Secret.Calendar to Access.LocalOnly))
+        assertFalse(AgentTools(view(settings), FakeHome(), FakeDashboard()).specs().any { it.name == "ask_internet" })
+        val tools = AgentTools(view(settings), FakeHome(), FakeDashboard(), web = web)
+        assertTrue(tools.specs().any { it.name == "ask_internet" })
+        assertEquals("Open until 20.", tools.run(call("ask_internet", "question" to "When does ICA Maxi close today?")).text)
+        assertTrue(tools.run(call("ask_internet", "question" to "Is light_1 a good lamp?")).text.startsWith("Leave"))
+        tools.run(call("calendar"))
+        assertTrue(tools.privateContext)
+        assertTrue(tools.run(call("ask_internet", "question" to "Who is the dentist?")).text.contains("private"))
+        assertEquals(listOf("When does ICA Maxi close today?"), asked)
+    }
+
+    @Test fun `web search is off in local only mode`() {
+        val gemini = Connection(Provider.Gemini, apiKey = "k")
+        assertEquals(gemini, AgentSettings(internet = gemini, mode = BrainMode.Smart).webSearch())
+        assertNull(AgentSettings(internet = gemini, mode = BrainMode.Local).webSearch())
+        assertNull(AgentSettings(internet = Connection(Provider.Gemini), mode = BrainMode.Smart).webSearch())
+    }
+
+    @Test fun `gemini web search uses the native API with google search`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"candidates":[{"content":{"parts":[{"text":"It closes "},{"text":"at 20."}]}}]}"""))
+        server.start()
+        val c = Connection(Provider.Gemini, baseUrl = server.url("/v1beta/openai").toString(), apiKey = "key", model = "gemini-2.5-flash")
+        val answer = WebSearch(OkHttpClient()).lookup(c)!!.answer("When does ICA close?", Language.Auto)
+        assertEquals("It closes at 20.", answer)
+        val request = server.takeRequest()
+        assertEquals("/v1beta/models/gemini-2.5-flash:generateContent", request.path)
+        assertEquals("key", request.getHeader("x-goog-api-key"))
+        assertTrue(request.body.readUtf8().contains("google_search"))
+        server.shutdown()
+    }
+
+    @Test fun `openai web search reads the responses output`() {
+        val body = """{"output":[{"type":"web_search_call"},{"type":"message","content":[{"type":"output_text","text":"Sunny tomorrow."}]}]}"""
+        assertEquals("Sunny tomorrow.", WebSearch.parseOpenAi(body))
+        assertTrue(WebSearch.openAiBody("gpt-4.1-mini", "q").toString().contains("web_search"))
+    }
 }
