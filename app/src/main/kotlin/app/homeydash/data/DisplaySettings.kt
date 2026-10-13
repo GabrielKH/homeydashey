@@ -25,6 +25,12 @@ class DisplaySettings(
     val hiddenRooms: StateFlow<Set<String>> = settings.hiddenRooms.stateIn(scope, SharingStarted.Eagerly, emptySet())
     val roomOrder: StateFlow<List<String>> = settings.roomOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val backgrounds: StateFlow<Map<String, String>> = settings.backgrounds.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+    val remoteApps: StateFlow<Map<String, List<String>>> = settings.remoteApps.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    /** null goes back to the default: streaming apps first, then the rest. */
+    fun setRemoteApps(deviceId: String, apps: List<String>?) {
+        scope.launch { settings.setRemoteApps(deviceId, apps) }
+    }
 
     fun setThemeMode(mode: ThemeMode) {
         scope.launch { settings.setThemeMode(mode) }

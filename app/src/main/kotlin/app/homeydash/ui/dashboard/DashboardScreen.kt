@@ -245,6 +245,7 @@ fun DashboardScreen(
     val accent by display.accent.collectAsStateWithLifecycle()
     val accentOpacity by display.accentOpacity.collectAsStateWithLifecycle()
     val backgrounds by display.backgrounds.collectAsStateWithLifecycle()
+    val remoteApps by display.remoteApps.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
@@ -378,7 +379,16 @@ fun DashboardScreen(
     when (val sheet = actions.sheet) {
         null -> Unit
         is Sheet.Light -> snapshot.devices[sheet.deviceId]?.let { LightSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
-        is Sheet.Remote -> snapshot.devices[sheet.deviceId]?.let { RemoteSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
+        is Sheet.Remote -> snapshot.devices[sheet.deviceId]?.let { device ->
+            RemoteSheet(
+                device = device,
+                actions = actions,
+                others = snapshot.devices.values.toList(),
+                chosenApps = remoteApps[device.id],
+                onChooseApps = { display.setRemoteApps(device.id, it) },
+                onDismiss = actions::close,
+            )
+        } ?: SideEffect { actions.close() }
         is Sheet.Music -> MusicSheet(sheet.zoneId, sheet.deviceId, speakers, snapshot.zones, actions, actions::close)
         is Sheet.Group -> snapshot.devices[sheet.deviceId]?.let { GroupSheet(it, groupable, snapshot.zones, actions, actions::close) } ?: SideEffect { actions.close() }
         Sheet.Rooms -> RoomsDialog(

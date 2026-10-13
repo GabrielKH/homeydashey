@@ -37,14 +37,18 @@ object Remotes {
     fun keyItems(items: List<AutocompleteItem>): Map<RemoteKey, AutocompleteItem> {
         val result = linkedMapOf<RemoteKey, AutocompleteItem>()
         var play: AutocompleteItem? = null
+        var menu: AutocompleteItem? = null
         items.forEach { item ->
             val id = (item.raw["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
             val names = listOfNotNull(id, item.name)
             names.firstNotNullOfOrNull { keyName(it) }?.let { result.putIfAbsent(it, item) }
             if (play == null && names.any { name -> keyWords(name) == "play" }) play = item
+            if (menu == null && names.any { name -> keyWords(name) == "menu" }) menu = item
         }
         // Some TVs only have separate play and pause keys; play is the useful one.
         play?.let { result.putIfAbsent(RemoteKey.PlayPause, it) }
+        // The Apple TV calls its Back button "Menu".
+        menu?.let { result.putIfAbsent(RemoteKey.Back, it) }
         return result
     }
 
@@ -82,6 +86,24 @@ object Remotes {
         capabilityKeys(device).forEach { (key, action) -> result.putIfAbsent(key, action) }
         return result
     }
+
+    /**
+     * The TV in the same room that should take the volume keys, like a Siri Remote
+     * that turns the TV's volume. Null when the box has no TV beside it with volume.
+     */
+    fun volumeTv(device: Device, others: List<Pair<Device, List<FlowCardAction>>>): Pair<Device, Map<RemoteKey, RemoteAction>>? {
+        if (device.effectiveClass == "tv" || device.deviceClass == "tv") return null
+        return others.asSequence()
+            .filter { (other, _) -> other.id != device.id && other.zone == device.zone && (other.effectiveClass == "tv" || other.deviceClass == "tv") }
+            .map { (other, cards) ->
+                val keyCard = keyCard(cards)
+                val items = keyCard?.arg?.takeIf { it.type == "dropdown" }?.let { keyItems(FlowCards.dropdownItems(it)) }.orEmpty()
+                other to actions(other, cards, keyCard, items).filterKeys { it in VOLUME_KEYS }
+            }
+            .firstOrNull { (_, keys) -> RemoteKey.VolumeUp in keys || RemoteKey.VolumeDown in keys }
+    }
+
+    val VOLUME_KEYS = setOf(RemoteKey.VolumeUp, RemoteKey.VolumeDown, RemoteKey.Mute)
 
     /** Whether a device gets a Remote button: TVs and media boxes, never plain speakers. */
     fun hasRemote(device: Device, cards: List<FlowCardAction>): Boolean {

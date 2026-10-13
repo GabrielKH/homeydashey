@@ -133,8 +133,23 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** The apps each TV box's remote shows, in order, by device id; missing means the default. */
+    val remoteApps: Flow<Map<String, List<String>>> = context.dataStore.data.map { prefs ->
+        prefs.asMap().entries
+            .filter { it.key.name.startsWith(APPS_PREFIX) }
+            .associate { it.key.name.removePrefix(APPS_PREFIX) to it.value.toString().split('\n').filter { id -> id.isNotEmpty() } }
+    }
+
+    suspend fun setRemoteApps(deviceId: String, apps: List<String>?) {
+        context.dataStore.edit {
+            val pref = stringPreferencesKey(APPS_PREFIX + deviceId)
+            if (apps == null) it.remove(pref) else it[pref] = apps.joinToString("\n")
+        }
+    }
+
     private companion object {
         const val BG_PREFIX = "bg_"
+        const val APPS_PREFIX = "remote_apps_"
         val ACCENT = stringPreferencesKey("accent")
         val WEATHER_SOURCE = stringPreferencesKey("weather_source")
         val WEATHER_PLACE = stringPreferencesKey("weather_place")
