@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import app.homeydash.homey.Device
 import app.homeydash.ui.components.PillShape
 import app.homeydash.ui.components.RoundButton
+import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.TileShape

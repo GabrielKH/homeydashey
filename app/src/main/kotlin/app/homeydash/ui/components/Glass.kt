@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -31,6 +32,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -44,20 +46,25 @@ val PanelShape = RoundedCornerShape(26.dp)
 val TileShape = RoundedCornerShape(24.dp)
 val PillShape = RoundedCornerShape(percent = 50)
 
+/** The colours of a wallpaper: a base and three soft fields. */
+@Immutable
+data class WallPalette(val base: Color, val a: Color, val b: Color, val c: Color)
+
 /** Soft colour fields behind everything; drawn once, which is what makes the panels read as glass. */
 @Composable
-fun Wallpaper(modifier: Modifier = Modifier) {
+fun Wallpaper(modifier: Modifier = Modifier, palette: WallPalette? = null) {
     val g = GlassTheme.colors
+    val p = palette ?: WallPalette(g.wallBase, g.wallA, g.wallB, g.wallC)
     Canvas(modifier.fillMaxSize()) {
-        drawRect(g.wallBase)
+        drawRect(p.base)
         fun blob(color: Color, x: Float, y: Float, r: Float) {
             val center = Offset(size.width * x, size.height * y)
             val radius = size.maxDimension * r
             drawCircle(Brush.radialGradient(listOf(color, color.copy(alpha = 0f)), center, radius), radius, center)
         }
-        blob(g.wallA, 0.10f, 0.15f, 0.55f)
-        blob(g.wallB, 0.90f, 0.20f, 0.50f)
-        blob(g.wallC, 0.60f, 1.05f, 0.62f)
+        blob(p.a, 0.10f, 0.15f, 0.55f)
+        blob(p.b, 0.90f, 0.20f, 0.50f)
+        blob(p.c, 0.60f, 1.05f, 0.62f)
     }
 }
 
@@ -128,7 +135,7 @@ fun GlassPanel(
 /** An icon in a circle: glass when off, warm and filled when on. */
 @Composable
 fun Bubble(
-    icon: String,
+    icon: Ic,
     on: Boolean,
     modifier: Modifier = Modifier,
     size: Dp = 46.dp,
@@ -148,17 +155,20 @@ fun Bubble(
             size = size * 0.5f,
             tint = when {
                 on && onColor == null -> g.onInk
-                on -> Color.White
+                on -> inkOn(onColor!!)
                 else -> tint ?: g.fg
             },
         )
     }
 }
 
+/** Dark ink on light colours, white on dark ones. */
+fun inkOn(color: Color): Color = if (color.luminance() > 0.55f) Color(0xFF1A1B22) else Color.White
+
 /** Round glass button for media and steppers; [primary] is the solid play button. */
 @Composable
 fun RoundButton(
-    icon: String,
+    icon: Ic,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Dp = 48.dp,
@@ -182,7 +192,7 @@ fun RoundButton(
 
 /** Small status pill for headers: an icon and a short value. */
 @Composable
-fun GlassChip(icon: String, text: String, tint: Color, modifier: Modifier = Modifier, filled: Boolean = true, onClick: (() -> Unit)? = null) {
+fun GlassChip(icon: Ic, text: String, tint: Color, modifier: Modifier = Modifier, filled: Boolean = true, onClick: (() -> Unit)? = null) {
     Row(
         modifier
             .pressable(onClick)

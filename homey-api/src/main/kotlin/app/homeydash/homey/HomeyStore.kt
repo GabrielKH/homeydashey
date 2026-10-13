@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 data class HomeySnapshot(
     val zones: Map<String, Zone> = emptyMap(),
@@ -17,6 +18,8 @@ data class HomeySnapshot(
     val moods: Map<String, Mood> = emptyMap(),
     /** Devices hidden in the Homey app's user settings (on top of each device's own `hidden` flag). */
     val hiddenByUser: Set<String> = emptySet(),
+    /** Flow "Then" cards per device id: remote keys, "Play favorite" and the like. Empty without Flow access. */
+    val deviceCards: Map<String, List<FlowCardAction>> = emptyMap(),
     val loaded: Boolean = false,
     val error: String? = null,
 )
@@ -60,8 +63,9 @@ class HomeyStore(
             // Moods need their own permission on the API key; the dashboard works without them.
             val moods = runCatching { client.moods() }.getOrDefault(emptyMap())
             val hiddenByUser = runCatching { hiddenDeviceIds(client.userMe()) }.getOrDefault(emptySet())
+            val deviceCards = runCatching { FlowCards.byDevice(client.flowCardActions()) }.getOrDefault(emptyMap())
             devices.keys.forEach { realtime.subscribe(HomeyRealtime.deviceUri(it)) }
-            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, moods = moods, hiddenByUser = hiddenByUser, loaded = true)
+            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, moods = moods, hiddenByUser = hiddenByUser, deviceCards = deviceCards, loaded = true)
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = e.message ?: e.toString()) }
         }
@@ -93,6 +97,18 @@ class HomeyStore(
     }
 
     suspend fun image(path: String): ByteArray = client.image(path)
+
+    /** Runs a Flow card; failures show in the error banner. */
+    suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
+        try {
+            client.runAction(card, args)
+        } catch (e: Exception) {
+            _snapshot.update { it.copy(error = "Couldn't run ${card.title ?: card.cardId}: ${e.message}") }
+        }
+    }
+
+    suspend fun autocomplete(card: FlowCardAction, arg: String, query: String = ""): List<AutocompleteItem> =
+        client.autocomplete(card, arg, query)
 
     fun clearError() = _snapshot.update { it.copy(error = null) }
 

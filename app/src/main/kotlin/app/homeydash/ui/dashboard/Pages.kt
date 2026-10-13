@@ -45,6 +45,7 @@ import app.homeydash.homey.ZoneSection
 import app.homeydash.ui.components.Bubble
 import app.homeydash.ui.components.GlassChip
 import app.homeydash.ui.components.PillShape
+import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.TileShape

@@ -1,6 +1,8 @@
 package app.homeydash
 
 import android.content.Context
+import app.homeydash.data.BackgroundPhotos
+import app.homeydash.data.DisplaySettings
 import app.homeydash.data.SavedHomey
 import app.homeydash.data.SettingsRepository
 import app.homeydash.homey.HomeyConnectException
@@ -8,16 +10,13 @@ import app.homeydash.homey.HomeyConnector
 import app.homeydash.homey.HomeyInfo
 import app.homeydash.homey.HomeySession
 import app.homeydash.homey.HomeyStore
-import app.homeydash.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -41,17 +40,7 @@ class AppContainer(context: Context) {
     private val settings = SettingsRepository(context)
     private val connector = HomeyConnector(http)
 
-    val themeMode: StateFlow<ThemeMode> = settings.themeMode.stateIn(scope, SharingStarted.Eagerly, ThemeMode.System)
-
-    fun setThemeMode(mode: ThemeMode) {
-        scope.launch { settings.setThemeMode(mode) }
-    }
-
-    val hiddenDevices: StateFlow<Set<String>> = settings.hiddenDevices.stateIn(scope, SharingStarted.Eagerly, emptySet())
-
-    fun setHidden(deviceId: String, hidden: Boolean) {
-        scope.launch { settings.setHidden(deviceId, hidden) }
-    }
+    val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
 
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()

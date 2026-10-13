@@ -55,10 +55,40 @@ class HomeyClient(
         execute(request("api/manager/moods/mood/$id/set").post("{}".toRequestBody(JSON_TYPE)).build())
     }
 
-    /** Raw bytes of an image the Homey serves, e.g. album art; [path] is an `ImageObj.url`. */
+    suspend fun flowCardActions(): List<FlowCardAction> =
+        FlowCards.parseActions(HomeyJson.parseToJsonElement(execute(request("api/manager/flow/flowcardaction").get().build())))
+
+    /** Runs a Flow "Then" card, e.g. an Apple TV remote key; [args] are the card's arguments. */
+    suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
+        val body = buildJsonObject { put("args", args) }.toString()
+        execute(flowCardRequest(card, "run").post(body.toRequestBody(JSON_TYPE)).build())
+    }
+
+    /** The choices an autocomplete argument offers, such as Sonos favourites. */
+    suspend fun autocomplete(card: FlowCardAction, arg: String, query: String = ""): List<AutocompleteItem> {
+        val builder = flowCardRequest(card, "autocomplete")
+        val url = builder.build().url.newBuilder().addQueryParameter("name", arg).addQueryParameter("query", query).build()
+        return FlowCards.parseAutocomplete(HomeyJson.parseToJsonElement(execute(builder.url(url).get().build())))
+    }
+
+    private fun flowCardRequest(card: FlowCardAction, action: String): Request.Builder {
+        val url = baseUrl.newBuilder()
+            .addPathSegments("api/manager/flow/flowcardaction")
+            .addPathSegment(card.routeUri)
+            .addPathSegment(card.id)
+            .addPathSegment(action)
+            .build()
+        return Request.Builder().url(url).header("Authorization", "Bearer $token")
+    }
+
+    /**
+     * Raw bytes of an image: a Homey path such as an `ImageObj.url` (sent with the key),
+     * or a full URL an app gave, such as Sonos album art (sent without it).
+     */
     suspend fun image(path: String): ByteArray = withContext(Dispatchers.IO) {
         val url = baseUrl.resolve(path) ?: throw IOException("Bad image path $path")
-        val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+        val sameHost = url.host == baseUrl.host
+        val request = Request.Builder().url(url).apply { if (sameHost) header("Authorization", "Bearer $token") }.get().build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw HomeyHttpException(response.code, "Homey answered ${response.code} for $path")
             response.body?.bytes() ?: ByteArray(0)

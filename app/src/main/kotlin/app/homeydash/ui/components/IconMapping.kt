@@ -5,7 +5,7 @@ import app.homeydash.homey.Mood
 import app.homeydash.homey.Zone
 
 /** Picks a symbol for a device from its Homey class and capabilities. */
-fun deviceIcon(device: Device): String {
+fun deviceIcon(device: Device): Ic {
     val caps = device.capabilities.toSet()
     return when (device.effectiveClass) {
         "light" -> if (device.deviceClass == "socket") Sym.floorLamp else Sym.lightbulb
@@ -58,7 +58,7 @@ fun deviceIcon(device: Device): String {
 }
 
 /** Homey zone icon ids (and common room names, English and Swedish) to symbols. */
-fun zoneIcon(zone: Zone): String {
+fun zoneIcon(zone: Zone): Ic {
     val byIcon = when (zone.icon) {
         "home" -> Sym.home
         "kitchen" -> Sym.countertops
@@ -106,7 +106,7 @@ fun zoneIcon(zone: Zone): String {
 }
 
 /** Moods have no icon in Homey, so this guesses one from the name. */
-fun moodIcon(mood: Mood): String {
+fun moodIcon(mood: Mood): Ic {
     val name = mood.name.lowercase()
     return when {
         listOf("cook", "laga", "matlag", "baking", "bak").any { it in name } -> Sym.restaurant

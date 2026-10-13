@@ -95,40 +95,58 @@ private val Dark = GlassColors(
 
 val LocalGlass = staticCompositionLocalOf { Light }
 
-val Manrope = FontFamily(
-    Font(R.font.manrope_medium, FontWeight.Medium),
-    Font(R.font.manrope_medium, FontWeight.Normal),
-    Font(R.font.manrope_semibold, FontWeight.SemiBold),
-    Font(R.font.manrope_bold, FontWeight.Bold),
-    Font(R.font.manrope_extrabold, FontWeight.ExtraBold),
+/**
+ * Inter: the closest open typeface to Apple's SF Pro (which can't ship on Android),
+ * drawn for screens, with tabular figures for the clock and readings.
+ */
+val Inter = FontFamily(
+    Font(R.font.inter_regular, FontWeight.Normal),
+    Font(R.font.inter_medium, FontWeight.Medium),
+    Font(R.font.inter_semibold, FontWeight.SemiBold),
+    Font(R.font.inter_bold, FontWeight.Bold),
+    Font(R.font.inter_extrabold, FontWeight.ExtraBold),
 )
 
 // Large type throughout: the tablet is read from across the kitchen on a matte screen.
 private val GlassTypography = Typography(
-    displayLarge = TextStyle(fontFamily = Manrope, fontSize = 72.sp, lineHeight = 74.sp, fontWeight = FontWeight.Bold, letterSpacing = (-2).sp),
-    headlineLarge = TextStyle(fontFamily = Manrope, fontSize = 38.sp, lineHeight = 44.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.8).sp),
-    headlineMedium = TextStyle(fontFamily = Manrope, fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp),
-    titleLarge = TextStyle(fontFamily = Manrope, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.ExtraBold),
-    titleMedium = TextStyle(fontFamily = Manrope, fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.ExtraBold),
-    titleSmall = TextStyle(fontFamily = Manrope, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold),
-    bodyLarge = TextStyle(fontFamily = Manrope, fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
-    bodyMedium = TextStyle(fontFamily = Manrope, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
-    labelLarge = TextStyle(fontFamily = Manrope, fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Bold),
-    labelMedium = TextStyle(fontFamily = Manrope, fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp),
+    displayLarge = TextStyle(fontFamily = Inter, fontSize = 80.sp, lineHeight = 82.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-3).sp),
+    headlineLarge = TextStyle(fontFamily = Inter, fontSize = 36.sp, lineHeight = 42.sp, fontWeight = FontWeight.Bold, letterSpacing = (-1).sp),
+    headlineMedium = TextStyle(fontFamily = Inter, fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp),
+    titleLarge = TextStyle(fontFamily = Inter, fontSize = 21.sp, lineHeight = 27.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp),
+    titleMedium = TextStyle(fontFamily = Inter, fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
+    titleSmall = TextStyle(fontFamily = Inter, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.1).sp),
+    bodyLarge = TextStyle(fontFamily = Inter, fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium),
+    bodyMedium = TextStyle(fontFamily = Inter, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium),
+    labelLarge = TextStyle(fontFamily = Inter, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
+    labelMedium = TextStyle(fontFamily = Inter, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.9.sp),
 )
 
+/** The highlight for things that are on: lights, the active mood, toggles. */
+enum class Accent(val label: String, val top: Color, val deep: Color, val ink: Color) {
+    Lavender("Lavender", Color(0xFFA5B4FF), Color(0xFF8B7BFF), Color(0xFF14123A)),
+    Sky("Sky", Color(0xFF8FD3FF), Color(0xFF4FA3FF), Color(0xFF06223D)),
+    Mint("Mint", Color(0xFF9BF0D0), Color(0xFF3CCB9A), Color(0xFF05301F)),
+    Rose("Rose", Color(0xFFFFB3C7), Color(0xFFFF7EA1), Color(0xFF3D0817)),
+    Warm("Warm white", Color(0xFFFFF1D6), Color(0xFFFFD8A0), Color(0xFF3A2606)),
+}
+
 @Composable
-fun HomeyDashTheme(mode: ThemeMode = ThemeMode.System, content: @Composable () -> Unit) {
+fun HomeyDashTheme(mode: ThemeMode = ThemeMode.System, accent: Accent = Accent.Lavender, content: @Composable () -> Unit) {
     val dark = when (mode) {
         ThemeMode.System -> isSystemInDarkTheme()
         ThemeMode.Light -> false
         ThemeMode.Dark -> true
     }
-    val glass = if (dark) Dark else Light
+    val glass = (if (dark) Dark else Light).copy(
+        on = accent.top,
+        onDeep = accent.deep,
+        onInk = accent.ink,
+        onSoft = accent.deep.copy(alpha = if (dark) 0.30f else 0.36f),
+    )
     val colors = if (dark) {
-        darkColorScheme(primary = glass.on, onPrimary = glass.onInk, surface = glass.wallBase, onSurface = glass.fg, background = glass.wallBase)
+        darkColorScheme(primary = glass.onDeep, onPrimary = Color.White, surface = glass.wallBase, onSurface = glass.fg, background = glass.wallBase)
     } else {
-        lightColorScheme(primary = glass.on, onPrimary = glass.onInk, surface = glass.wallBase, onSurface = glass.fg, background = glass.wallBase)
+        lightColorScheme(primary = glass.onDeep, onPrimary = Color.White, surface = glass.wallBase, onSurface = glass.fg, background = glass.wallBase)
     }
     CompositionLocalProvider(LocalGlass provides glass) {
         MaterialTheme(colorScheme = colors, typography = GlassTypography, content = content)

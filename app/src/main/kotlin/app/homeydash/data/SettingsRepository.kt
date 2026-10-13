@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.homeydash.ui.theme.Accent
 import app.homeydash.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -13,7 +14,7 @@ data class SavedHomey(val address: String, val apiKey: String)
 
 private val Context.dataStore by preferencesDataStore(name = "homey")
 
-/** Remembers the Homey address and API key so they are entered only once, and the theme. */
+/** Remembers the Homey address and API key so they are entered only once, and the display preferences. */
 class SettingsRepository(private val context: Context) {
 
     val saved: Flow<SavedHomey?> = context.dataStore.data.map { prefs ->
@@ -55,7 +56,33 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    val accent: Flow<Accent> = context.dataStore.data.map { prefs ->
+        prefs[ACCENT]?.let { name -> Accent.entries.firstOrNull { it.name == name } } ?: Accent.Lavender
+    }
+
+    suspend fun setAccent(accent: Accent) {
+        context.dataStore.edit { it[ACCENT] = accent.name }
+    }
+
+    /** Backgrounds by key ("home" or a zone id), as [BackgroundSpec] strings. */
+    val backgrounds: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
+        prefs.asMap().entries
+            .filter { it.key.name.startsWith(BG_PREFIX) }
+            .associate { it.key.name.removePrefix(BG_PREFIX) to it.value.toString() }
+    }
+
+    /** Sets a background; null goes back to the default (a room then uses the home's). */
+    suspend fun setBackground(key: String, spec: String?) {
+        context.dataStore.edit {
+            val pref = stringPreferencesKey(BG_PREFIX + key)
+            if (spec == null) it.remove(pref) else it[pref] = spec
+        }
+    }
+
     private companion object {
+        const val BG_PREFIX = "bg_"
+        val ACCENT = stringPreferencesKey("accent")
+
         val ADDRESS = stringPreferencesKey("address")
         val API_KEY = stringPreferencesKey("api_key")
         val THEME = stringPreferencesKey("theme")

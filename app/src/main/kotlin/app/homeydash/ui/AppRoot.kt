@@ -34,11 +34,9 @@ import app.homeydash.ui.theme.GlassTheme
 @Composable
 fun AppRoot(container: AppContainer) {
     val session by container.session.collectAsStateWithLifecycle()
-    val themeMode by container.themeMode.collectAsStateWithLifecycle()
-    val hiddenOnTablet by container.hiddenDevices.collectAsStateWithLifecycle()
-
     Box(Modifier.fillMaxSize()) {
-        Wallpaper()
+        // The dashboard draws its own backdrop, which can differ per room.
+        if (session !is SessionState.Ready) Wallpaper()
         when (val state = session) {
             SessionState.Starting -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = GlassTheme.colors.fg)
             SessionState.NeedsSetup -> SetupScreen(onConnect = container::connect)
@@ -46,10 +44,7 @@ fun AppRoot(container: AppContainer) {
             is SessionState.Ready -> DashboardScreen(
                 store = state.store,
                 info = state.info,
-                themeMode = themeMode,
-                onThemeMode = container::setThemeMode,
-                hiddenOnTablet = hiddenOnTablet,
-                onSetHidden = container::setHidden,
+                display = container.display,
                 onForget = container::forget,
             )
         }

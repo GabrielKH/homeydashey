@@ -17,6 +17,7 @@ import androidx.compose.ui.window.Dialog
 import app.homeydash.homey.HomeyInfo
 import app.homeydash.ui.components.PanelShape
 import app.homeydash.ui.components.PillShape
+import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.glass

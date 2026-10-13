@@ -38,6 +38,7 @@ import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.Device
 import app.homeydash.ui.components.Bubble
 import app.homeydash.ui.components.RoundButton
+import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.TileShape
 import app.homeydash.ui.components.deviceIcon

@@ -52,13 +52,14 @@ import app.homeydash.homey.Mood
 import app.homeydash.homey.RoomSummary
 import app.homeydash.ui.components.PillShape
 import app.homeydash.ui.components.RoundButton
+import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.glass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.components.zoneIcon
 import app.homeydash.ui.theme.GlassTheme
-import app.homeydash.ui.theme.ThemeMode
+import app.homeydash.data.DisplaySettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -106,12 +107,11 @@ private const val ROOM = "room:"
 fun DashboardScreen(
     store: HomeyStore,
     info: HomeyInfo,
-    themeMode: ThemeMode,
-    onThemeMode: (ThemeMode) -> Unit,
-    hiddenOnTablet: Set<String>,
-    onSetHidden: (String, Boolean) -> Unit,
+    display: DisplaySettings,
     onForget: () -> Unit,
 ) {
+    val themeMode by display.themeMode.collectAsStateWithLifecycle()
+    val hiddenOnTablet by display.hiddenDevices.collectAsStateWithLifecycle()
     val snapshot by store.snapshot.collectAsStateWithLifecycle()
     val connection by store.connection.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -191,7 +191,7 @@ fun DashboardScreen(
         SettingsDialog(
             info = info,
             themeMode = themeMode,
-            onThemeMode = onThemeMode,
+            onThemeMode = display::setThemeMode,
             onChooseDevices = { showSettings = false; showDevices = true },
             onForget = { showSettings = false; onForget() },
             onDismiss = { showSettings = false },
@@ -203,7 +203,7 @@ fun DashboardScreen(
             devices = snapshot.devices,
             hiddenByUser = snapshot.hiddenByUser,
             hiddenOnTablet = hiddenOnTablet,
-            onSetHidden = onSetHidden,
+            onSetHidden = display::setHidden,
             onDismiss = { showDevices = false },
         )
     }
@@ -275,7 +275,7 @@ private fun Sidebar(
 
 @Composable
 private fun NavItem(
-    icon: String,
+    icon: Ic,
     label: String,
     selected: Boolean,
     indent: Int = 0,
