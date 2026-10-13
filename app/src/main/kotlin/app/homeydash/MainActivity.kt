@@ -43,6 +43,8 @@ class MainActivity : ComponentActivity() {
         screen = ScreenControl(this, container.display, lifecycleScope).also { it.start() }
         // Someone face recognition sees in front of the tablet wakes the screen.
         container.assistant.faces.onFace = { screen.wake() }
+        // So does the assistant starting to listen (the wake name) or a timer ringing.
+        container.assistant.onActive = { screen.wake() }
         setContent {
             val themeMode by container.display.themeMode.collectAsStateWithLifecycle()
             val accent by container.display.accent.collectAsStateWithLifecycle()

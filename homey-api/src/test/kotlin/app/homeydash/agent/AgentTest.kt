@@ -381,4 +381,16 @@ class AgentTest {
         assertEquals(0f, track.at(5000)[0])
         assertNull(VoiceFx.readWav(ByteArray(10)))
     }
+
+    @Test
+    fun `thanks and stop end a conversation, questions don't`() {
+        assertTrue(FollowUp.ends("Thanks!"))
+        assertTrue(FollowUp.ends("Tack så mycket"))
+        assertTrue(FollowUp.ends("ok stop"))
+        assertTrue(FollowUp.ends("that's all, Nova", "Nova"))
+        assertTrue(FollowUp.ends("Hej då"))
+        assertFalse(FollowUp.ends("stop the music"))
+        assertFalse(FollowUp.ends("thanks, turn off the lights"))
+        assertFalse(FollowUp.ends(""))
+    }
 }

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.AgentTools
@@ -47,6 +47,7 @@ import app.homeydash.agent.AskContext
 import app.homeydash.agent.BrainMode
 import app.homeydash.agent.Connection
 import app.homeydash.agent.FaceStyle
+import app.homeydash.agent.FollowUp
 import app.homeydash.agent.VoiceStyle
 import app.homeydash.assistant.AssistantState
 import app.homeydash.agent.HomeView
@@ -86,15 +87,13 @@ fun AssistantSettingsDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
-                .width(620.dp)
-                .heightIn(max = 800.dp)
+                .dialogSize(620.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (page != "main") RoundButton(Sym.arrowBack, { page = "main" }, size = 44.dp, filledIcon = false)
                 Text(
                     when (page) { "devices" -> "Hidden from the assistant"; "preview" -> "What the assistant sees"; else -> "Assistant" },
@@ -105,12 +104,18 @@ fun AssistantSettingsDialog(
                 if (page == "main") Toggle(settings.enabled, onClick = { update { it.copy(enabled = !it.enabled) } })
                 RoundButton(Sym.close, onDismiss, size = 44.dp, filledIcon = false)
             }
-            when (page) {
-                "devices" -> HiddenDevices(zones, devices, hidden, settings) { id, hide ->
-                    update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
+            // Only the content scrolls; the title and close button stay put.
+            Column(
+                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                when (page) {
+                    "devices" -> HiddenDevices(zones, devices, hidden, settings) { id, hide ->
+                        update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
+                    }
+                    "preview" -> Preview(services, settings, preview)
+                    else -> Main(services, settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
                 }
-                "preview" -> Preview(services, settings, preview)
-                else -> Main(services, settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
             }
         }
     }
@@ -165,6 +170,13 @@ private fun Main(
 
     Label("Voice activation")
     WakeSettings(services, settings, update)
+    Text("Keep listening after an answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Segmented(FollowUp.entries, settings.followUp, { it.label }) { f -> update { it.copy(followUp = f) } }
+    Text(
+        settings.followUp.detail + " Say \"stop\", \"thanks\" or \"tack\" to end early.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
 
     Label("Voice")
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }

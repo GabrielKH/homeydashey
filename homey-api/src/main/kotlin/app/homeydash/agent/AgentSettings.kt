@@ -25,6 +25,30 @@ enum class BrainMode(val label: String) { Local("Local only"), Internet("Interne
 
 enum class Language(val label: String) { Auto("Svenska + English"), Swedish("Svenska"), English("English") }
 
+/** How long the assistant keeps listening after an answer, for the next question. */
+enum class FollowUp(val label: String, val detail: String, val ms: Long) {
+    Off("Off", "Say the wake name before every question.", 0),
+    Short("8 s", "Listens 8 seconds for the next question, then goes quiet.", 8_000),
+    Long("20 s", "Listens 20 seconds for the next question, then goes quiet.", 20_000),
+    Always("Always on", "Always listening; say \"stop\" or tap to end the conversation.", -1),
+    ;
+
+    companion object {
+        private val ENDINGS = setOf(
+            "stop", "stopp", "cancel", "nevermind", "never mind", "thanks", "thank you", "thats all", "that is all",
+            "goodbye", "bye", "tack", "tack så mycket", "det var allt", "det är bra", "hej då", "avbryt", "sluta",
+        )
+
+        /** Whether [text] only ends the conversation ("thanks", "stop", "tack") and needs no answer. */
+        fun ends(text: String, name: String = ""): Boolean {
+            val t = text.lowercase().replace(Regex("[^\\p{L}\\s]"), "").replace(Regex("\\s+"), " ").trim()
+            val n = name.lowercase().trim()
+            val bare = t.removePrefix("okay ").removePrefix("ok ").let { if (n.isNotEmpty()) it.removeSuffix(" $n") else it }.trim()
+            return t in ENDINGS || bare in ENDINGS
+        }
+    }
+}
+
 /** How far the assistant may go with something sensitive. */
 enum class Access(val label: String) { Off("Off"), LocalOnly("Local AI only"), On("On") }
 
@@ -63,6 +87,8 @@ data class AgentSettings(
     val wakeName: String = "Nova",
     /** The wake name only works for people whose voice the tablet has learned. */
     val onlyKnownVoices: Boolean = false,
+    /** Keep listening for the next question after a spoken answer. */
+    val followUp: FollowUp = FollowUp.Short,
     /** How the assistant looks and sounds. */
     val face: FaceStyle = FaceStyle.Orb,
     val voice: VoiceStyle = VoiceStyle.Natural,

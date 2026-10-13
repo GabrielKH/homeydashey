@@ -69,7 +69,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
     val wake = services.wake
     val enabled = settings.enabled && settings.wake && WakeName.clean(settings.wakeName).isNotEmpty() && models == VoiceModels.State.Ready
     val on = enabled && micGranted(context) && lifecycle.isAtLeast(Lifecycle.State.RESUMED) &&
-        assistant.state == AssistantState.Idle && !wake.enrolling
+        assistant.state == AssistantState.Idle && !assistant.conversing && !wake.enrolling
     if (on) {
         LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, people) {
             // Give the speech recogniser or text-to-speech a moment to let go of the audio.
