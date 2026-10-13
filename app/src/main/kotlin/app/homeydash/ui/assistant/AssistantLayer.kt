@@ -40,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +119,20 @@ fun BoxScope.AssistantLayer(
             onClick = talk,
             onLongClick = { assistant.open = !assistant.open },
         )
+    }
+}
+
+/** Runs face recognition while the dashboard is on screen, when it is switched on and someone is enrolled. */
+@Composable
+fun FaceWatch(services: app.homeydash.assistant.AssistantServices, settings: AgentSettings) {
+    val people by services.faces.people.collectAsState()
+    val on = settings.enabled && settings.access(app.homeydash.agent.Secret.Faces) != app.homeydash.agent.Access.Off && people.isNotEmpty()
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    if (on) {
+        androidx.compose.runtime.DisposableEffect(owner) {
+            services.faces.start(owner)
+            onDispose { services.faces.stop() }
+        }
     }
 }
 

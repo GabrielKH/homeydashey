@@ -56,6 +56,11 @@ android {
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+
+    // The face model is memory-mapped straight from the APK.
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 kotlin {
@@ -73,6 +78,12 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.datastore.preferences)
+
+    // Assistant: on-device face recognition.
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.mlkit.face.detection)
+    implementation(libs.tensorflow.lite)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

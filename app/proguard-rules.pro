@@ -11,3 +11,7 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
 -keep class io.socket.** { *; }
+
+# TensorFlow Lite (assistant face recognition) is called through JNI.
+-keep class org.tensorflow.lite.** { *; }
+-dontwarn org.tensorflow.lite.**

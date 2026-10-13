@@ -81,6 +81,7 @@ fun SettingsDialog(
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onForget: () -> Unit,
+    onAssistant: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val g = GlassTheme.colors
@@ -294,6 +295,19 @@ fun SettingsDialog(
             ) {
                 SymIcon(Sym.calendar, size = 20.dp)
                 Text("Calendars", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
+            Text("Assistant", style = MaterialTheme.typography.labelMedium, color = g.muted)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(onAssistant)
+                    .glass(PillShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SymIcon(Sym.autoAwesome, size = 20.dp)
+                Text("Voice assistant and security", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
                 SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
             }
             Text("App", style = MaterialTheme.typography.labelMedium, color = g.muted)

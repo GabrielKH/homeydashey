@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
 
         val container = (application as HomeyDashApp).container
         screen = ScreenControl(this, container.display, lifecycleScope).also { it.start() }
+        // Someone face recognition sees in front of the tablet wakes the screen.
+        container.assistant.faces.onFace = { screen.wake() }
         setContent {
             val themeMode by container.display.themeMode.collectAsStateWithLifecycle()
             val accent by container.display.accent.collectAsStateWithLifecycle()

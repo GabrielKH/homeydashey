@@ -183,6 +183,12 @@ class Assistant(
         pending = null
     }
 
+    /** What a brain would get, for Settings → Assistant → What the assistant sees. */
+    fun preview(local: Boolean): Pair<HomeView, AgentTools> {
+        val v = view(settings, local)
+        return v to AgentTools(v, home, bridge)
+    }
+
     private fun view(s: AgentSettings, local: Boolean): HomeView {
         val snap = store.snapshot.value
         return HomeView.build(snap.zones, snap.devices, snap.moods, bridge.hidden(), s, local)

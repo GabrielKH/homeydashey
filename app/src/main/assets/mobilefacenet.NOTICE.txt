@@ -1,0 +1,7 @@
+mobilefacenet.tflite: a MobileFaceNet face embedding model (112x112 RGB in, 192 numbers out),
+based on "MobileFaceNets: Efficient CNNs for Accurate Real-Time Face Verification on Mobile
+Devices" (Chen et al., 2018, arXiv:1804.07573).
+
+Taken from the face_detection_tflite package (pub.dev, Apache License 2.0), whose README
+states its models are Apache 2.0 licensed.
+SHA-256: be4bc7cfc53f7bc336d0f28b1ab92535f618c913a422b683210750f6b5354854

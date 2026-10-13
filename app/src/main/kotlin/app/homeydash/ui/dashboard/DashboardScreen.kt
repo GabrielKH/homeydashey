@@ -78,7 +78,14 @@ import app.homeydash.ui.components.pressable
 import app.homeydash.ui.components.zoneIcon
 import app.homeydash.ui.theme.GlassTheme
 import app.homeydash.ui.theme.Palette
+import app.homeydash.assistant.Assistant
+import app.homeydash.assistant.AssistantServices
 import app.homeydash.data.AppUpdater
+import app.homeydash.ui.assistant.AssistantLayer
+import app.homeydash.ui.assistant.AssistantSettingsDialog
+import app.homeydash.ui.assistant.FaceWatch
+import app.homeydash.ui.assistant.FacesDialog
+import androidx.compose.runtime.rememberUpdatedState
 import app.homeydash.data.Blur
 import app.homeydash.data.CalendarRepository
 import app.homeydash.data.WeatherRepository
@@ -255,6 +262,7 @@ fun DashboardScreen(
     updater: AppUpdater,
     weather: WeatherRepository,
     calendar: CalendarRepository,
+    assistantServices: AssistantServices,
     onForget: () -> Unit,
 ) {
     val update by updater.state.collectAsStateWithLifecycle()
@@ -329,6 +337,17 @@ fun DashboardScreen(
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showDevices by rememberSaveable { mutableStateOf(false) }
+
+    // The voice assistant: an orb in the corner, and Settings → Assistant.
+    val assistantSettings by assistantServices.settings.collectAsStateWithLifecycle()
+    var showAssistantSettings by rememberSaveable { mutableStateOf(false) }
+    var showFaces by rememberSaveable { mutableStateOf(false) }
+    val assistant = remember(store) { Assistant(assistantServices, store, scope) }
+    val currentHidden by rememberUpdatedState(hidden)
+    remember(assistant) {
+        AssistantBridge(assistant, store, actions, display, weather, calendar, hiddenDevices = { currentHidden }, navigate = { destination = it })
+    }.also { assistant.bridge = it }
+    FaceWatch(assistantServices, assistantSettings)
 
     LaunchedEffect(destination) { actions.rearrange.done() }
     val roomId = destination.takeIf { it.startsWith(ROOM) }?.removePrefix(ROOM)
@@ -436,6 +455,12 @@ fun DashboardScreen(
                 }
             }
             UpdateBanner(update, onInstall = { scope.launch { updater.install() } }, modifier = Modifier.align(Alignment.TopEnd))
+            AssistantLayer(
+                assistant,
+                assistantSettings,
+                onChooseSpeaker = { id -> assistantServices.settingsStore.update { it.copy(speakerId = id) } },
+                onOpenSettings = { showAssistantSettings = true },
+            )
             snapshot.error?.let { message ->
                 ErrorBanner(message, onDismiss = store::clearError, modifier = Modifier.align(Alignment.BottomCenter))
             }
@@ -468,6 +493,7 @@ fun DashboardScreen(
             kiosk = kiosk,
             onKiosk = display::setKiosk,
             onCalendars = { showSettings = false; actions.open(Sheet.Calendars) },
+            onAssistant = { showSettings = false; showAssistantSettings = true },
             version = updater.currentVersion,
             update = update,
             onCheckUpdate = { scope.launch { updater.check() } },
@@ -475,6 +501,21 @@ fun DashboardScreen(
             onForget = { showSettings = false; onForget() },
             onDismiss = { showSettings = false },
         )
+    }
+    if (showAssistantSettings) {
+        AssistantSettingsDialog(
+            services = assistantServices,
+            settings = assistantSettings,
+            zones = snapshot.zones,
+            devices = snapshot.devices,
+            hidden = hidden,
+            preview = assistant::preview,
+            onFaces = { showAssistantSettings = false; showFaces = true },
+            onDismiss = { showAssistantSettings = false },
+        )
+    }
+    if (showFaces) {
+        FacesDialog(assistantServices, assistantSettings, onDismiss = { showFaces = false; showAssistantSettings = true })
     }
     if (showDevices) {
         DevicePickerDialog(

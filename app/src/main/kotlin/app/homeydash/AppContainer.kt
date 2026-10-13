@@ -1,6 +1,7 @@
 package app.homeydash
 
 import android.content.Context
+import app.homeydash.assistant.AssistantServices
 import app.homeydash.data.AppUpdater
 import app.homeydash.data.BackgroundPhotos
 import app.homeydash.data.CalendarRepository
@@ -50,6 +51,8 @@ class AppContainer(context: Context) {
     val calendar = CalendarRepository(context, settings, scope)
 
     val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
+
+    val assistant = AssistantServices(context, http, scope)
 
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
