@@ -52,7 +52,13 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
-private const val VOICE_SAMPLES = 4
+private const val VOICE_SAMPLES = 8
+
+/** Ways to say the wake name while teaching, so the tablet hears the voice more than one way. */
+private val VOICE_WAYS = listOf(
+    "normally", "a little quieter", "a little louder", "quickly",
+    "from a few steps away", "the Swedish way (\"Hej\")", "while looking away from the tablet", "as you would while cooking",
+)
 
 private fun micGranted(context: android.content.Context) =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -81,6 +87,10 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                 settings.wakeName,
                 onHeard = { _, vector ->
                     val person = vector?.let { FaceMatcher.matchVoice(it, voices) }
+                    // A wake that clearly was them teaches the tablet a little more of their voice.
+                    if (vector != null && person != null && FaceMatcher.voiceScore(vector, person) >= FaceMatcher.VOICE_LEARN) {
+                        services.faces.addVoice(person.id, listOf(vector))
+                    }
                     if (!settings.onlyKnownVoices || voices.isEmpty() || person != null) {
                         wake.stop(token)
                         assistant.wake(person)
@@ -263,7 +273,8 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
         }
         LaunchedEffect(samples.size >= VOICE_SAMPLES) {
             if (samples.size >= VOICE_SAMPLES) {
-                services.faces.setVoice(person.id, samples.map(FaceMatcher::normalize))
+                // Teaching again adds to what the tablet already knows of the voice.
+                services.faces.addVoice(person.id, samples.toList())
                 onDone()
             }
         }
@@ -276,7 +287,7 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                 models is VoiceModels.State.Downloading -> "Getting the voice models first…"
                 models is VoiceModels.State.Failed -> (models as VoiceModels.State.Failed).message
                 WakeName.clean(settings.wakeName).isEmpty() -> "Give the assistant a name under Voice activation first."
-                else -> "${person.name}, say \"$phrase\" ${VOICE_SAMPLES - samples.size} more time${if (VOICE_SAMPLES - samples.size == 1) "" else "s"}, pausing in between."
+                else -> "${person.name}, say \"$phrase\" ${VOICE_WAYS[samples.size.coerceAtMost(VOICE_WAYS.lastIndex)]} (${samples.size + 1} of $VOICE_SAMPLES)."
             },
             style = MaterialTheme.typography.titleMedium,
             color = g.fg,

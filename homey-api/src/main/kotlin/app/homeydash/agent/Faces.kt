@@ -43,6 +43,21 @@ object FaceMatcher {
     /** Cosine similarity above which two Vosk speaker vectors count as the same voice. */
     const val VOICE_THRESHOLD = 0.55f
 
+    /**
+     * How sure a wake must be of the voice before the tablet learns from it. This is higher
+     * than [VOICE_THRESHOLD], so it doesn't learn someone else's voice.
+     */
+    const val VOICE_LEARN = 0.65f
+
+    /** Most voice fingerprints kept per person; the oldest go first. */
+    const val MAX_VOICE = 40
+
+    /** How closely [vector] matches [person]'s voice, 0 to 1. */
+    fun voiceScore(vector: FloatArray, person: KnownPerson): Float = person.voice.maxOfOrNull { similarity(vector, it) } ?: 0f
+
+    /** [voice] with [more] fingerprints added, keeping the newest [MAX_VOICE]. */
+    fun withVoice(voice: List<FloatArray>, more: List<FloatArray>): List<FloatArray> = (voice + more.map(::normalize)).takeLast(MAX_VOICE)
+
     /** The best voice match for a Vosk speaker vector, or null. */
     fun matchVoice(vector: FloatArray, people: List<KnownPerson>, threshold: Float = VOICE_THRESHOLD): KnownPerson? =
         best(vector, people, threshold) { it.voice }

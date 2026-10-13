@@ -118,7 +118,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                                     modifier = Modifier.weight(1f),
                                 )
                                 Text(
-                                    if (p.voice.isEmpty()) "Teach voice" else "Teach voice again",
+                                    if (p.voice.isEmpty()) "Teach voice" else "Teach more of the voice",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = g.fg,
                                     modifier = Modifier.pressable({ teaching = p.id }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),

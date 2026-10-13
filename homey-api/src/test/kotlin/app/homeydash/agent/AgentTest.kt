@@ -205,6 +205,15 @@ class AgentTest {
         assertTrue((body["tools"] as JsonArray).size > 5)
     }
 
+    @Test fun `voice fingerprints add up to a limit, newest kept`() {
+        val first = List(FaceMatcher.MAX_VOICE) { floatArrayOf(1f, it.toFloat()) }
+        val more = FaceMatcher.withVoice(first, listOf(floatArrayOf(0f, 2f)))
+        assertEquals(FaceMatcher.MAX_VOICE, more.size)
+        assertEquals(1f, more.last()[1], 1e-6f)
+        val person = KnownPerson("p", "Gabriel", Role.Owner, emptyList(), voice = listOf(floatArrayOf(1f, 0f)))
+        assertEquals(1f, FaceMatcher.voiceScore(floatArrayOf(2f, 0f), person), 1e-6f)
+    }
+
     @Test fun `answers name devices instead of their aliases`() {
         val v = view()
         val d = v.devices.first()

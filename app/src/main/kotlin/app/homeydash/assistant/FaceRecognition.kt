@@ -241,6 +241,12 @@ class FaceService(private val context: Context) {
         save()
     }
 
+    /** Adds voice fingerprints to someone's, from teaching or from a wake that clearly was them. */
+    fun addVoice(id: String, more: List<FloatArray>) {
+        _people.update { list -> list.map { if (it.id == id) it.copy(voice = FaceMatcher.withVoice(it.voice, more)) else it } }
+        save()
+    }
+
     fun setRole(id: String, role: Role) {
         _people.update { list -> list.map { if (it.id == id) it.copy(role = role) else it } }
         save()
