@@ -5,7 +5,6 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.MicrophoneDirection
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
@@ -225,8 +224,8 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
                 emit(null, "The microphone isn't available.")
                 return
             }
-            // Far-field: hear the room, not just someone right in front of the tablet.
-            runCatching { record.setPreferredMicrophoneFieldDimension(MicrophoneDirection.MIC_FIELD_DIMENSION_WIDE) }
+            // Far-field (-1 is the widest): hear the room, not just someone right in front of the tablet.
+            runCatching { record.setPreferredMicrophoneFieldDimension(-1f) }
             record.startRecording()
             val buf = ShortArray(RATE / 10)
             while (isLive()) {
