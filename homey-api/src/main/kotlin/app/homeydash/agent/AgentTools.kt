@@ -54,8 +54,8 @@ class AgentTools(
             string("mood", "Mood alias, e.g. mood_2")
             required("mood")
         })
-        add(tool("list_flows", "Names of the Homey Flows that can be started.") {})
-        add(tool("run_flow", "Start a Homey Flow by its exact name.") {
+        if (!guest) add(tool("list_flows", "Names of the Homey Flows that can be started.") {})
+        if (!guest) add(tool("run_flow", "Start a Homey Flow by its exact name.") {
             string("name", "Flow name")
             required("name")
         })
@@ -72,7 +72,7 @@ class AgentTools(
             string("device", "Device alias")
             required("device")
         })
-        add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})
+        if (!guest) add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})
         add(tool("timer", "Kitchen timers on the tablet: start, cancel or list.") {
             string("action", "start, cancel or list")
             number("minutes", "Length for start; may have decimals")
@@ -80,7 +80,7 @@ class AgentTools(
             required("action")
         })
         add(tool("weather", "Current weather and the next days' forecast.") {})
-        add(tool("set_theme", "Switch the dashboard between light and dark.") {
+        if (!guest) add(tool("set_theme", "Switch the dashboard between light and dark.") {
             string("mode", "light, dark or auto")
             required("mode")
         })
@@ -92,7 +92,12 @@ class AgentTools(
         if (view.allows(Secret.Variables)) add(tool("variables", "Homey Logic variables and their values.") {})
     }
 
-    suspend fun run(call: ToolCall): ToolResult = try {
+    private val guest get() = view.settings.guest
+
+    suspend fun run(call: ToolCall): ToolResult =
+        if (guest && call.name in GUEST_BLOCKED) ok("Guests can't do that.") else runAllowed(call)
+
+    private suspend fun runAllowed(call: ToolCall): ToolResult = try {
         val a = call.arguments
         when (call.name) {
             "set_device" -> setDevice(a.str("device"), a.str("capability"), a["value"])
@@ -285,6 +290,8 @@ class AgentTools(
     private fun ok(text: String) = ToolResult(text)
 
     companion object {
+        private val GUEST_BLOCKED = setOf("list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
+
         /** Flows whose names sound like locks, alarms or doors need a yes first. */
         private val SENSITIVE = Regex("""\b(un)?lock\w*|\blås\w*|\b(dis)?arm\w*|\b(av)?larm\w*|\balarm\w*|\bgarage\w*|\bdoor\w*|\bdörr\w*""", RegexOption.IGNORE_CASE)
         private val UNLOCKING = Regex("""\bunlock\w*|\blås\w* upp|\bupplås\w*|\bdisarm\w*|\bavlarm\w*|\böppna\w*|\bopen\b""", RegexOption.IGNORE_CASE)

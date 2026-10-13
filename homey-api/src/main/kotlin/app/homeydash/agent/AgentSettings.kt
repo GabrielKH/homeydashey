@@ -56,6 +56,10 @@ data class AgentSettings(
     val speakerVolume: Int = 35,
     /** Speak answers aloud at all. */
     val speak: Boolean = true,
+    /** Strangers at the tablet (face recognition sees someone it doesn't know) only get guest access. */
+    val strangersAreGuests: Boolean = false,
+    /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
+    val guest: Boolean = false,
 ) {
     fun access(secret: Secret): Access = secrets[secret] ?: Access.Off
 
@@ -64,6 +68,13 @@ data class AgentSettings(
         Access.Off -> false
         Access.LocalOnly -> local
         Access.On -> true
+    }
+
+    /** These settings as they apply to someone with [role] at the tablet. */
+    fun forRole(role: Role): AgentSettings = when (role) {
+        Role.Owner -> this
+        Role.Family -> copy(secrets = secrets.filterKeys { it !in FAMILY_BLOCKED })
+        Role.Guest -> copy(secrets = emptyMap(), guest = true)
     }
 
     /** The connections to try for one question, in order. */
@@ -77,3 +88,12 @@ data class AgentSettings(
         }
     }
 }
+
+/** What someone face recognition knows may do. */
+enum class Role(val label: String, val detail: String) {
+    Owner("Owner", "Everything the security switches allow."),
+    Family("Family", "No unlocking, alarm, variables or calendar details."),
+    Guest("Guest", "Lights, music, climate, timers and weather only."),
+}
+
+private val FAMILY_BLOCKED = setOf(Secret.Unlock, Secret.Alarm, Secret.Variables, Secret.CalendarDetails)

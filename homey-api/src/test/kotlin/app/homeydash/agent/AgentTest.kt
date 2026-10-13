@@ -272,4 +272,33 @@ class AgentTest {
         val vars = StoreHomeControl.parseVariables(HomeyJson.parseToJsonElement("""{"v":{"name":"Code","type":"string","value":"1"}}"""))
         assertEquals("Code", vars.single().name)
     }
+
+    @Test fun `roles narrow the switches and guests lose Flows and Goodnight`() = runTest {
+        val all = AgentSettings(secrets = Secret.entries.associateWith { Access.On })
+        assertEquals(Access.Off, all.forRole(Role.Family).access(Secret.Unlock))
+        assertEquals(Access.On, all.forRole(Role.Family).access(Secret.Calendar))
+        val guest = all.forRole(Role.Guest)
+        assertTrue(guest.secrets.isEmpty())
+        val tools = AgentTools(view(guest), FakeHome(), FakeDashboard())
+        val names = tools.specs().map { it.name }
+        assertFalse("goodnight" in names || "run_flow" in names || "calendar" in names)
+        assertTrue("set_device" in names)
+        assertEquals("Guests can't do that.", tools.run(call("goodnight")).text)
+    }
+
+    @Test fun `who is at the tablet only reaches brains the switch allows`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val s = AgentSettings(secrets = mapOf(Secret.Faces to Access.LocalOnly))
+        val ctx = AskContext(person = "Gabriel")
+        assertTrue(agent.systemPrompt(s, view(s, local = true), ctx).contains("Gabriel"))
+        assertFalse(agent.systemPrompt(s, view(s, local = false), ctx).contains("Gabriel"))
+    }
+
+    @Test fun `faces match the closest enrolled person above the threshold`() {
+        val gabriel = KnownPerson("1", "Gabriel", Role.Owner, listOf(floatArrayOf(1f, 0f, 0f), floatArrayOf(0.9f, 0.1f, 0f)))
+        val anna = KnownPerson("2", "Anna", Role.Family, listOf(floatArrayOf(0f, 1f, 0f)))
+        assertEquals("Gabriel", FaceMatcher.match(floatArrayOf(0.95f, 0.05f, 0.01f), listOf(gabriel, anna))?.name)
+        assertEquals("Anna", FaceMatcher.match(floatArrayOf(0.1f, 0.99f, 0f), listOf(gabriel, anna))?.name)
+        assertNull(FaceMatcher.match(floatArrayOf(0f, 0f, 1f), listOf(gabriel, anna)))
+    }
 }

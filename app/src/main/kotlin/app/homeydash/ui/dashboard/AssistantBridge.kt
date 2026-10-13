@@ -1,0 +1,113 @@
+package app.homeydash.ui.dashboard
+
+import app.homeydash.agent.AgentEvent
+import app.homeydash.assistant.Assistant
+import app.homeydash.assistant.DashboardBridge
+import app.homeydash.data.CalendarRepository
+import app.homeydash.data.DisplaySettings
+import app.homeydash.data.WeatherRepository
+import app.homeydash.homey.CardKind
+import app.homeydash.homey.DashboardLayout
+import app.homeydash.homey.Goodnight
+import app.homeydash.homey.HomeyStore
+import app.homeydash.ui.theme.ThemeMode
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+
+/** Lets the assistant drive the dashboard: pages, device panels, Goodnight, weather, calendar, timers, theme. */
+class AssistantBridge(
+    private val assistant: Assistant,
+    private val store: HomeyStore,
+    private val actions: DashboardActions,
+    private val display: DisplaySettings,
+    private val weather: WeatherRepository,
+    private val calendar: CalendarRepository,
+    private val hiddenDevices: () -> Set<String>,
+    private val navigate: (String) -> Unit,
+) : DashboardBridge {
+
+    override fun hidden(): Set<String> = hiddenDevices()
+
+    override fun openPage(page: String, roomId: String?): Boolean {
+        navigate(if (page == "room" && roomId != null) "room:$roomId" else page)
+        return true
+    }
+
+    override fun openDevice(deviceId: String): Boolean {
+        val device = store.snapshot.value.devices[deviceId] ?: return false
+        when {
+            actions.hasRemote(device) -> actions.open(Sheet.Remote(device.id))
+            DashboardLayout.cardKind(device) == CardKind.Light -> actions.open(Sheet.Light(device.id))
+            DashboardLayout.cardKind(device) == CardKind.Media -> actions.open(Sheet.Music(device.zone, device.id))
+            device.zone != null -> navigate("room:${device.zone}")
+            else -> return false
+        }
+        assistant.open = false
+        return true
+    }
+
+    private fun steps() = Goodnight.steps(DashboardLayout.visible(store.snapshot.value.devices, hidden()).values, display.goodnightKeep.value)
+
+    override fun goodnightPreview(): String {
+        val steps = steps()
+        val flow = display.goodnightFlow.value
+        val off = steps.count { it.capability == "onoff" }
+        val paused = steps.count { it.capability == "speaker_playing" }
+        return listOfNotNull(
+            "turn off $off device${if (off == 1) "" else "s"}".takeIf { off > 0 },
+            "pause $paused player${if (paused == 1) "" else "s"}".takeIf { paused > 0 },
+            flow?.let { "start the Flow ${it.name}" },
+        ).joinToString(", ").ifBlank { "nothing is on" } + "."
+    }
+
+    override fun goodnight() = actions.goodnight(steps(), display.goodnightFlow.value)
+
+    override suspend fun weather(): String? {
+        val f = weather.state.value.forecast ?: return null
+        val c = f.current
+        val now = "${weather.state.value.placeName ?: "Here"}: ${c.kind.label}, ${c.temperature.toInt()} °C" +
+            (c.feelsLike?.let { ", feels like ${it.toInt()} °C" } ?: "") + (c.wind?.let { ", wind ${it.toInt()} m/s" } ?: "")
+        val days = f.days.take(4).joinToString("\n") { d ->
+            "${d.date}: ${d.kind.label}, ${d.min.toInt()} to ${d.max.toInt()} °C" + (d.rainChance?.let { ", rain $it%" } ?: "")
+        }
+        return "$now\n$days"
+    }
+
+    override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent> {
+        if (!calendar.hasPermission.value) return emptyList()
+        val zone = ZoneId.systemDefault()
+        val day = DateTimeFormatter.ofPattern("EEE d MMM")
+        val time = DateTimeFormatter.ofPattern("EEE d MMM HH:mm")
+        return calendar.events(from, from.plusDays(days.toLong())).map { e ->
+            if (e.allDay) {
+                val start = Instant.ofEpochMilli(e.begin).atZone(ZoneOffset.UTC).toLocalDate()
+                AgentEvent(e.title, start.format(day) + " (all day)", null, true, e.location.takeIf { withLocations })
+            } else {
+                val start = Instant.ofEpochMilli(e.begin).atZone(zone)
+                val end = Instant.ofEpochMilli(e.end).atZone(zone)
+                AgentEvent(e.title, start.format(time), end.format(DateTimeFormatter.ofPattern("HH:mm")), false, e.location.takeIf { withLocations })
+            }
+        }
+    }
+
+    override fun startTimer(seconds: Int, label: String?) = assistant.startTimer(seconds, label)
+
+    override fun cancelTimer(label: String?) = assistant.cancelTimer(label)
+
+    override fun timers(): List<String> = assistant.describeTimers()
+
+    override fun setTheme(mode: String): Boolean {
+        display.setThemeMode(
+            when (mode) {
+                "light" -> ThemeMode.Light
+                "dark" -> ThemeMode.Dark
+                "auto", "system" -> ThemeMode.System
+                else -> return false
+            },
+        )
+        return true
+    }
+}

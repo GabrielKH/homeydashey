@@ -159,7 +159,9 @@ class Agent(
         append("Your answers are spoken aloud")
         context.speaker?.let { append(" on the speaker \"").append(it).append('"') }
         append(", so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
-        context.person?.let { append("The person at the tablet is ").append(it).append(".\n") }
+        // Who is at the tablet is itself a secret ("Face recognition" switch).
+        context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("The person at the tablet is ").append(it).append(".\n") }
+        if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
         append("Rules: use device aliases (like light_3) in tool calls, never names. Only use devices, rooms and moods listed below; ")
         append("if something isn't listed, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")
