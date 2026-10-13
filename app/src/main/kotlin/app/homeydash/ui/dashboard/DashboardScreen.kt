@@ -108,6 +108,7 @@ class AlbumArtImages(val sharp: ImageBitmap, val blurred: ImageBitmap)
 sealed interface Sheet {
     data class Light(val deviceId: String) : Sheet
     data class Remote(val deviceId: String) : Sheet
+    data class Vacuum(val deviceId: String) : Sheet
     /** Music for a room ([zoneId]), or straight to one speaker ([deviceId]). */
     data class Music(val zoneId: String?, val deviceId: String? = null) : Sheet
     data class Background(val key: String, val title: String) : Sheet
@@ -231,11 +232,11 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
     }
 
     /** Album art and other Homey images, decoded off the main thread and kept for a few tracks. */
-    suspend fun loadImage(path: String, cacheKey: String): ImageBitmap? {
+    suspend fun loadImage(path: String, cacheKey: String, maxSide: Int = 512): ImageBitmap? {
         images.get(cacheKey)?.let { return it }
         return runCatching {
             val bytes = store.image(path)
-            withContext(Dispatchers.Default) { decodeScaled(bytes, maxSide = 512)?.asImageBitmap() }
+            withContext(Dispatchers.Default) { decodeScaled(bytes, maxSide = maxSide)?.asImageBitmap() }
         }.getOrNull()?.also { images.put(cacheKey, it) }
     }
 }
@@ -281,6 +282,9 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
     val actions = remember(store) { DashboardActions(store, scope) }
     SideEffect { actions.deviceCards = snapshot.deviceCards }
+    // Counts robot vacuum cleaning hours for the part-wear estimates.
+    val appContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(store) { app.homeydash.data.VacuumUsage.get(appContext).track(store.snapshot) }
     val accent by display.accent.collectAsStateWithLifecycle()
     val accentOpacity by display.accentOpacity.collectAsStateWithLifecycle()
     val backgrounds by display.backgrounds.collectAsStateWithLifecycle()
@@ -295,7 +299,7 @@ fun DashboardScreen(
     val wakeOnProximity by display.wakeOnProximity.collectAsStateWithLifecycle()
     val kiosk by display.kiosk.collectAsStateWithLifecycle()
     val overviewDevices by display.overviewDevices.collectAsStateWithLifecycle()
-    val overviewWidgets by display.overviewWidgets.collectAsStateWithLifecycle()
+    val overviewOrder by display.overviewOrder.collectAsStateWithLifecycle()
     val lastPlayer by display.lastPlayer.collectAsStateWithLifecycle()
     val goodnightKeep by display.goodnightKeep.collectAsStateWithLifecycle()
     val goodnightFlow by display.goodnightFlow.collectAsStateWithLifecycle()
@@ -303,11 +307,7 @@ fun DashboardScreen(
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
     val compactSidebar by display.compactSidebar.collectAsStateWithLifecycle()
-    val savedRoomOrder by display.roomOrder.collectAsStateWithLifecycle()
-    // While a room card is dragged on the overview, the order it would get; cleared once saved.
-    var roomOrderDraft by remember { mutableStateOf<List<String>?>(null) }
-    LaunchedEffect(savedRoomOrder) { roomOrderDraft = null }
-    val roomOrder = roomOrderDraft ?: savedRoomOrder
+    val roomOrder by display.roomOrder.collectAsStateWithLifecycle()
     val sections = remember(snapshot.zones, snapshot.devices, hidden, hiddenRooms, roomOrder) {
         DashboardLayout.sections(snapshot.zones, snapshot.devices, hidden, hiddenRooms, roomOrder)
     }
@@ -319,12 +319,9 @@ fun DashboardScreen(
     val speakers = remember(visibleDevices, actions.deviceCards) { musicSpeakers(visibleDevices, actions) }
     val groupable = remember(visibleDevices, actions.deviceCards) { visibleDevices.filter { actions.grouping(it.id) != null }.sortedBy { it.name.lowercase() } }
 
-    var favouritesDraft by remember { mutableStateOf<List<String>?>(null) }
-    LaunchedEffect(overviewDevices) { favouritesDraft = null }
-    val favouriteIds = favouritesDraft ?: overviewDevices
-    val favourites = remember(favouriteIds, snapshot.devices, hidden) {
+    val favourites = remember(overviewDevices, snapshot.devices, hidden) {
         val shown = DashboardLayout.visible(snapshot.devices, hidden)
-        favouriteIds.mapNotNull { shown[it] }
+        overviewDevices.mapNotNull { shown[it] }
     }
 
     // Remembers the player that started last, so the media page opens on it.
@@ -417,29 +414,15 @@ fun DashboardScreen(
                         else -> OverviewScreen(
                             rooms = rooms,
                             moods = moods,
-                            player = players.firstOrNull(),
+                            player = DashboardLayout.featuredPlayer(players, chosen = null, last = lastPlayer),
                             zones = snapshot.zones,
                             connection = connection,
                             actions = actions,
                             hasMusic = speakers.isNotEmpty(),
                             onRoom = { destination = ROOM + it },
                             favourites = favourites,
-                            onMoveFavourite = { from, to ->
-                                val ids = favouriteIds.toMutableList()
-                                val at = ids.indexOf(to)
-                                if (at >= 0 && ids.remove(from)) {
-                                    ids.add(at, from)
-                                    favouritesDraft = ids
-                                }
-                            },
-                            canMoveRoom = { from, to -> DashboardLayout.moveTo(snapshot.zones, roomOrder, from, to) != null },
-                            onMoveRoom = { from, to -> DashboardLayout.moveTo(snapshot.zones, roomOrder, from, to)?.let { roomOrderDraft = it } },
-                            onDropped = {
-                                roomOrderDraft?.let(display::setRoomOrder)
-                                favouritesDraft?.let(display::setOverviewDevices)
-                            },
-                            widgetOrder = overviewWidgets,
-                            onWidgetOrder = display::setOverviewWidgets,
+                            order = overviewOrder,
+                            onOrder = display::setOverviewOrder,
                             widget = { key ->
                                 if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                 if (key == "calendar") CalendarCard(
@@ -542,6 +525,7 @@ fun DashboardScreen(
                 onDismiss = actions::close,
             )
         } ?: SideEffect { actions.close() }
+        is Sheet.Vacuum -> snapshot.devices[sheet.deviceId]?.let { VacuumSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
         is Sheet.Music -> MusicSheet(sheet.zoneId, sheet.deviceId, speakers, snapshot.zones, actions, actions::close)
         is Sheet.Group -> snapshot.devices[sheet.deviceId]?.let { GroupSheet(it, groupable, snapshot.zones, actions, actions::close) } ?: SideEffect { actions.close() }
         Sheet.Rooms -> RoomsDialog(

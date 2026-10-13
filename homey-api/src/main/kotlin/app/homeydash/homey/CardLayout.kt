@@ -72,3 +72,4 @@ object CardLayout {
     fun customTitles(section: ZoneSection, arrangement: CardArrangement): List<String> =
         section.devices.mapNotNull { arrangement.groups[it.id] }.distinct()
 }
+

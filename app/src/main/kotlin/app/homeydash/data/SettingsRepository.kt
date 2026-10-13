@@ -235,13 +235,13 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[OVERVIEW_DEVICES] = ids.joinToString("\n") }
     }
 
-    /** The order of the overview's side cards: weather, calendar, player. */
-    val overviewWidgets: Flow<List<String>> = context.dataStore.data.map { prefs ->
-        prefs[OVERVIEW_WIDGETS]?.split('\n')?.filter { it.isNotEmpty() }.orEmpty()
+    /** The overview's card order by key: weather, calendar, player, fav:<device>, room:<zone>. */
+    val overviewOrder: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[OVERVIEW_ORDER]?.split('\n')?.filter { it.isNotEmpty() }.orEmpty()
     }
 
-    suspend fun setOverviewWidgets(keys: List<String>) {
-        context.dataStore.edit { it[OVERVIEW_WIDGETS] = keys.joinToString("\n") }
+    suspend fun setOverviewOrder(keys: List<String>) {
+        context.dataStore.edit { it[OVERVIEW_ORDER] = keys.joinToString("\n") }
     }
 
     /** The player that played last, so the media page opens on it. */
@@ -268,7 +268,7 @@ class SettingsRepository(private val context: Context) {
     private companion object {
         val OVERVIEW_DEVICES = stringPreferencesKey("overview_devices")
         val LAST_PLAYER = stringPreferencesKey("last_player")
-        val OVERVIEW_WIDGETS = stringPreferencesKey("overview_widgets")
+        val OVERVIEW_ORDER = stringPreferencesKey("overview_order")
         val GOODNIGHT_KEEP = stringSetPreferencesKey("goodnight_keep")
         val GOODNIGHT_FLOW = stringPreferencesKey("goodnight_flow")
         val WEATHER_DAYS = intPreferencesKey("weather_days")

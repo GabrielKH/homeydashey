@@ -2,6 +2,7 @@ package app.homeydash.ui.dashboard
 
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -54,6 +55,8 @@ import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.Device
 import app.homeydash.homey.CardArrangement
 import app.homeydash.homey.CardLayout
+import app.homeydash.homey.OverviewLanes
+import app.homeydash.homey.LaneCard
 import app.homeydash.homey.Mood
 import app.homeydash.homey.RoomSummary
 import app.homeydash.homey.Zone
@@ -95,14 +98,9 @@ fun OverviewScreen(
     onRoom: (String) -> Unit,
     /** Devices pinned to the overview, each shown as its own card. */
     favourites: List<Device>,
-    onMoveFavourite: (String, String) -> Unit,
-    canMoveRoom: (String, String) -> Boolean,
-    onMoveRoom: (String, String) -> Unit,
-    /** A drag ended: save the new order. */
-    onDropped: () -> Unit,
-    /** The side cards' saved order, by key ("weather", "calendar", "player"). */
-    widgetOrder: List<String>,
-    onWidgetOrder: (List<String>) -> Unit,
+    /** The saved order of every card on the overview, by key (lanes, see [OverviewLanes]). */
+    order: List<String>,
+    onOrder: (List<String>) -> Unit,
     /** Draws the weather or calendar card for its key. */
     widget: @Composable (String) -> Unit,
 ) {
@@ -115,6 +113,27 @@ fun OverviewScreen(
     val locks = rooms.flatMap { it.devices }.filter { it.capability("locked") != null }
     val unlocked = locks.count { it.capability("locked")?.booleanValue != true }
 
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // Two lanes on a small tablet, three on the 11", four on a big screen.
+    val laneCount = (maxWidth / 380.dp).toInt().coerceIn(2, 4)
+    val roomsById = remember(rooms) { rooms.associateBy { ROOM_KEY + it.zone.id } }
+    val favouritesById = remember(favourites) { favourites.associateBy { FAV + it.id } }
+    val laneCards = buildList {
+        add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
+        add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
+        if (player != null) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
+        favouritesById.forEach { (key, device) ->
+            val wide = tileSpan(device) > 1
+            add(LaneCard(key, LaneCard.Kind.Device, wide = wide, height = if (wide) 310 else 148))
+        }
+        roomsById.keys.forEach { add(LaneCard(it, LaneCard.Kind.Room, wide = false, height = 148)) }
+    }
+    val wideKeys = laneCards.filter { it.wide }.map { it.key }.toSet()
+    // The lanes while a card is dragged, until the saved layout catches up.
+    var draft by remember { mutableStateOf<List<List<String>>?>(null) }
+    LaunchedEffect(order) { draft = null }
+    val lanes = draft ?: OverviewLanes.place(OverviewLanes.parse(order), laneCards, laneCount)
+    val autoArrange = { onOrder(OverviewLanes.flatten(OverviewLanes.auto(laneCards, laneCount))) }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f)) {
@@ -128,7 +147,7 @@ fun OverviewScreen(
                 )
             }
             if (actions.rearrange.editing) {
-                DoneChip(actions, Modifier.padding(bottom = 4.dp))
+                DoneChip(actions, Modifier.padding(bottom = 4.dp), onAutoArrange = autoArrange)
             } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) {
                 if (connection != ConnectionState.Connected) {
                     GlassChip(Sym.wifiOff, "Reconnecting", g.danger)
@@ -147,103 +166,52 @@ fun OverviewScreen(
             }
         }
         if (moods.isNotEmpty()) MoodRow(moods, actions)
-        BoxWithConstraints(Modifier.weight(1f)) {
-        // The side column takes about a third of the width, so rooms keep at least two columns.
-        val sideWidth = (maxWidth * 0.32f).coerceIn(280.dp, 380.dp)
-        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(GridGap)) {
-            val grid = rememberLazyGridState()
-            val drag = rememberGridDrag(grid)
-            val roomIds = rooms.map { it.zone.id }.toSet()
-            SideEffect {
-                drag.draggable = { key -> key is String && (key.startsWith(FAV) || key in roomIds) }
-                drag.canMove = { a, b ->
-                    a is String && b is String && when {
-                        a.startsWith(FAV) -> b.startsWith(FAV)
-                        else -> b in roomIds && canMoveRoom(a, b)
+        // The cards stack in a few invisible lanes; any card can go in any lane.
+        val scroll = rememberScrollState()
+        val drag = rememberLaneDrag(scroll)
+        val haptics = LocalHapticFeedback.current
+        SideEffect {
+            drag.lanes = lanes
+            drag.onMove = { draft = it }
+            drag.onDrop = { draft?.let { onOrder(OverviewLanes.flatten(it)) } }
+            // The weather, calendar and player have no hold of their own; the lanes start it.
+            drag.holdable = ::isWidgetKey
+        }
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .onGloballyPositioned { drag.viewport = it }
+                .rearrangeable(drag, actions.rearrange, actions::open, onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }),
+        ) {
+            LaneLayout(
+                lanes = lanes,
+                wide = { it in wideKeys },
+                gap = GridGap,
+                drag = drag,
+                rearrange = actions.rearrange,
+                menu = { key ->
+                    val room = roomsById[key]
+                    val device = favouritesById[key]
+                    when {
+                        room != null -> { { actions.open(Sheet.RoomMenu(room.zone.id)) } }
+                        device != null -> { { actions.open(Sheet.CardMenu(device.id)) } }
+                        else -> { {} }
                     }
-                }
-                drag.onMove = { a, b ->
-                    if ((a as String).startsWith(FAV)) onMoveFavourite(a.removePrefix(FAV), (b as String).removePrefix(FAV)) else onMoveRoom(a, b as String)
-                }
-                drag.onDrop = onDropped
-            }
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(176.dp),
-                state = grid,
-                modifier = Modifier.weight(1f).fillMaxHeight().rearrangeable(drag, actions.rearrange, actions::open),
-                horizontalArrangement = Arrangement.spacedBy(GridGap),
-                verticalArrangement = Arrangement.spacedBy(GridGap),
-                contentPadding = PaddingValues(bottom = 24.dp),
-            ) {
-                if (favourites.isNotEmpty()) {
-                    item(key = "label:favourites", span = { GridItemSpan(maxLineSpan) }, contentType = "label") { SectionLabel("Favourites") }
-                    items(
-                        favourites,
-                        key = { FAV + it.id },
-                        span = { GridItemSpan(tileSpan(it).coerceAtMost(maxLineSpan)) },
-                        contentType = { DashboardLayout.cardKind(it) },
-                    ) { device ->
-                        RearrangeableItem(FAV + device.id, drag, actions.rearrange, menu = { actions.open(Sheet.CardMenu(device.id)) }) {
-                            DeviceTile(device, actions)
-                        }
-                    }
-                }
-                item(key = "label:rooms", span = { GridItemSpan(maxLineSpan) }, contentType = "label") { SectionLabel("Rooms") }
-                items(rooms, key = { it.zone.id }, contentType = { "room" }) { room ->
-                    RearrangeableItem(room.zone.id, drag, actions.rearrange, menu = { actions.open(Sheet.RoomMenu(room.zone.id)) }) {
-                        RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.hold(Sheet.RoomMenu(room.zone.id)) })
-                    }
-                }
-            }
-            // The side cards are a one-column grid of their own, so they can be dragged too.
-            var widgetDraft by remember { mutableStateOf<List<String>?>(null) }
-            LaunchedEffect(widgetOrder) { widgetDraft = null }
-            val sideKeys = (widgetDraft ?: widgetOrder).let { saved -> saved.filter { it in SIDE_CARDS } + SIDE_CARDS.filter { it !in saved } }
-                .filter { it != "player" || player != null }
-            val sideGrid = rememberLazyGridState()
-            val sideDrag = rememberGridDrag(sideGrid)
-            val haptics = LocalHapticFeedback.current
-            SideEffect {
-                sideDrag.draggable = ::isSideCard
-                sideDrag.holdable = ::isSideCard
-                sideDrag.canMove = { a, b -> isSideCard(a) && isSideCard(b) }
-                sideDrag.onMove = { a, b ->
-                    val keys = sideKeys.toMutableList()
-                    val at = keys.indexOf(b as String)
-                    if (at >= 0 && keys.remove(a as String)) {
-                        keys.add(at, a)
-                        widgetDraft = keys
-                    }
-                }
-                sideDrag.onDrop = { widgetDraft?.let(onWidgetOrder) }
-            }
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(1),
-                state = sideGrid,
-                modifier = Modifier
-                    .width(sideWidth)
-                    .fillMaxHeight()
-                    .rearrangeable(sideDrag, actions.rearrange, actions::open, onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }),
-                verticalArrangement = Arrangement.spacedBy(GridGap),
-                contentPadding = PaddingValues(bottom = 24.dp),
-            ) {
-                // Same label height as "Rooms", so the first cards line up.
-                item(key = "label:today", contentType = "label") { SectionLabel("Today") }
-                items(sideKeys, key = { it }, contentType = { it }) { key ->
-                    RearrangeableItem(key, sideDrag, actions.rearrange, menu = {}) {
-                        if (key == "player" && player != null) {
-                            Column(verticalArrangement = Arrangement.spacedBy(GridGap)) {
-                                SectionLabel("Now playing")
-                                MediaPlayerCard(player, actions, subtitle = player.zone?.let { zones[it]?.name })
-                            }
-                        } else {
-                            Column { widget(key) }
-                        }
-                    }
+                },
+                modifier = Modifier.fillMaxWidth().verticalScroll(scroll).padding(bottom = 24.dp),
+            ) { key ->
+                val room = roomsById[key]
+                val device = favouritesById[key]
+                when {
+                    room != null -> RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.hold(Sheet.RoomMenu(room.zone.id)) })
+                    device != null -> DeviceTile(device, actions)
+                    key == "player" && player != null -> MediaPlayerCard(player, actions, subtitle = player.zone?.let { zones[it]?.name })
+                    else -> Column { widget(key) }
                 }
             }
         }
-        }
+    }
     }
 }
 
@@ -540,20 +508,24 @@ internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () ->
     }
 }
 
-/** The overview's side cards, in their default order. */
-private val SIDE_CARDS = listOf("weather", "calendar", "player")
+/** The overview's cards that aren't devices or rooms. */
+private val WIDGETS = setOf("weather", "calendar", "player")
 
-private fun isSideCard(key: Any): Boolean = key is String && key in SIDE_CARDS
+private fun isWidgetKey(key: Any): Boolean = key is String && key in WIDGETS
+
+/** Overview grid keys for rooms. */
+private const val ROOM_KEY = "room:"
 
 /** Overview grid keys for pinned devices, apart from the room keys. */
 private const val FAV = "fav:"
 
 /** Ends rearranging. */
 @Composable
-private fun DoneChip(actions: DashboardActions, modifier: Modifier = Modifier) {
+private fun DoneChip(actions: DashboardActions, modifier: Modifier = Modifier, onAutoArrange: (() -> Unit)? = null) {
     val g = GlassTheme.colors
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("Drag cards to move them, tap one for its menu", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        onAutoArrange?.let { GlassChip(Sym.autoAwesome, "Auto arrange", g.fg, onClick = it) }
         Row(
             Modifier
                 .pressable({ actions.rearrange.done() })

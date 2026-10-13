@@ -1,7 +1,7 @@
 package app.homeydash.homey
 
 /** Which card a device gets on the dashboard. */
-enum class CardKind { Light, Switch, Thermostat, Blinds, Lock, Media, Button, Sensor, Other }
+enum class CardKind { Light, Switch, Thermostat, Blinds, Lock, Media, Vacuum, Button, Sensor, Other }
 
 /** How a room's tiles are grouped, in display order. */
 enum class DeviceGroup(val title: String) {
@@ -40,6 +40,7 @@ object DashboardLayout {
         val caps = device.capabilities.toSet()
         val cls = device.effectiveClass
         return when {
+            Vacuums.isVacuum(device) -> CardKind.Vacuum
             cls == "thermostat" || "target_temperature" in caps -> CardKind.Thermostat
             cls == "light" || (cls != "socket" && "dim" in caps) -> CardKind.Light
             cls == "speaker" || cls == "tv" || "speaker_playing" in caps -> CardKind.Media
@@ -58,7 +59,7 @@ object DashboardLayout {
         CardKind.Thermostat -> DeviceGroup.Climate
         CardKind.Blinds, CardKind.Lock -> DeviceGroup.Openings
         CardKind.Sensor -> DeviceGroup.Sensors
-        CardKind.Button, CardKind.Other -> DeviceGroup.Other
+        CardKind.Vacuum, CardKind.Button, CardKind.Other -> DeviceGroup.Other
     }
 
     /**

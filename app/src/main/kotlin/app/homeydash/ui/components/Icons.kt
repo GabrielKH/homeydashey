@@ -195,4 +195,13 @@ object Sym {
     val key = Ic(R.drawable.ph_key, R.drawable.ph_key_fill)
     val send = Ic(R.drawable.ph_paper_plane_right, R.drawable.ph_paper_plane_right_fill)
     val stop = Ic(R.drawable.ph_stop, R.drawable.ph_stop_fill)
+
+    val cart = Ic(R.drawable.ph_shopping_cart, R.drawable.ph_shopping_cart_fill)
+    val locate = Ic(R.drawable.ph_crosshair, R.drawable.ph_crosshair_fill)
+    val broom = Ic(R.drawable.ph_broom, R.drawable.ph_broom_fill)
+    val trash = Ic(R.drawable.ph_trash, R.drawable.ph_trash_fill)
+    val map = Ic(R.drawable.ph_map_trifold, R.drawable.ph_map_trifold_fill)
+    val refresh = Ic(R.drawable.ph_arrow_clockwise, R.drawable.ph_arrow_clockwise_fill)
+    val clock = Ic(R.drawable.ph_clock, R.drawable.ph_clock_fill)
+    val filter = Ic(R.drawable.ph_funnel, R.drawable.ph_funnel_fill)
 }

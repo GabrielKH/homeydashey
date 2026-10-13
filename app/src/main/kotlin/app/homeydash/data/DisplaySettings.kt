@@ -51,10 +51,10 @@ class DisplaySettings(
         }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
-    val overviewWidgets: StateFlow<List<String>> = settings.overviewWidgets.stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val overviewOrder: StateFlow<List<String>> = settings.overviewOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    fun setOverviewWidgets(keys: List<String>) {
-        scope.launch { settings.setOverviewWidgets(keys) }
+    fun setOverviewOrder(keys: List<String>) {
+        scope.launch { settings.setOverviewOrder(keys) }
     }
 
     fun setOverviewDevices(ids: List<String>) {

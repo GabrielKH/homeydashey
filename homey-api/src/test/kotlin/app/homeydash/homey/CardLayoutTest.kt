@@ -73,3 +73,4 @@ class DragTest {
         assertEquals("b", DashboardLayout.featuredPlayer(idle, chosen = null, last = "b")?.id)
     }
 }
+
