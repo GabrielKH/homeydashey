@@ -44,6 +44,10 @@ data class Device(
     /** Hidden in the Homey app (device settings → Hide device); the dashboard leaves these out. */
     val hidden: Boolean = false,
     val images: List<DeviceImage> = emptyList(),
+    /** The app and driver, e.g. `homey:app:be.functor.roborock:vacuum`. */
+    val driverUri: String? = null,
+    /** How the Homey app draws the device: `components` lists capabilities per control (`toggle`, `button`, `picker`, …). */
+    val ui: JsonObject? = null,
 ) {
     /** Class used for picking a card: a socket switching a lamp reports `virtualClass = light`. */
     val effectiveClass: String get() = virtualClass ?: deviceClass
@@ -61,6 +65,9 @@ data class Device(
 @Serializable
 data class DeviceImage(
     val id: String,
+    /** `camera` for images an app sets with `setCameraImage`, such as a robot vacuum's map. */
+    val type: String? = null,
+    val title: String? = null,
     val imageObj: ImageObj? = null,
 )
 

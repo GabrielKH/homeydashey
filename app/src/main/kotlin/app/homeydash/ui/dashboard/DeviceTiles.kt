@@ -53,7 +53,7 @@ val TileHeight = 148.dp
 
 /** How many grid columns a device's tile takes. */
 fun tileSpan(device: Device): Int = when (DashboardLayout.cardKind(device)) {
-    CardKind.Thermostat, CardKind.Media -> 2
+    CardKind.Thermostat, CardKind.Media, CardKind.Vacuum -> 2
     else -> 1
 }
 
@@ -68,6 +68,7 @@ fun DeviceTile(device: Device, actions: DashboardActions, modifier: Modifier = M
         CardKind.Blinds -> BlindsTile(device, actions, tileModifier)
         CardKind.Lock -> LockTile(device, actions, tileModifier)
         CardKind.Media -> MediaPlayerCard(device, actions, tileModifier.then(holdForMenu), large = false)
+        CardKind.Vacuum -> VacuumTile(device, actions, tileModifier)
         CardKind.Button -> ButtonTile(device, actions, tileModifier)
         CardKind.Sensor, CardKind.Other -> SensorTile(device, actions, tileModifier)
     }

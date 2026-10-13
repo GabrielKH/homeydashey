@@ -100,6 +100,7 @@ class AlbumArtImages(val sharp: ImageBitmap, val blurred: ImageBitmap)
 sealed interface Sheet {
     data class Light(val deviceId: String) : Sheet
     data class Remote(val deviceId: String) : Sheet
+    data class Vacuum(val deviceId: String) : Sheet
     /** Music for a room ([zoneId]), or straight to one speaker ([deviceId]). */
     data class Music(val zoneId: String?, val deviceId: String? = null) : Sheet
     data class Background(val key: String, val title: String) : Sheet
@@ -223,11 +224,11 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
     }
 
     /** Album art and other Homey images, decoded off the main thread and kept for a few tracks. */
-    suspend fun loadImage(path: String, cacheKey: String): ImageBitmap? {
+    suspend fun loadImage(path: String, cacheKey: String, maxSide: Int = 512): ImageBitmap? {
         images.get(cacheKey)?.let { return it }
         return runCatching {
             val bytes = store.image(path)
-            withContext(Dispatchers.Default) { decodeScaled(bytes, maxSide = 512)?.asImageBitmap() }
+            withContext(Dispatchers.Default) { decodeScaled(bytes, maxSide = maxSide)?.asImageBitmap() }
         }.getOrNull()?.also { images.put(cacheKey, it) }
     }
 }
@@ -272,6 +273,9 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
     val actions = remember(store) { DashboardActions(store, scope) }
     SideEffect { actions.deviceCards = snapshot.deviceCards }
+    // Counts robot vacuum cleaning hours for the part-wear estimates.
+    val appContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(store) { app.homeydash.data.VacuumUsage.get(appContext).track(store.snapshot) }
     val accent by display.accent.collectAsStateWithLifecycle()
     val accentOpacity by display.accentOpacity.collectAsStateWithLifecycle()
     val backgrounds by display.backgrounds.collectAsStateWithLifecycle()
@@ -478,6 +482,7 @@ fun DashboardScreen(
                 onDismiss = actions::close,
             )
         } ?: SideEffect { actions.close() }
+        is Sheet.Vacuum -> snapshot.devices[sheet.deviceId]?.let { VacuumSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
         is Sheet.Music -> MusicSheet(sheet.zoneId, sheet.deviceId, speakers, snapshot.zones, actions, actions::close)
         is Sheet.Group -> snapshot.devices[sheet.deviceId]?.let { GroupSheet(it, groupable, snapshot.zones, actions, actions::close) } ?: SideEffect { actions.close() }
         Sheet.Rooms -> RoomsDialog(

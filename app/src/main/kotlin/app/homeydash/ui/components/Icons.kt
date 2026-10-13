@@ -187,4 +187,13 @@ object Sym {
     val move = Ic(R.drawable.ph_arrows_out_cardinal, R.drawable.ph_arrows_out_cardinal_fill)
     val caretUpDown = Ic(R.drawable.ph_caret_up_down, R.drawable.ph_caret_up_down_fill)
     val calendarDots = Ic(R.drawable.ph_calendar_dots, R.drawable.ph_calendar_dots_fill)
+    val stop = Ic(R.drawable.ph_stop, R.drawable.ph_stop_fill)
+    val cart = Ic(R.drawable.ph_shopping_cart, R.drawable.ph_shopping_cart_fill)
+    val locate = Ic(R.drawable.ph_crosshair, R.drawable.ph_crosshair_fill)
+    val broom = Ic(R.drawable.ph_broom, R.drawable.ph_broom_fill)
+    val trash = Ic(R.drawable.ph_trash, R.drawable.ph_trash_fill)
+    val map = Ic(R.drawable.ph_map_trifold, R.drawable.ph_map_trifold_fill)
+    val refresh = Ic(R.drawable.ph_arrow_clockwise, R.drawable.ph_arrow_clockwise_fill)
+    val clock = Ic(R.drawable.ph_clock, R.drawable.ph_clock_fill)
+    val filter = Ic(R.drawable.ph_funnel, R.drawable.ph_funnel_fill)
 }
