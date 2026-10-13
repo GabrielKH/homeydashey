@@ -230,7 +230,7 @@ class Assistant(
                         return@launch
                     }
                     if (state == AssistantState.Listening) heard(text)
-                },
+                }
             },
             onError = { message ->
                 recording = false
