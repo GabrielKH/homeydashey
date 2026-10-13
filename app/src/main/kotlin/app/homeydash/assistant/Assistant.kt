@@ -129,6 +129,8 @@ class Assistant(
     private var voice: Seen? = null
     /** Until when questions are heard offline because Google's speech service didn't answer. */
     private var offlineUntil = 0L
+    /** Until when questions are heard as Swedish, because the last one was (elapsed realtime). */
+    private var swedishUntil = 0L
     private var toldOffline = false
     /** The offline model is hearing a question (it holds the microphone). */
     private var dictating = false
@@ -160,10 +162,10 @@ class Assistant(
         partial = ""
         state = AssistantState.Listening
         val local = settings.mode == BrainMode.Local
-        // Once a conversation is in Swedish, follow-ups are heard as Swedish: language detection
-        // on a short sentence often guesses English. The offline recogniser only knows English,
-        // so it isn't used for Swedish.
-        val language = if (conversing && settings.language == app.homeydash.agent.Language.Auto && talkingSwedish()) {
+        // Once someone speaks Swedish, the next questions are heard as Swedish, in this conversation
+        // and the next ones for a while: language detection on a short sentence often guesses
+        // English. The offline recogniser only knows English, so it isn't used for Swedish.
+        val language = if (settings.language == app.homeydash.agent.Language.Auto && SystemClock.elapsedRealtime() < swedishUntil) {
             app.homeydash.agent.Language.Swedish
         } else {
             settings.language
@@ -184,10 +186,6 @@ class Assistant(
     }
 
     /** Listens with the offline model (English only) when it's downloaded; false when it isn't. */
-    /** Whether the last thing said to the assistant was Swedish. */
-    private fun talkingSwedish(): Boolean =
-        lines.lastOrNull { it.fromUser && it.text.isNotBlank() }?.let { app.homeydash.agent.Confirmation.looksSwedish(it.text) } ?: false
-
     private fun listenOffline(): Boolean {
         if (services.voiceModels.state.value != VoiceModels.State.Ready) return false
         if (!toldOffline) {
@@ -210,7 +208,10 @@ class Assistant(
             // Just the name ("Hey Nova") during a conversation: still here, keep listening.
             WakeName.heard(text, settings.wakeName) -> { keepConversation(); listenAgainOrRest() }
             FollowUp.ends(text, settings.wakeName) -> endConversation()
-            else -> send(text, byVoice = true)
+            else -> {
+                swedishUntil = if (app.homeydash.agent.Confirmation.looksSwedish(text)) SystemClock.elapsedRealtime() + SWEDISH_FOR_MS else 0L
+                send(text, byVoice = true)
+            }
         }
     }
 
@@ -505,5 +506,6 @@ class Assistant(
         const val SPEAKER_DELAY_MS = 800L
         const val RELISTEN_GAP_MS = 300L
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
+        const val SWEDISH_FOR_MS = 30 * 60 * 1000L
     }
 }

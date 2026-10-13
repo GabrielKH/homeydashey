@@ -102,6 +102,16 @@ class SpeechInput(private val context: Context) {
             }
             override fun onError(error: Int) {
                 if (!current()) return
+                // The tablet's on-device recogniser drops the connection (error 11) when it can't
+                // serve this language; Google's online one can. Use it from now on.
+                if (a.onDevice && error in ON_DEVICE_GAVE_UP) {
+                    val online = attempts.indexOfFirst { !it.onDevice }
+                    if (online > index) {
+                        working[key] = online
+                        listenWith(attempts, online, key, listener, retries = 0)
+                        return
+                    }
+                }
                 // The recognition service hiccups (busy, restarting, dropped connection); try again quietly.
                 if (error in TRANSIENT && retries < MAX_RETRIES) {
                     main.postDelayed({ if (current()) listenWith(attempts, index, key, listener, retries + 1) }, RETRY_DELAY_MS * (retries + 1))
@@ -157,6 +167,11 @@ class SpeechInput(private val context: Context) {
             SpeechRecognizer.ERROR_SERVER,
             SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
             SpeechRecognizer.ERROR_TOO_MANY_REQUESTS,
+        )
+        private val ON_DEVICE_GAVE_UP = setOf(
+            SpeechRecognizer.ERROR_SERVER,
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
+            SpeechRecognizer.ERROR_CLIENT,
         )
         private val TRANSIENT = setOf(
             SpeechRecognizer.ERROR_CLIENT,
