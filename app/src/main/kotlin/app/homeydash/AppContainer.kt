@@ -3,6 +3,8 @@ package app.homeydash
 import android.content.Context
 import app.homeydash.data.AppUpdater
 import app.homeydash.data.BackgroundPhotos
+import app.homeydash.data.CalendarRepository
+import app.homeydash.data.WeatherRepository
 import app.homeydash.data.DisplaySettings
 import app.homeydash.data.HomeyDiscovery
 import app.homeydash.data.SavedHomey
@@ -45,11 +47,16 @@ class AppContainer(context: Context) {
 
     val discovery = HomeyDiscovery(context, http)
     val updater = AppUpdater(context, http)
+    val calendar = CalendarRepository(context, settings, scope)
 
     val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
 
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
+
+    val weather = WeatherRepository(context, http, settings, scope) {
+        (_session.value as? SessionState.Ready)?.store?.location()
+    }
 
     init {
         scope.launch {
@@ -95,6 +102,8 @@ class AppContainer(context: Context) {
     private fun start(ready: SessionState.Ready) {
         ready.store.start()
         _session.value = ready
+        // The weather may use the Homey's location, known only now.
+        weather.refresh()
     }
 
     private fun HomeySession.newStore(saved: SavedHomey) = SessionState.Ready(

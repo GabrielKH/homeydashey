@@ -98,6 +98,9 @@ class HomeyStore(
 
     suspend fun image(path: String): ByteArray = client.image(path)
 
+    /** The Homey's own location, for the weather. */
+    suspend fun location(): Pair<Double, Double>? = client.location()
+
     /** Runs a Flow card; failures show in the error banner. */
     suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
         try {

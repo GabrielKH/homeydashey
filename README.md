@@ -42,6 +42,7 @@ The look is iOS-style glass in light and dark (Settings → Appearance: Auto, Li
 - Devices hidden in the Homey app are left out.
 - Media: an Apple Music-style player with the album art blurred behind it. A Remote button appears for devices whose app offers remote keys (the Apple TV app), and a Music button for speakers that can play favourites, playlists or albums (the Sonos app). Music can be started from any room, on any of those speakers.
 - The side menu shrinks to icons with the arrow next to the home name (tap the home icon to open it again); the app remembers the choice.
+- Overview: a weather card (Open-Meteo, no account) for the Homey's location, the tablet's GPS, the internet address or a city you search for; tap it to change. Below it, the next week from the calendars synced on the tablet (for example a Google family calendar), read through Android's calendar provider; the sliders icon picks which calendars show.
 - Settings: hide rooms and change their order (per tablet); highlight colour (gradients) and its opacity, and a background for the home; each room's header has a picture button for its own background (preset or photo).
 
 Type is Inter (OFL), the closest open typeface to Apple's SF Pro. Icons are [Phosphor](https://phosphoricons.com) (MIT): each icon's Regular and Fill SVGs from `@phosphor-icons/core` are converted to vector drawables `res/drawable/ph_<name>.xml` and `ph_<name>_fill.xml`, and listed in `Sym` in `ui/components/Icons.kt`.
@@ -53,6 +54,7 @@ Type is Inter (OFL), the closest open typeface to Apple's SF Pro. Icons are [Pho
 - `GET /api/manager/moods/mood` for moods (skipped if the key may not read them) and `POST /api/manager/moods/mood/:id/set` to set one.
 - `PUT /api/manager/devices/device/:id/capability/:capability` to control a device. The card updates at once and rolls back if Homey refuses.
 - `GET /api/manager/flow/flowcardaction` for app "Then" cards; `POST /api/manager/flow/flowcardaction/:uri/:id/run` runs one (remote keys, play favourite) and `GET …/:uri/:id/autocomplete?name=&query=` lists the choices (favourites, playlists, apps). Skipped if the key has no Flow access.
+- `GET /api/manager/geolocation/option/location` (or `/state`) for the Homey's location, used by the weather card.
 - Socket.IO: `handshakeClient {token, homeyId}`, then `subscribe` to `homey:manager:devices`, `homey:manager:zones`, `homey:manager:moods` and `homey:device:<id>`. After a reconnect the app reloads everything.
 
 If the `homeylocal.com` address doesn't resolve (some routers block it), the app falls back to the plain IP it encodes.

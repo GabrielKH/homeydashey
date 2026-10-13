@@ -5,6 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -77,6 +80,8 @@ fun OverviewScreen(
     actions: DashboardActions,
     hasMusic: Boolean,
     onRoom: (String) -> Unit,
+    /** Weather and calendar cards for the right-hand column. */
+    widgets: @Composable ColumnScope.() -> Unit,
 ) {
     val g = GlassTheme.colors
     val now = rememberNow()
@@ -129,11 +134,16 @@ fun OverviewScreen(
                     RoomCard(room, actions, onClick = { onRoom(room.zone.id) })
                 }
             }
-            if (player != null) {
-                Column(Modifier.width(340.dp), verticalArrangement = Arrangement.spacedBy(GridGap)) {
+            Column(
+                Modifier.width(360.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(GridGap),
+            ) {
+                widgets()
+                if (player != null) {
                     SectionLabel("Now playing")
                     MediaPlayerCard(player, actions, subtitle = player.zone?.let { zones[it]?.name })
                 }
+                Spacer(Modifier.height(24.dp))
             }
         }
     }

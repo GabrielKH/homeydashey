@@ -66,6 +66,26 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[ACCENT] = accent.name }
     }
 
+    /** Where the weather is for: `homey`, `gps`, `ip` or `place`. */
+    val weatherSource: Flow<String> = context.dataStore.data.map { it[WEATHER_SOURCE] ?: "homey" }
+
+    /** A chosen place as name, detail, latitude and longitude separated by tabs. */
+    val weatherPlace: Flow<String?> = context.dataStore.data.map { it[WEATHER_PLACE] }
+
+    suspend fun setWeather(source: String, place: String?) {
+        context.dataStore.edit {
+            it[WEATHER_SOURCE] = source
+            if (place != null) it[WEATHER_PLACE] = place
+        }
+    }
+
+    /** Calendar ids shown on the dashboard; empty means every calendar the phone shows. */
+    val calendars: Flow<Set<String>> = context.dataStore.data.map { it[CALENDARS].orEmpty() }
+
+    suspend fun setCalendars(ids: Set<String>) {
+        context.dataStore.edit { it[CALENDARS] = ids }
+    }
+
     /** The side menu shrunk to icons only. */
     val compactSidebar: Flow<Boolean> = context.dataStore.data.map { it[COMPACT_SIDEBAR] ?: false }
 
@@ -116,6 +136,9 @@ class SettingsRepository(private val context: Context) {
     private companion object {
         const val BG_PREFIX = "bg_"
         val ACCENT = stringPreferencesKey("accent")
+        val WEATHER_SOURCE = stringPreferencesKey("weather_source")
+        val WEATHER_PLACE = stringPreferencesKey("weather_place")
+        val CALENDARS = stringSetPreferencesKey("calendars")
         val COMPACT_SIDEBAR = booleanPreferencesKey("compact_sidebar")
         val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
         val ROOM_ORDER = stringPreferencesKey("room_order")

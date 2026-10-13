@@ -75,6 +75,8 @@ import app.homeydash.ui.components.zoneIcon
 import app.homeydash.ui.theme.GlassTheme
 import app.homeydash.data.AppUpdater
 import app.homeydash.data.Blur
+import app.homeydash.data.CalendarRepository
+import app.homeydash.data.WeatherRepository
 import app.homeydash.data.DisplaySettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -96,6 +98,8 @@ sealed interface Sheet {
     data class Background(val key: String, val title: String) : Sheet
     data class Group(val deviceId: String) : Sheet
     data object Rooms : Sheet
+    data object Weather : Sheet
+    data object Calendars : Sheet
 }
 
 /** Everything a card can do to the Homey. One instance per dashboard. */
@@ -203,9 +207,18 @@ fun DashboardScreen(
     info: HomeyInfo,
     display: DisplaySettings,
     updater: AppUpdater,
+    weather: WeatherRepository,
+    calendar: CalendarRepository,
     onForget: () -> Unit,
 ) {
     val update by updater.state.collectAsStateWithLifecycle()
+    val weatherState by weather.state.collectAsStateWithLifecycle()
+    val weatherSource by weather.source.collectAsStateWithLifecycle()
+    val weatherPlace by weather.place.collectAsStateWithLifecycle()
+    val hasCalendar by calendar.hasPermission.collectAsStateWithLifecycle()
+    val events by calendar.events.collectAsStateWithLifecycle()
+    val calendars by calendar.calendars.collectAsStateWithLifecycle()
+    val chosenCalendars by calendar.selected.collectAsStateWithLifecycle()
     val themeMode by display.themeMode.collectAsStateWithLifecycle()
     val hiddenOnTablet by display.hiddenDevices.collectAsStateWithLifecycle()
     val snapshot by store.snapshot.collectAsStateWithLifecycle()
@@ -294,6 +307,15 @@ fun DashboardScreen(
                             actions = actions,
                             hasMusic = speakers.isNotEmpty(),
                             onRoom = { destination = ROOM + it },
+                            widgets = {
+                                WeatherCard(weatherState) { actions.open(Sheet.Weather) }
+                                CalendarCard(
+                                    hasPermission = hasCalendar,
+                                    events = events,
+                                    onPermissionResult = calendar::permissionChanged,
+                                    onChooseCalendars = { actions.open(Sheet.Calendars) },
+                                )
+                            },
                         )
                     }
                 }
@@ -317,6 +339,8 @@ fun DashboardScreen(
             onHomeBackground = { showSettings = false; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
             onChooseDevices = { showSettings = false; showDevices = true },
             onChooseRooms = { showSettings = false; actions.open(Sheet.Rooms) },
+            onWeather = { showSettings = false; actions.open(Sheet.Weather) },
+            onCalendars = { showSettings = false; actions.open(Sheet.Calendars) },
             version = updater.currentVersion,
             update = update,
             onCheckUpdate = { scope.launch { updater.check() } },
@@ -347,6 +371,20 @@ fun DashboardScreen(
             order = roomOrder,
             onHide = display::setRoomHidden,
             onOrder = display::setRoomOrder,
+            onDismiss = actions::close,
+        )
+        Sheet.Weather -> WeatherDialog(
+            source = weatherSource,
+            place = weatherPlace,
+            hasLocationPermission = weather::hasLocationPermission,
+            search = { weather.search(it) },
+            onChoose = { source, place -> weather.choose(source, place); actions.close() },
+            onDismiss = actions::close,
+        )
+        Sheet.Calendars -> CalendarsDialog(
+            calendars = calendars,
+            selected = chosenCalendars,
+            onSelected = calendar::setSelected,
             onDismiss = actions::close,
         )
         is Sheet.Background -> BackgroundDialog(

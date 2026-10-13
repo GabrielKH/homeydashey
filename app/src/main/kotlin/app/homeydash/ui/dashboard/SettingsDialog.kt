@@ -51,6 +51,8 @@ fun SettingsDialog(
     onHomeBackground: () -> Unit,
     onChooseDevices: () -> Unit,
     onChooseRooms: () -> Unit,
+    onWeather: () -> Unit,
+    onCalendars: () -> Unit,
     version: String,
     update: AppUpdater.State,
     onCheckUpdate: () -> Unit,
@@ -181,6 +183,30 @@ fun SettingsDialog(
             ) {
                 SymIcon(Sym.sliders, size = 20.dp)
                 Text("Hide and sort rooms", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(onWeather)
+                    .glass(PillShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SymIcon(Sym.mapPin, size = 20.dp)
+                Text("Weather location", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(onCalendars)
+                    .glass(PillShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SymIcon(Sym.calendar, size = 20.dp)
+                Text("Calendars", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
                 SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
             }
             Text("App", style = MaterialTheme.typography.labelMedium, color = g.muted)

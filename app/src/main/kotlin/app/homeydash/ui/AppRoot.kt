@@ -46,6 +46,8 @@ fun AppRoot(container: AppContainer) {
                 info = state.info,
                 display = container.display,
                 updater = container.updater,
+                weather = container.weather,
+                calendar = container.calendar,
                 onForget = container::forget,
             )
         }

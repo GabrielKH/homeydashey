@@ -51,6 +51,21 @@ class HomeyClient(
 
     suspend fun moods(): Map<String, Mood> = get("api/manager/moods/mood")
 
+    /** Where the Homey is (Settings → Location), or null when the key may not read it. */
+    suspend fun location(): Pair<Double, Double>? {
+        for (path in listOf("api/manager/geolocation/option/location", "api/manager/geolocation/state")) {
+            val json = try {
+                HomeyJson.parseToJsonElement(execute(request(path).get().build()))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                continue
+            }
+            Weather.findCoordinates(json)?.let { return it }
+        }
+        return null
+    }
+
     suspend fun setMood(id: String) {
         execute(request("api/manager/moods/mood/$id/set").post("{}".toRequestBody(JSON_TYPE)).build())
     }
