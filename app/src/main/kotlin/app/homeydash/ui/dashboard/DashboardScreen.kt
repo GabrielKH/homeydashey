@@ -103,6 +103,8 @@ sealed interface Sheet {
     data class Group(val deviceId: String) : Sheet
     data object Rooms : Sheet
     data object Weather : Sheet
+    data class CardMenu(val deviceId: String) : Sheet
+    data class RoomMenu(val zoneId: String) : Sheet
     data object Calendars : Sheet
 }
 
@@ -246,6 +248,9 @@ fun DashboardScreen(
     val accentOpacity by display.accentOpacity.collectAsStateWithLifecycle()
     val backgrounds by display.backgrounds.collectAsStateWithLifecycle()
     val remoteApps by display.remoteApps.collectAsStateWithLifecycle()
+    val arrangement by display.cardArrangement.collectAsStateWithLifecycle()
+    val calendarView by display.calendarView.collectAsStateWithLifecycle()
+    val uiScale by display.uiScale.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
@@ -312,7 +317,7 @@ fun DashboardScreen(
                                 // The room was deleted or emptied; go back home.
                                 LaunchedEffect(id) { destination = OVERVIEW }
                             } else {
-                                RoomScreen(room, sections, snapshot.zones, snapshot.moods, actions, hasMusic = speakers.isNotEmpty())
+                                RoomScreen(room, sections, snapshot.zones, snapshot.moods, actions, hasMusic = speakers.isNotEmpty(), arrangement = arrangement)
                             }
                         }
                         else -> OverviewScreen(
@@ -329,6 +334,8 @@ fun DashboardScreen(
                                 CalendarCard(
                                     hasPermission = hasCalendar,
                                     events = events,
+                                    view = calendarView,
+                                    onView = display::setCalendarView,
                                     onPermissionResult = calendar::permissionChanged,
                                     onChooseCalendars = { actions.open(Sheet.Calendars) },
                                 )
@@ -357,6 +364,8 @@ fun DashboardScreen(
             onChooseDevices = { showSettings = false; showDevices = true },
             onChooseRooms = { showSettings = false; actions.open(Sheet.Rooms) },
             onWeather = { showSettings = false; actions.open(Sheet.Weather) },
+            uiScale = uiScale,
+            onUiScale = display::setUiScale,
             onCalendars = { showSettings = false; actions.open(Sheet.Calendars) },
             version = updater.currentVersion,
             update = update,
@@ -400,13 +409,37 @@ fun DashboardScreen(
             onDismiss = actions::close,
         )
         Sheet.Weather -> WeatherDialog(
+            state = weatherState,
             source = weatherSource,
             place = weatherPlace,
             hasLocationPermission = weather::hasLocationPermission,
             search = { weather.search(it) },
-            onChoose = { source, place -> weather.choose(source, place); actions.close() },
+            onChoose = { source, place -> weather.choose(source, place) },
             onDismiss = actions::close,
         )
+        is Sheet.CardMenu -> snapshot.devices[sheet.deviceId]?.let { device ->
+            CardMenu(
+                device = device,
+                section = sections.firstOrNull { section -> section.devices.any { it.id == device.id } },
+                arrangement = arrangement,
+                actions = actions,
+                onOrder = display::setCardOrder,
+                onGroup = { display.setCardGroup(device.id, it) },
+                onHide = { display.setHidden(device.id, true) },
+                onDismiss = actions::close,
+            )
+        } ?: SideEffect { actions.close() }
+        is Sheet.RoomMenu -> snapshot.zones[sheet.zoneId]?.let { zone ->
+            RoomMenu(
+                zone = zone,
+                zones = snapshot.zones,
+                order = roomOrder,
+                onOrder = display::setRoomOrder,
+                onHide = { display.setRoomHidden(zone.id, true) },
+                onBackground = { actions.open(Sheet.Background(zone.id, zone.name)) },
+                onDismiss = actions::close,
+            )
+        } ?: SideEffect { actions.close() }
         Sheet.Calendars -> CalendarsDialog(
             calendars = calendars,
             selected = chosenCalendars,

@@ -4,6 +4,7 @@ import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.rememberScrollState
@@ -40,7 +41,8 @@ import androidx.compose.ui.unit.dp
 import app.homeydash.homey.ConnectionState
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.Device
-import app.homeydash.homey.DeviceGroup
+import app.homeydash.homey.CardArrangement
+import app.homeydash.homey.CardLayout
 import app.homeydash.homey.Mood
 import app.homeydash.homey.RoomSummary
 import app.homeydash.homey.Zone
@@ -121,9 +123,12 @@ fun OverviewScreen(
             }
         }
         if (moods.isNotEmpty()) MoodRow(moods, actions)
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(GridGap)) {
+        BoxWithConstraints(Modifier.weight(1f)) {
+        // The side column takes about a third of the width, so rooms keep at least two columns.
+        val sideWidth = (maxWidth * 0.32f).coerceIn(280.dp, 380.dp)
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(GridGap)) {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(196.dp),
+                columns = GridCells.Adaptive(176.dp),
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 horizontalArrangement = Arrangement.spacedBy(GridGap),
                 verticalArrangement = Arrangement.spacedBy(GridGap),
@@ -131,13 +136,15 @@ fun OverviewScreen(
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }, contentType = "label") { SectionLabel("Rooms") }
                 items(rooms, key = { it.zone.id }, contentType = { "room" }) { room ->
-                    RoomCard(room, actions, onClick = { onRoom(room.zone.id) })
+                    RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.open(Sheet.RoomMenu(room.zone.id)) })
                 }
             }
             Column(
-                Modifier.width(360.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
+                Modifier.width(sideWidth).fillMaxHeight().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(GridGap),
             ) {
+                // Same label height as "Rooms", so the first cards line up.
+                SectionLabel("Today")
                 widgets()
                 if (player != null) {
                     SectionLabel("Now playing")
@@ -146,18 +153,19 @@ fun OverviewScreen(
                 Spacer(Modifier.height(24.dp))
             }
         }
+        }
     }
 }
 
 @Composable
-private fun RoomCard(room: RoomSummary, actions: DashboardActions, onClick: () -> Unit) {
+private fun RoomCard(room: RoomSummary, actions: DashboardActions, onClick: () -> Unit, onLongClick: () -> Unit) {
     val g = GlassTheme.colors
     val anyOn = room.lightsOn > 0
     Column(
         Modifier
             .fillMaxWidth()
             .height(TileHeight)
-            .pressable(onClick)
+            .pressable(onClick, onLongClick)
             .glass(TileShape)
             .padding(16.dp),
     ) {
@@ -313,6 +321,7 @@ fun RoomScreen(
     moods: Map<String, Mood>,
     actions: DashboardActions,
     hasMusic: Boolean,
+    arrangement: CardArrangement,
 ) {
     val g = GlassTheme.colors
     val remote = remember(room.devices, actions.deviceCards) { room.devices.firstOrNull { actions.hasRemote(it) } }
@@ -341,7 +350,7 @@ fun RoomScreen(
         }
         if (roomMoods.isNotEmpty()) MoodRow(roomMoods, actions)
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(188.dp),
+            columns = GridCells.Adaptive(176.dp),
             horizontalArrangement = Arrangement.spacedBy(GridGap),
             verticalArrangement = Arrangement.spacedBy(GridGap),
             contentPadding = PaddingValues(bottom = 24.dp),
@@ -358,21 +367,19 @@ fun RoomScreen(
                         )
                     }
                 }
-                groupedTiles(section, actions)
+                groupedTiles(section, arrangement, actions)
             }
         }
     }
 }
 
-private fun LazyGridScope.groupedTiles(section: ZoneSection, actions: DashboardActions) {
-    val groups = section.devices.groupBy(DashboardLayout::group)
-    DeviceGroup.entries.forEach { group ->
-        val devices = groups[group] ?: return@forEach
-        item(key = "label:${section.zone.id}:${group.name}", span = { GridItemSpan(maxLineSpan) }, contentType = "label") {
+private fun LazyGridScope.groupedTiles(section: ZoneSection, arrangement: CardArrangement, actions: DashboardActions) {
+    CardLayout.groups(section, arrangement).forEach { group ->
+        item(key = "label:${section.zone.id}:${group.custom}:${group.title}", span = { GridItemSpan(maxLineSpan) }, contentType = "label") {
             SectionLabel(group.title)
         }
         items(
-            devices,
+            group.devices,
             key = { it.id },
             span = { GridItemSpan(tileSpan(it).coerceAtMost(maxLineSpan)) },
             contentType = { DashboardLayout.cardKind(it) },

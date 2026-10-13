@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.homeydash.data.CalendarEvent
@@ -67,6 +68,8 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.YearMonth
+import java.time.temporal.WeekFields
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -101,6 +104,7 @@ private fun sky(kind: WeatherKind, isDay: Boolean): List<Color> = when {
 
 private fun deg(value: Double) = "${value.roundToInt()}°"
 
+/** The overview's weather: now, today's high and low, and the next hours. Tap for the full forecast. */
 @Composable
 fun WeatherCard(state: WeatherState, onClick: () -> Unit) {
     val forecast = state.forecast
@@ -110,6 +114,54 @@ fun WeatherCard(state: WeatherState, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .pressable(onClick)
+            .clip(TileShape)
+            .background(Brush.verticalGradient(colors))
+            .border(1.dp, Color.White.copy(alpha = 0.16f), TileShape)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (forecast == null || current == null) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SymIcon(Sym.wxCloudSun, filled = true, size = 24.dp, tint = Color.White)
+                Text(state.error ?: "Loading the weather…", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            }
+            return@Column
+        }
+        val today = forecast.days.firstOrNull()
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                deg(current.temperature),
+                style = MaterialTheme.typography.displayLarge.copy(fontSize = 44.sp, lineHeight = 48.sp, fontWeight = FontWeight.Normal),
+                color = Color.White,
+            )
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SymIcon(Sym.mapPin, filled = true, size = 13.dp, tint = Color.White)
+                    Text(state.placeName ?: "", style = MaterialTheme.typography.labelLarge, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(
+                    listOfNotNull(current.kind.label, today?.let { "H:${deg(it.max)} L:${deg(it.min)}" }).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = WhiteSoft,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            SymIcon(weatherIcon(current.kind, current.isDay), filled = true, size = 40.dp, tint = Color.White)
+        }
+        HourlyRow(state, count = 5, iconSize = 20.dp)
+    }
+}
+
+/** The whole forecast, as in the iOS Weather app: now, the next hours and the week. */
+@Composable
+fun WeatherDetails(state: WeatherState, modifier: Modifier = Modifier) {
+    val forecast = state.forecast
+    val current = forecast?.current
+    val colors = remember(current?.kind, current?.isDay) { sky(current?.kind ?: WeatherKind.Clear, current?.isDay ?: true) }
+    Column(
+        modifier
+            .fillMaxWidth()
             .clip(TileShape)
             .background(Brush.verticalGradient(colors))
             .border(1.dp, Color.White.copy(alpha = 0.16f), TileShape)
@@ -173,13 +225,13 @@ private fun Divider() {
 }
 
 @Composable
-private fun HourlyRow(state: WeatherState) {
+private fun HourlyRow(state: WeatherState, count: Int = 6, iconSize: Dp = 24.dp) {
     val forecast = state.forecast ?: return
     val now = rememberHour()
     val context = LocalContext.current
     val is24 = remember(context) { DateFormat.is24HourFormat(context) }
     val start = forecast.hours.indexOfFirst { it.time >= now }.coerceAtLeast(0)
-    val hours = forecast.hours.drop(start).take(6)
+    val hours = forecast.hours.drop(start).take(count)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         hours.forEachIndexed { i, hour ->
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -187,7 +239,7 @@ private fun HourlyRow(state: WeatherState) {
                     if (is24) "%02d".format(h) else "${if (h % 12 == 0) 12 else h % 12}${if (h < 12) "am" else "pm"}"
                 } ?: ""
                 Text(label, style = MaterialTheme.typography.labelLarge, color = Color.White)
-                SymIcon(weatherIcon(hour.kind, hour.isDay), filled = true, size = 24.dp, tint = Color.White)
+                SymIcon(weatherIcon(hour.kind, hour.isDay), filled = true, size = iconSize, tint = Color.White)
                 Text(deg(hour.temperature), style = MaterialTheme.typography.labelLarge, color = Color.White)
             }
         }
@@ -265,6 +317,7 @@ private fun tempColor(t: Double): Color = when {
 /** Choose where the weather is for: the Homey, the tablet, the internet address, or a place from a search. */
 @Composable
 fun WeatherDialog(
+    state: WeatherState,
     source: WeatherSource,
     place: Place?,
     hasLocationPermission: () -> Boolean,
@@ -277,8 +330,12 @@ fun WeatherDialog(
     val askLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) onChoose(WeatherSource.Gps, null)
     }
-    GlassDialog(onDismiss = onDismiss, width = 600.dp) {
-        DialogHeader(title = "Weather", subtitle = "Where the forecast is for", onClose = onDismiss)
+    GlassDialog(onDismiss = onDismiss, width = 980.dp) {
+        DialogHeader(title = "Weather", subtitle = state.placeName ?: "Forecast and location", onClose = onDismiss)
+        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        WeatherDetails(state, Modifier.width(420.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("LOCATION", style = MaterialTheme.typography.labelMedium, color = g.muted)
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
                 Triple(WeatherSource.Homey, Sym.home, "Where your Homey is, from its location setting"),
@@ -345,6 +402,8 @@ fun WeatherDialog(
                 }
             }
         }
+        }
+        }
     }
 }
 
@@ -372,11 +431,13 @@ private fun SourceRow(icon: Ic, title: String, detail: String, selected: Boolean
 
 // ---------------------------------------------------------------- Calendar
 
-/** The next week's events from the tablet's calendars, grouped by day. */
+/** The tablet's calendars as Today, Week or Month, like the iOS Calendar widgets. */
 @Composable
 fun CalendarCard(
     hasPermission: Boolean,
     events: List<CalendarEvent>,
+    view: String,
+    onView: (String) -> Unit,
     onPermissionResult: () -> Unit,
     onChooseCalendars: () -> Unit,
 ) {
@@ -387,19 +448,43 @@ fun CalendarCard(
     val today = LocalDate.now(zone)
     val timeFormat = remember(context) { DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a") }
     val dayFormat = remember { DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()) }
+    // Each day an event touches, so a three-day trip shows on all three.
+    val byDay = remember(events, zone) {
+        val map = sortedMapOf<LocalDate, MutableList<CalendarEvent>>()
+        events.forEach { event -> eventDays(event, zone).forEach { day -> map.getOrPut(day) { mutableListOf() } += event } }
+        map
+    }
+    val now = System.currentTimeMillis()
 
     Column(
         Modifier
             .fillMaxWidth()
             .glass(TileShape)
-            .padding(20.dp),
+            .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SymIcon(Sym.calendar, filled = true, size = 22.dp, tint = g.fg)
-            Text("Calendar", style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f))
+            SymIcon(Sym.calendar, filled = true, size = 20.dp, tint = g.fg)
             if (hasPermission) {
+                Row(Modifier.weight(1f).glass(PillShape).padding(3.dp)) {
+                    listOf("today" to "Today", "week" to "Week", "month" to "Month").forEach { (key, label) ->
+                        val selected = view == key
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (selected) g.onInk else g.fg,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .pressable({ onView(key) })
+                                .then(if (selected) Modifier.background(onBrush(), PillShape) else Modifier)
+                                .padding(vertical = 6.dp),
+                        )
+                    }
+                }
                 SymIcon(Sym.sliders, size = 20.dp, tint = g.muted, modifier = Modifier.pressable(onChooseCalendars))
+            } else {
+                Text("Calendar", style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f))
             }
         }
         if (!hasPermission) {
@@ -419,47 +504,161 @@ fun CalendarCard(
             )
             return@Column
         }
-        val byDay = remember(events, today) {
-            events
-                .map { event -> eventDate(event, zone) to event }
-                .filter { (date, _) -> !date.isBefore(today) }
-                .take(8)
-                .groupBy({ it.first }, { it.second })
+        val row: @Composable (CalendarEvent) -> Unit = { event -> EventRow(event, zone, timeFormat) }
+        when (view) {
+            "today" -> {
+                val list = byDay[today].orEmpty().filter { it.end > now || it.allDay }
+                Text(today.format(dayFormat).replaceFirstChar { it.titlecase(Locale.getDefault()) }, style = MaterialTheme.typography.titleSmall, color = g.fg)
+                if (list.isEmpty()) Text("Nothing more today.", style = MaterialTheme.typography.bodyLarge, color = g.muted)
+                list.forEach { row(it) }
+            }
+            "month" -> {
+                var selected by remember { mutableStateOf(today) }
+                var shownMonth by remember { mutableStateOf(YearMonth.from(today)) }
+                MonthGrid(shownMonth, today, selected, byDay, onSelect = { selected = it }, onMonth = { shownMonth = shownMonth.plusMonths(it.toLong()) })
+                val list = byDay[selected].orEmpty()
+                Text(
+                    when (selected) {
+                        today -> "Today"
+                        today.plusDays(1) -> "Tomorrow"
+                        else -> selected.format(dayFormat).replaceFirstChar { it.titlecase(Locale.getDefault()) }
+                    }.uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = g.muted,
+                )
+                if (list.isEmpty()) Text("Nothing planned.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                list.take(6).forEach { row(it) }
+            }
+            else -> {
+                val week = (0L until 7L).map { today.plusDays(it) }
+                    .associateWith { day -> byDay[day].orEmpty().filter { day != today || it.end > now || it.allDay } }
+                    .filterValues { it.isNotEmpty() }
+                if (week.isEmpty()) {
+                    Text("Nothing planned this week.", style = MaterialTheme.typography.bodyLarge, color = g.muted)
+                }
+                var shown = 0
+                week.forEach { (date, dayEvents) ->
+                    if (shown >= 10) return@forEach
+                    Text(
+                        when (date) {
+                            today -> "Today"
+                            today.plusDays(1) -> "Tomorrow"
+                            else -> date.format(dayFormat).replaceFirstChar { it.titlecase(Locale.getDefault()) }
+                        }.uppercase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = g.muted,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    dayEvents.take(10 - shown).forEach { row(it); shown++ }
+                }
+            }
         }
-        if (byDay.isEmpty()) {
-            Text("Nothing planned this week.", style = MaterialTheme.typography.bodyLarge, color = g.muted)
-            return@Column
-        }
-        byDay.forEach { (date, dayEvents) ->
+    }
+}
+
+@Composable
+private fun EventRow(event: CalendarEvent, zone: ZoneId, timeFormat: DateTimeFormatter) {
+    val g = GlassTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.width(4.dp).height(34.dp).background(Color(event.color).copy(alpha = 1f), PillShape))
+        Column(Modifier.weight(1f)) {
+            Text(event.title, style = MaterialTheme.typography.titleSmall, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val time = if (event.allDay) {
+                "All day"
+            } else {
+                val start = Instant.ofEpochMilli(event.begin).atZone(zone)
+                val end = Instant.ofEpochMilli(event.end).atZone(zone)
+                "${start.format(timeFormat)} – ${end.format(timeFormat)}"
+            }
             Text(
-                when (date) {
-                    today -> "Today"
-                    today.plusDays(1) -> "Tomorrow"
-                    else -> date.format(dayFormat).replaceFirstChar { it.titlecase(Locale.getDefault()) }
-                }.uppercase(),
-                style = MaterialTheme.typography.labelMedium,
+                listOfNotNull(time, event.location).joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium,
                 color = g.muted,
-                modifier = Modifier.padding(top = 2.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            dayEvents.forEach { event ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.width(4.dp).height(36.dp).background(Color(event.color).copy(alpha = 1f), PillShape))
-                    Column(Modifier.weight(1f)) {
-                        Text(event.title, style = MaterialTheme.typography.titleSmall, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        val time = if (event.allDay) {
-                            "All day"
-                        } else {
-                            val start = Instant.ofEpochMilli(event.begin).atZone(zone)
-                            val end = Instant.ofEpochMilli(event.end).atZone(zone)
-                            "${start.format(timeFormat)} – ${end.format(timeFormat)}"
+        }
+    }
+}
+
+/** A month of days with a dot per event, Monday first (or the locale's first day). */
+@Composable
+private fun MonthGrid(
+    month: YearMonth,
+    today: LocalDate,
+    selected: LocalDate,
+    byDay: Map<LocalDate, List<CalendarEvent>>,
+    onSelect: (LocalDate) -> Unit,
+    onMonth: (Int) -> Unit,
+) {
+    val g = GlassTheme.colors
+    val firstDay = remember { WeekFields.of(Locale.getDefault()).firstDayOfWeek }
+    val monthFormat = remember { DateTimeFormatter.ofPattern("LLLL yyyy", Locale.getDefault()) }
+    val start = month.atDay(1).let { first -> first.minusDays(((first.dayOfWeek.value - firstDay.value + 7) % 7).toLong()) }
+    val weeks = ((month.atEndOfMonth().toEpochDay() - start.toEpochDay()) / 7 + 1).toInt()
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                month.format(monthFormat).replaceFirstChar { it.titlecase(Locale.getDefault()) },
+                style = MaterialTheme.typography.titleSmall,
+                color = g.fg,
+                modifier = Modifier.weight(1f),
+            )
+            SymIcon(Sym.keyboardArrowLeft, size = 20.dp, tint = g.muted, modifier = Modifier.pressable({ onMonth(-1) }).padding(6.dp))
+            SymIcon(Sym.keyboardArrowRight, size = 20.dp, tint = g.muted, modifier = Modifier.pressable({ onMonth(1) }).padding(6.dp))
+        }
+        Row {
+            (0L until 7L).forEach { i ->
+                Text(
+                    firstDay.plus(i).getDisplayName(TextStyle.NARROW, Locale.getDefault()),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = g.muted,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        repeat(weeks) { w ->
+            Row {
+                (0 until 7).forEach { d ->
+                    val day = start.plusDays((w * 7 + d).toLong())
+                    val inMonth = day.month == month.month
+                    val isSelected = day == selected
+                    val dayEvents = byDay[day].orEmpty()
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .pressable({ onSelect(day) })
+                            .padding(vertical = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(30.dp)
+                                .then(
+                                    when {
+                                        isSelected -> Modifier.background(onBrush(), CircleShape)
+                                        day == today -> Modifier.border(1.5.dp, g.fg.copy(alpha = 0.6f), CircleShape)
+                                        else -> Modifier
+                                    },
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                day.dayOfMonth.toString(),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = when {
+                                    isSelected -> g.onInk
+                                    inMonth -> g.fg
+                                    else -> g.muted.copy(alpha = 0.5f)
+                                },
+                            )
                         }
-                        Text(
-                            listOfNotNull(time, event.location).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = g.muted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(Modifier.height(6.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            dayEvents.take(3).forEach { event ->
+                                Box(Modifier.size(4.dp).background(Color(event.color).copy(alpha = 1f), CircleShape))
+                            }
+                        }
                     }
                 }
             }
@@ -467,17 +666,20 @@ fun CalendarCard(
     }
 }
 
-/** The local day an event is on; all-day events are stored at UTC midnight. */
-private fun eventDate(event: CalendarEvent, zone: ZoneId): LocalDate =
+/** The local days an event covers; all-day events are stored at UTC midnight. */
+private fun eventDays(event: CalendarEvent, zone: ZoneId): List<LocalDate> {
+    val first: LocalDate
+    val last: LocalDate
     if (event.allDay) {
-        Instant.ofEpochMilli(event.begin).atZone(ZoneOffset.UTC).toLocalDate()
+        first = Instant.ofEpochMilli(event.begin).atZone(ZoneOffset.UTC).toLocalDate()
+        last = Instant.ofEpochMilli(event.end - 1).atZone(ZoneOffset.UTC).toLocalDate()
     } else {
-        Instant.ofEpochMilli(event.begin).atZone(zone).toLocalDate().let { begin ->
-            // An event that started earlier and is still going shows today.
-            val today = LocalDate.now(zone)
-            if (begin.isBefore(today) && event.end > System.currentTimeMillis()) today else begin
-        }
+        first = Instant.ofEpochMilli(event.begin).atZone(zone).toLocalDate()
+        last = Instant.ofEpochMilli(maxOf(event.begin, event.end - 1)).atZone(zone).toLocalDate()
     }
+    val days = (last.toEpochDay() - first.toEpochDay()).coerceIn(0L, 41L)
+    return (0..days).map { first.plusDays(it) }
+}
 
 /** Which of the tablet's calendars show on the dashboard. */
 @Composable

@@ -9,6 +9,8 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -138,11 +140,15 @@ class CalendarRepository(
 
     private fun queryEvents(calendarIds: Set<Long>): List<CalendarEvent> {
         if (calendarIds.isEmpty()) return emptyList()
-        val now = System.currentTimeMillis()
-        val dayStart = now - now % DAY - DAY // include all-day events stored at UTC midnight
+        // From the start of this month (for the month view) to two months ahead; a day either
+        // side covers all-day events, which are stored at UTC midnight.
+        val zone = ZoneId.systemDefault()
+        val monthStart = LocalDate.now(zone).withDayOfMonth(1)
+        val from = monthStart.atStartOfDay(zone).toInstant().toEpochMilli() - DAY
+        val to = monthStart.plusMonths(2).atStartOfDay(zone).toInstant().toEpochMilli() + DAY
         val builder = CalendarContract.Instances.CONTENT_URI.buildUpon()
-        ContentUris.appendId(builder, dayStart)
-        ContentUris.appendId(builder, now + 8 * DAY)
+        ContentUris.appendId(builder, from)
+        ContentUris.appendId(builder, to)
         val projection = arrayOf(
             CalendarContract.Instances.EVENT_ID,
             CalendarContract.Instances.TITLE,
@@ -168,8 +174,7 @@ class CalendarRepository(
                     location = c.getString(6)?.takeIf { it.isNotBlank() },
                     calendarId = calendarId,
                 )
-                // Drop what has already ended; all-day events last until the end of their day.
-                if (event.end > now || (event.allDay && event.end > now - DAY)) result += event
+                result += event
             }
         }
         return result

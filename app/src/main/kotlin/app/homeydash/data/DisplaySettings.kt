@@ -2,6 +2,7 @@ package app.homeydash.data
 
 import android.net.Uri
 import androidx.compose.runtime.Stable
+import app.homeydash.homey.CardArrangement
 import app.homeydash.ui.theme.Accent
 import app.homeydash.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,26 @@ class DisplaySettings(
     val hiddenRooms: StateFlow<Set<String>> = settings.hiddenRooms.stateIn(scope, SharingStarted.Eagerly, emptySet())
     val roomOrder: StateFlow<List<String>> = settings.roomOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val backgrounds: StateFlow<Map<String, String>> = settings.backgrounds.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+    val cardArrangement: StateFlow<CardArrangement> = settings.cardArrangement.stateIn(scope, SharingStarted.Eagerly, CardArrangement())
+    val uiScale: StateFlow<Float> = settings.uiScale.stateIn(scope, SharingStarted.Eagerly, 0f)
+    val calendarView: StateFlow<String> = settings.calendarView.stateIn(scope, SharingStarted.Eagerly, "week")
+
+    fun setCardOrder(zoneId: String, order: List<String>) {
+        scope.launch { settings.setCardOrder(zoneId, order) }
+    }
+
+    fun setCardGroup(deviceId: String, title: String?) {
+        scope.launch { settings.setCardGroup(deviceId, title) }
+    }
+
+    fun setUiScale(scale: Float) {
+        scope.launch { settings.setUiScale(scale) }
+    }
+
+    fun setCalendarView(view: String) {
+        scope.launch { settings.setCalendarView(view) }
+    }
+
     val remoteApps: StateFlow<Map<String, List<String>>> = settings.remoteApps.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     /** null goes back to the default: streaming apps first, then the rest. */

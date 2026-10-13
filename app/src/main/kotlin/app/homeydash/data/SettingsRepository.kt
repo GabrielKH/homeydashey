@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.homeydash.homey.CardArrangement
 import app.homeydash.ui.theme.Accent
 import app.homeydash.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
@@ -147,7 +148,48 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** How the user arranged cards: their order per room and the groups they made. */
+    val cardArrangement: Flow<CardArrangement> = context.dataStore.data.map { prefs ->
+        val order = prefs.asMap().entries
+            .filter { it.key.name.startsWith(ORDER_PREFIX) }
+            .associate { it.key.name.removePrefix(ORDER_PREFIX) to it.value.toString().split('\n').filter { id -> id.isNotEmpty() } }
+        val groups = prefs[CARD_GROUPS].orEmpty().mapNotNull { entry ->
+            val (id, title) = entry.split('\t', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+            id to title
+        }.toMap()
+        CardArrangement(order, groups)
+    }
+
+    suspend fun setCardOrder(zoneId: String, order: List<String>) {
+        context.dataStore.edit { it[stringPreferencesKey(ORDER_PREFIX + zoneId)] = order.joinToString("\n") }
+    }
+
+    /** Puts a card in a group of the user's, or back in its automatic group when [title] is null. */
+    suspend fun setCardGroup(deviceId: String, title: String?) {
+        context.dataStore.edit { prefs ->
+            val others = prefs[CARD_GROUPS].orEmpty().filterNot { it.startsWith(deviceId + "\t") }.toSet()
+            prefs[CARD_GROUPS] = if (title.isNullOrBlank()) others else others + (deviceId + "\t" + title.trim())
+        }
+    }
+
+    /** Display size: 0 for automatic (fit the screen), otherwise a scale such as 0.9. */
+    val uiScale: Flow<Float> = context.dataStore.data.map { it[UI_SCALE] ?: 0f }
+
+    suspend fun setUiScale(scale: Float) {
+        context.dataStore.edit { it[UI_SCALE] = scale }
+    }
+
+    val calendarView: Flow<String> = context.dataStore.data.map { it[CALENDAR_VIEW] ?: "week" }
+
+    suspend fun setCalendarView(view: String) {
+        context.dataStore.edit { it[CALENDAR_VIEW] = view }
+    }
+
     private companion object {
+        const val ORDER_PREFIX = "card_order_"
+        val CARD_GROUPS = stringSetPreferencesKey("card_groups")
+        val UI_SCALE = floatPreferencesKey("ui_scale")
+        val CALENDAR_VIEW = stringPreferencesKey("calendar_view")
         const val BG_PREFIX = "bg_"
         const val APPS_PREFIX = "remote_apps_"
         val ACCENT = stringPreferencesKey("accent")

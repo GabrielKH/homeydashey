@@ -13,9 +13,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -34,6 +38,13 @@ import app.homeydash.ui.theme.GlassTheme
 @Composable
 fun AppRoot(container: AppContainer) {
     val session by container.session.collectAsStateWithLifecycle()
+    val chosenScale by container.display.uiScale.collectAsStateWithLifecycle()
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    // "Fit screen" shrinks everything a little on screens smaller than the layout was drawn for.
+    val fit = minOf(1f, configuration.screenWidthDp / 1500f, configuration.screenHeightDp / 900f).coerceAtLeast(0.75f)
+    val scale = if (chosenScale > 0f) chosenScale else fit
+    CompositionLocalProvider(LocalDensity provides Density(density.density * scale, density.fontScale)) {
     Box(Modifier.fillMaxSize()) {
         // The dashboard draws its own backdrop, which can differ per room.
         if (session !is SessionState.Ready) Wallpaper()
@@ -51,6 +62,7 @@ fun AppRoot(container: AppContainer) {
                 onForget = container::forget,
             )
         }
+    }
     }
 }
 

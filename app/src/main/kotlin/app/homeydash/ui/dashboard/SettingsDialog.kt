@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -53,6 +54,9 @@ fun SettingsDialog(
     onChooseRooms: () -> Unit,
     onWeather: () -> Unit,
     onCalendars: () -> Unit,
+    /** 0 for automatic. */
+    uiScale: Float,
+    onUiScale: (Float) -> Unit,
     version: String,
     update: AppUpdater.State,
     onCheckUpdate: () -> Unit,
@@ -103,6 +107,31 @@ fun SettingsDialog(
                     }
                 }
             }
+            Text("Display size", style = MaterialTheme.typography.labelMedium, color = g.muted)
+            Row(
+                Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                listOf(0f to "Fit screen", 0.8f to "80%", 0.9f to "90%", 1f to "100%", 1.1f to "110%").forEach { (scale, label) ->
+                    val selected = kotlin.math.abs(scale - uiScale) < 0.01f
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) g.wallBase else g.fg,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .pressable({ onUiScale(scale) })
+                            .then(if (selected) Modifier.background(g.fg, PillShape) else Modifier)
+                            .padding(vertical = 12.dp),
+                    )
+                }
+            }
+            Text(
+                "Fit screen sizes cards and text to this tablet's screen. Press and hold a card to hide it, move it or put it in a group.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = g.muted,
+            )
             Text("Highlight", style = MaterialTheme.typography.labelMedium, color = g.muted)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Accent.entries.forEach { option ->
