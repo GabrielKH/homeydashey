@@ -49,6 +49,7 @@ fun SettingsDialog(
     onAccentOpacity: (Float) -> Unit,
     onHomeBackground: () -> Unit,
     onChooseDevices: () -> Unit,
+    onChooseRooms: () -> Unit,
     onForget: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -163,6 +164,18 @@ fun SettingsDialog(
             ) {
                 SymIcon(Sym.visibilityOff, size = 20.dp)
                 Text("Choose devices to show", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(onChooseRooms)
+                    .glass(PillShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SymIcon(Sym.sliders, size = 20.dp)
+                Text("Hide and sort rooms", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
                 SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

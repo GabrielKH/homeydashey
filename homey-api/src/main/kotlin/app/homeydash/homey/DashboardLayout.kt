@@ -74,15 +74,22 @@ object DashboardLayout {
             (device.effectiveClass == "light" || cardKind(device) == CardKind.Light)
 
     /**
-     * Zones in tree order (parents before children, siblings by name), each with
-     * its [visible] devices sorted by name. Zones without visible devices are left out.
+     * Zones in tree order (parents before children, siblings in [order] then by name),
+     * each with its [visible] devices sorted by name. Zones without visible devices are
+     * left out, and so are [hiddenZones] with everything under them.
      */
-    fun sections(zones: Map<String, Zone>, devices: Map<String, Device>, hidden: Set<String> = emptySet()): List<ZoneSection> {
+    fun sections(
+        zones: Map<String, Zone>,
+        devices: Map<String, Device>,
+        hidden: Set<String> = emptySet(),
+        hiddenZones: Set<String> = emptySet(),
+        order: List<String> = emptyList(),
+    ): List<ZoneSection> {
         val shown = visible(devices, hidden)
         val byZone = shown.values.groupBy { it.zone }
         val result = mutableListOf<ZoneSection>()
 
-        walk(zones) { zone, depth ->
+        walk(zones, order, hiddenZones) { zone, depth ->
             byZone[zone.id]?.takeIf { it.isNotEmpty() }?.let { list ->
                 result += ZoneSection(zone, depth, list.sortedBy { it.name.lowercase() })
             }
@@ -145,13 +152,49 @@ object DashboardLayout {
             .filter { zoneId == null || it.zone == zoneId }
             .sortedBy { it.name.lowercase() }
 
-    private fun walk(zones: Map<String, Zone>, visit: (Zone, Int) -> Unit) {
+    /** Every zone in display order with its depth, hidden ones included; for the room settings. */
+    fun zoneTree(zones: Map<String, Zone>, order: List<String> = emptyList()): List<Pair<Zone, Int>> {
+        val result = mutableListOf<Pair<Zone, Int>>()
+        walk(zones, order) { zone, depth -> result += zone to depth }
+        return result
+    }
+
+    /** Siblings of [zoneId] in display order, the zone itself included. */
+    fun siblings(zones: Map<String, Zone>, order: List<String>, zoneId: String): List<Zone> {
+        val parent = zones[zoneId]?.parent?.takeIf { it in zones }
+        return zones.values.filter { (it.parent?.takeIf { p -> p in zones }) == parent }.sortedWith(siblingOrder(order))
+    }
+
+    /**
+     * A new room order with [zoneId] moved one place up ([delta] -1) or down (+1)
+     * among its siblings.
+     */
+    fun move(zones: Map<String, Zone>, order: List<String>, zoneId: String, delta: Int): List<String> {
+        val ranked = zoneTree(zones, order).map { it.first.id }.toMutableList()
+        val siblings = siblings(zones, order, zoneId)
+        val index = siblings.indexOfFirst { it.id == zoneId }
+        val other = siblings.getOrNull(index + delta) ?: return ranked
+        val a = ranked.indexOf(zoneId)
+        val b = ranked.indexOf(other.id)
+        ranked[a] = other.id
+        ranked[b] = zoneId
+        return ranked
+    }
+
+    private fun siblingOrder(order: List<String>): Comparator<Zone> {
+        val rank = order.withIndex().associate { it.value to it.index }
+        return compareBy<Zone>({ rank[it.id] ?: Int.MAX_VALUE }, { it.name.lowercase() })
+    }
+
+    private fun walk(zones: Map<String, Zone>, order: List<String> = emptyList(), skip: Set<String> = emptySet(), visit: (Zone, Int) -> Unit) {
         val children = zones.values.groupBy { it.parent?.takeIf { p -> p in zones } }
+        val sorted = siblingOrder(order)
         fun go(zone: Zone, depth: Int) {
+            if (zone.id in skip) return
             visit(zone, depth)
-            children[zone.id].orEmpty().sortedBy { it.name.lowercase() }.forEach { go(it, depth + 1) }
+            children[zone.id].orEmpty().sortedWith(sorted).forEach { go(it, depth + 1) }
         }
-        children[null].orEmpty().sortedBy { it.name.lowercase() }.forEach { go(it, 0) }
+        children[null].orEmpty().sortedWith(sorted).forEach { go(it, 0) }
     }
 
     const val OTHER_ZONE_ID = ""

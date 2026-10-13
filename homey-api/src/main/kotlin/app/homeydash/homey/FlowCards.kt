@@ -32,8 +32,11 @@ data class FlowCardAction(
         get() = (ownerUri ?: uri)?.takeIf { it.startsWith("homey:device:") }?.removePrefix("homey:device:")
             ?: id.takeIf { it.startsWith("homey:device:") }?.removePrefix("homey:device:")?.substringBefore(':')
 
-    /** Arguments the user has to fill in; a `device` argument is implied by device cards. */
-    val inputArgs: List<FlowCardArg> get() = args.orEmpty().filter { it.type != "device" }
+    /**
+     * Arguments the user has to fill in. The card's own `device` argument is implied;
+     * another device argument (such as a Sonos group coordinator) is kept.
+     */
+    val inputArgs: List<FlowCardArg> get() = args.orEmpty().filter { !(it.type == "device" && it.name == "device") }
 }
 
 @Serializable
@@ -42,6 +45,9 @@ data class FlowCardArg(
     val type: String = "text",
     val title: String? = null,
     val placeholder: String? = null,
+    /** Range of a `range` or `number` argument. */
+    val min: Double? = null,
+    val max: Double? = null,
     /** Choices of a `dropdown` argument. */
     val values: List<FlowDropdownValue>? = null,
 )
@@ -60,6 +66,16 @@ data class AutocompleteItem(
 )
 
 enum class RemoteKey { Up, Down, Left, Right, Select, Back, Home, PlayPause, VolumeUp, VolumeDown, Mute, Power }
+
+/** A speaker app's grouping cards, such as Sonos "Group with" and "Ungroup Sonos speaker". */
+data class SpeakerGrouping(
+    /** Joins this speaker to the group of the speaker given in [joinArg]. */
+    val join: FlowCardAction?,
+    val joinArg: FlowCardArg?,
+    val leave: FlowCardAction?,
+    val groupVolume: FlowCardAction?,
+    val groupVolumeArg: FlowCardArg?,
+)
 
 /** A source of music an app offers on a speaker, e.g. Sonos favourites or playlists. */
 data class MusicSource(val title: String, val card: FlowCardAction, val arg: FlowCardArg)
@@ -90,11 +106,18 @@ object FlowCards {
             val key = remoteKey(card.cardId) ?: return@forEach
             result.putIfAbsent(key, card)
         }
-        return result
+        // Only TV boxes count as remotes: speakers also have play/pause and volume cards,
+        // but no way to move around a menu.
+        val navigation = listOf(RemoteKey.Up, RemoteKey.Down, RemoteKey.Left, RemoteKey.Right, RemoteKey.Select).count { it in result }
+        return if (navigation >= 3) result else emptyMap()
     }
 
+    /** The words of a card id, from snake_case, kebab-case or camelCase. */
+    internal fun tokens(cardId: String): Set<String> =
+        cardId.replace(Regex("([a-z0-9])([A-Z])"), "$1_$2").lowercase().split('_', '-', '.', ' ').filter { it.isNotEmpty() }.toSet()
+
     internal fun remoteKey(cardId: String): RemoteKey? {
-        val tokens = cardId.lowercase().split('_', '-', '.', ' ').filter { it.isNotEmpty() }.toSet()
+        val tokens = tokens(cardId)
         fun has(vararg words: String) = words.any { it in tokens }
         return when {
             has("volume") && has("up", "increase") -> RemoteKey.VolumeUp
@@ -114,6 +137,30 @@ object FlowCards {
             else -> null
         }
     }
+
+    /** Grouping cards of a speaker, or null when its app has none. */
+    fun grouping(cards: List<FlowCardAction>): SpeakerGrouping? {
+        var join: FlowCardAction? = null
+        var joinArg: FlowCardArg? = null
+        var leave: FlowCardAction? = null
+        var volume: FlowCardAction? = null
+        var volumeArg: FlowCardArg? = null
+        cards.forEach { card ->
+            val t = tokens(card.cardId)
+            if (t.any { it in GROUP_NOISE }) return@forEach
+            val args = card.inputArgs
+            when {
+                ("ungroup" in t || ("leave" in t && "group" in t) || "standalone" in t) && args.isEmpty() -> if (leave == null) leave = card
+                "group" in t && "volume" in t && t.none { it in setOf("adjust", "relative") } && args.size == 1 &&
+                    args[0].type in setOf("range", "number") -> if (volume == null) { volume = card; volumeArg = args[0] }
+                ("group" in t || "join" in t) && "volume" !in t && args.size == 1 &&
+                    args[0].type in setOf("device", "autocomplete", "dropdown") -> if (join == null) { join = card; joinArg = args[0] }
+            }
+        }
+        return if (join == null && leave == null) null else SpeakerGrouping(join, joinArg, leave, volume, volumeArg)
+    }
+
+    private val GROUP_NOISE = setOf("tv", "autoplay", "membership", "changed")
 
     /** A card that opens an app chosen from a list, like the Apple TV's "Launch App". */
     fun appLauncher(cards: List<FlowCardAction>): MusicSource? = cards.firstNotNullOfOrNull { card ->

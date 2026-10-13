@@ -43,6 +43,20 @@ class LogicTest {
         assertEquals(1, sections[0].depth)
     }
 
+    @Test fun `rooms can be hidden and reordered`() {
+        val kitchen = zones.values.first { it.name == "Kitchen" }.id
+        val living = zones.values.first { it.name == "Living room" }.id
+        val hidden = DashboardLayout.sections(zones, devices, hiddenZones = setOf(kitchen))
+        assertEquals(listOf("Living room", "Other"), hidden.map { it.zone.name })
+
+        val order = DashboardLayout.move(zones, emptyList(), living, -1)
+        assertEquals(listOf("Living room", "Kitchen", "Other"), DashboardLayout.sections(zones, devices, order = order).map { it.zone.name })
+        // Moving the first sibling up changes nothing.
+        val first = DashboardLayout.siblings(zones, order, living).first().id
+        assertEquals(order, DashboardLayout.move(zones, order, first, -1))
+        assertTrue(DashboardLayout.zoneTree(zones, order).any { it.first.id == kitchen })
+    }
+
     @Test fun `devices hidden in Homey stay off the dashboard`() {
         val all = DashboardLayout.sections(zones, devices).flatMap { it.devices }.map { it.id }
         assertFalse("d-hidden" in all)

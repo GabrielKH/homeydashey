@@ -61,8 +61,9 @@ private val InkFaint = Color.White.copy(alpha = 0.24f)
 /**
  * Now-playing card in the style of Apple Music: the album art, blurred, fills the
  * card behind white text, with plain transport icons and thin bars. [large] stacks
- * it around big art for the Media page. Shows a remote button when the device has
- * remote keys (Apple TV) and a music button when it can play favourites (Sonos).
+ * it around big art for the Media page. Shows a remote button for TV boxes with remote
+ * keys (Apple TV), and music and group buttons for speakers that can play
+ * favourites and join groups (Sonos).
  */
 @Composable
 fun MediaPlayerCard(device: Device, actions: DashboardActions, modifier: Modifier = Modifier, large: Boolean = false, subtitle: String? = null) {
@@ -75,6 +76,7 @@ fun MediaPlayerCard(device: Device, actions: DashboardActions, modifier: Modifie
     val art = rememberAlbumArt(device, actions, track)
     val hasRemote = actions.remoteKeys(device.id).isNotEmpty()
     val hasMusic = actions.musicSources(device.id).isNotEmpty()
+    val canGroup = actions.grouping(device.id) != null
 
     val source = listOfNotNull(subtitle, device.name).joinToString(" · ")
     val title = track ?: if (poweredOff) "Off" else if (playing) "Playing" else "Not playing"
@@ -137,10 +139,11 @@ fun MediaPlayerCard(device: Device, actions: DashboardActions, modifier: Modifie
                 }
             }
             val power = onoff?.takeIf { it.setable }
-            if (hasRemote || hasMusic || power != null) {
+            if (hasRemote || hasMusic || canGroup || power != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (hasRemote) PlayerPill(Sym.remote, "Remote") { actions.open(Sheet.Remote(device.id)) }
                     if (hasMusic) PlayerPill(Sym.musicNotes, "Music") { actions.open(Sheet.Music(device.zone, device.id)) }
+                    if (canGroup) PlayerPill(Sym.speakerHifi, "Group") { actions.open(Sheet.Group(device.id)) }
                     Spacer(Modifier.weight(1f))
                     power?.let {
                         Box(

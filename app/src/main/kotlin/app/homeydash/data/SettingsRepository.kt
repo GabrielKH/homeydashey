@@ -65,6 +65,25 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[ACCENT] = accent.name }
     }
 
+    /** Rooms left off the dashboard on this tablet, by zone id. */
+    val hiddenRooms: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_ROOMS].orEmpty() }
+
+    suspend fun setRoomHidden(zoneId: String, hidden: Boolean) {
+        context.dataStore.edit {
+            val current = it[HIDDEN_ROOMS].orEmpty()
+            it[HIDDEN_ROOMS] = if (hidden) current + zoneId else current - zoneId
+        }
+    }
+
+    /** Zone ids in the order the user arranged them. */
+    val roomOrder: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[ROOM_ORDER]?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
+    }
+
+    suspend fun setRoomOrder(order: List<String>) {
+        context.dataStore.edit { it[ROOM_ORDER] = order.joinToString(",") }
+    }
+
     val accentOpacity: Flow<Float> = context.dataStore.data.map { it[ACCENT_OPACITY] ?: 1f }
 
     suspend fun setAccentOpacity(opacity: Float) {
@@ -89,6 +108,8 @@ class SettingsRepository(private val context: Context) {
     private companion object {
         const val BG_PREFIX = "bg_"
         val ACCENT = stringPreferencesKey("accent")
+        val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
+        val ROOM_ORDER = stringPreferencesKey("room_order")
         val ACCENT_OPACITY = floatPreferencesKey("accent_opacity")
 
         val ADDRESS = stringPreferencesKey("address")

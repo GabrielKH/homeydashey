@@ -26,6 +26,15 @@ class FlowCardsTest {
              "args": [{"name": "favorite", "type": "autocomplete"}]},
           "homey:device:son1:play_playlist": {"id": "homey:device:son1:play_playlist", "ownerUri": "homey:device:son1",
              "args": [{"name": "playlist", "type": "autocomplete"}]},
+          "homey:device:son1:toggle_play_pause": {"id": "homey:device:son1:toggle_play_pause", "ownerUri": "homey:device:son1"},
+          "homey:device:son1:volume_up": {"id": "homey:device:son1:volume_up", "ownerUri": "homey:device:son1"},
+          "homey:device:son1:next": {"id": "homey:device:son1:next", "ownerUri": "homey:device:son1"},
+          "homey:device:son1:groupWith": {"id": "homey:device:son1:groupWith", "ownerUri": "homey:device:son1",
+             "args": [{"name": "device", "type": "device"}, {"name": "coordinator", "type": "device"}]},
+          "homey:device:son1:ungroup": {"id": "homey:device:son1:ungroup", "ownerUri": "homey:device:son1", "args": [{"name": "device", "type": "device"}]},
+          "homey:device:son1:set_ungroup_tv_autoplay": {"id": "homey:device:son1:set_ungroup_tv_autoplay", "ownerUri": "homey:device:son1"},
+          "homey:device:son1:set_group_volume": {"id": "homey:device:son1:set_group_volume", "ownerUri": "homey:device:son1",
+             "args": [{"name": "volume", "type": "range"}]},
           "homey:device:son1:play_url": {"id": "homey:device:son1:play_url", "ownerUri": "homey:device:son1", "args": [{"name": "url", "type": "text"}]},
           "homey:manager:logic:x": {"id": "homey:manager:logic:x"}
         }
@@ -48,6 +57,17 @@ class FlowCardsTest {
         assertEquals("volume_down", keys[RemoteKey.VolumeDown]?.cardId)
         assertNull(keys[RemoteKey.Down])
         assertEquals("launch_app", FlowCards.appLauncher(byDevice.getValue("tv1"))?.card?.cardId)
+    }
+
+    @Test fun `speakers are not remotes but can group`() {
+        val son = byDevice.getValue("son1")
+        assertEquals(emptyMap<RemoteKey, FlowCardAction>(), FlowCards.remoteKeys(son))
+        val group = FlowCards.grouping(son)!!
+        assertEquals("groupWith", group.join?.cardId)
+        assertEquals("coordinator", group.joinArg?.name)
+        assertEquals("ungroup", group.leave?.cardId)
+        assertEquals("set_group_volume", group.groupVolume?.cardId)
+        assertNull(FlowCards.grouping(byDevice.getValue("tv1")))
     }
 
     @Test fun `sonos cards become music sources`() {

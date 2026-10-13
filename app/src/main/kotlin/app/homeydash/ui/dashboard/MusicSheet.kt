@@ -145,10 +145,12 @@ fun MusicSheet(
                 actions.autocomplete(source.card, source.arg.name, query)
             }
         }
+        // Read once here: the grid builds its items later, when the list may already be reloading.
+        val list = results
         Box(Modifier.fillMaxWidth().height(440.dp), contentAlignment = Alignment.Center) {
             when {
-                results == null -> CircularProgressIndicator(color = g.fg)
-                results!!.isEmpty() -> Text(
+                list == null -> CircularProgressIndicator(color = g.fg)
+                list.isEmpty() -> Text(
                     if (query.isBlank()) "Nothing in ${source.title.lowercase()} yet." else "Nothing matches \"$query\".",
                     style = MaterialTheme.typography.bodyLarge,
                     color = g.muted,
@@ -160,7 +162,7 @@ fun MusicSheet(
                     contentPadding = PaddingValues(bottom = 8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(results!!) { item ->
+                    items(list) { item ->
                         MusicItem(item, actions) {
                             actions.run(source.card, JsonObject(mapOf(source.arg.name to FlowCards.argValue(source.arg, item))))
                             onDismiss()

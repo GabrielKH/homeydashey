@@ -21,6 +21,8 @@ class DisplaySettings(
     val accent: StateFlow<Accent> = settings.accent.stateIn(scope, SharingStarted.Eagerly, Accent.Lavender)
     val accentOpacity: StateFlow<Float> = settings.accentOpacity.stateIn(scope, SharingStarted.Eagerly, 1f)
     val hiddenDevices: StateFlow<Set<String>> = settings.hiddenDevices.stateIn(scope, SharingStarted.Eagerly, emptySet())
+    val hiddenRooms: StateFlow<Set<String>> = settings.hiddenRooms.stateIn(scope, SharingStarted.Eagerly, emptySet())
+    val roomOrder: StateFlow<List<String>> = settings.roomOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val backgrounds: StateFlow<Map<String, String>> = settings.backgrounds.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     fun setThemeMode(mode: ThemeMode) {
@@ -33,6 +35,14 @@ class DisplaySettings(
 
     fun setAccentOpacity(opacity: Float) {
         scope.launch { settings.setAccentOpacity(opacity) }
+    }
+
+    fun setRoomHidden(zoneId: String, hidden: Boolean) {
+        scope.launch { settings.setRoomHidden(zoneId, hidden) }
+    }
+
+    fun setRoomOrder(order: List<String>) {
+        scope.launch { settings.setRoomOrder(order) }
     }
 
     fun setHidden(deviceId: String, hidden: Boolean) {

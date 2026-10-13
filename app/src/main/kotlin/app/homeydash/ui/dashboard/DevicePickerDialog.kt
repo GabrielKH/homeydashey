@@ -101,12 +101,13 @@ fun DevicePickerDialog(
     }
 }
 
-/** iOS-style switch, display only; the whole row is the tap target. */
+/** iOS-style switch; without [onClick] it is display only and the whole row is the tap target. */
 @Composable
-private fun Toggle(on: Boolean) {
+fun Toggle(on: Boolean, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val g = GlassTheme.colors
     Box(
-        Modifier
+        modifier
+            .pressable(onClick)
             .width(52.dp)
             .then(if (on) Modifier.background(g.ok, PillShape) else Modifier.glass(PillShape))
             .padding(3.dp),
