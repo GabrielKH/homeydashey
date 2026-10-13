@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.AgentTools
@@ -86,8 +87,7 @@ fun AssistantSettingsDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
-                .width(620.dp)
-                .heightIn(max = 800.dp)
+                .dialogSize(620.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .verticalScroll(rememberScrollState())

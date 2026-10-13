@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,10 +39,14 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -222,6 +227,24 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/** The screen's usable size in the dashboard's own dp, which the Display size setting scales. */
+@Composable
+fun screenSizeDp(): DpSize {
+    val configuration = LocalConfiguration.current
+    val ratio = LocalContext.current.resources.displayMetrics.density / LocalDensity.current.density
+    return DpSize((configuration.screenWidthDp * ratio).dp, (configuration.screenHeightDp * ratio).dp)
+}
+
+/** Largest share of the screen's height a popup takes, so the dashboard still shows above and below it. */
+const val DialogHeightShare = 0.8f
+
+/** A popup's size: [preferred] width when the screen has room for it, and never taller than [DialogHeightShare] of the screen. */
+@Composable
+fun Modifier.dialogSize(preferred: Dp): Modifier {
+    val screen = screenSizeDp()
+    return this.width(minOf(preferred, screen.width - 48.dp)).heightIn(max = screen.height * DialogHeightShare)
+}
+
 /** A floating glass panel over the dimmed dashboard, for lamps, the remote and music. */
 @Composable
 fun GlassDialog(
@@ -233,7 +256,7 @@ fun GlassDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
-                .width(width)
+                .dialogSize(width)
                 .background(g.wallBase.copy(alpha = if (g.isDark) 0.94f else 0.96f), PanelShape)
                 .glass()
                 .padding(24.dp),

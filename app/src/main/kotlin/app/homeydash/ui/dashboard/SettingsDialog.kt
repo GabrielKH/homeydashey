@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import app.homeydash.ui.components.dialogSize
 import app.homeydash.ui.theme.Palette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -88,8 +89,7 @@ fun SettingsDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
-                .width(560.dp)
-                .heightIn(max = 760.dp)
+                .dialogSize(560.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .verticalScroll(rememberScrollState())

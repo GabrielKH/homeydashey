@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.Role
@@ -69,8 +70,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
-                .width(560.dp)
-                .heightIn(max = 760.dp)
+                .dialogSize(560.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .verticalScroll(rememberScrollState())

@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.homeydash.ui.components.dialogSize
 import app.homeydash.homey.Device
 import app.homeydash.homey.Zone
 import app.homeydash.ui.components.Bubble
@@ -51,7 +52,7 @@ fun DevicePickerDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
-                .width(620.dp)
+                .dialogSize(620.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .padding(24.dp),
