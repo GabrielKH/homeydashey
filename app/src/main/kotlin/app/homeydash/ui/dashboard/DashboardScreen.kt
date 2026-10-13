@@ -85,6 +85,7 @@ import app.homeydash.ui.assistant.AssistantLayer
 import app.homeydash.ui.assistant.AssistantSettingsDialog
 import app.homeydash.ui.assistant.FaceWatch
 import app.homeydash.ui.assistant.FacesDialog
+import app.homeydash.ui.assistant.WakeWatch
 import androidx.compose.runtime.rememberUpdatedState
 import app.homeydash.data.Blur
 import app.homeydash.data.CalendarRepository
@@ -348,6 +349,7 @@ fun DashboardScreen(
         AssistantBridge(assistant, store, actions, display, weather, calendar, hiddenDevices = { currentHidden }, navigate = { destination = it })
     }.also { assistant.bridge = it }
     FaceWatch(assistantServices, assistantSettings)
+    WakeWatch(assistant, assistantServices, assistantSettings)
 
     LaunchedEffect(destination) { actions.rearrange.done() }
     val roomId = destination.takeIf { it.startsWith(ROOM) }?.removePrefix(ROOM)

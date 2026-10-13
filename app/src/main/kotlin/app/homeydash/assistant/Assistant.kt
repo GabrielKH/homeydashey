@@ -3,6 +3,7 @@ package app.homeydash.assistant
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.SystemClock
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -22,6 +23,7 @@ import app.homeydash.agent.ChatClient
 import app.homeydash.agent.Connection
 import app.homeydash.agent.DashboardControl
 import app.homeydash.agent.HomeView
+import app.homeydash.agent.KnownPerson
 import app.homeydash.agent.PendingAction
 import app.homeydash.agent.Role
 import app.homeydash.agent.Secret
@@ -48,6 +50,8 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val output = SpeechOutput(appContext)
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
+    val voiceModels = VoiceModels(appContext, http, scope)
+    val wake = WakeListener(voiceModels, scope)
 }
 
 /** One line in the assistant's conversation. */
@@ -89,6 +93,8 @@ class Assistant(
     val timers = mutableStateListOf<KitchenTimer>()
 
     private var job: Job? = null
+    /** Who said the wake name last, and when; a known voice outranks the camera for a minute. */
+    private var voice: Seen? = null
     private val settings: AgentSettings get() = services.settings.value
     private val home = StoreHomeControl(store) { store.snapshot.value.deviceCards }
 
@@ -128,6 +134,17 @@ class Assistant(
                 if (message.isNotBlank()) lines += Line(false, message, error = true)
             }
         })
+    }
+
+    /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
+    fun wake(person: KnownPerson?) {
+        voice = Seen(person, SystemClock.elapsedRealtime())
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, 150)
+            scope.launch { delay(300); tone.release() }
+        }
+        listen()
     }
 
     fun stopListening() {
@@ -197,12 +214,14 @@ class Assistant(
     private fun speakerName(s: AgentSettings): String? = s.speakerId?.let { store.snapshot.value.devices[it]?.name }
 
     /**
-     * The settings for whoever face recognition sees at the tablet: a known person gets
-     * their role, a stranger gets guest access if the owner chose that.
+     * The settings for whoever is at the tablet, known by the voice that said the wake name
+     * or else by face: a known person gets their role, a stranger gets guest access if the
+     * owner chose that.
      */
     private fun forWhoIsHere(s: AgentSettings): Pair<AgentSettings, String?> {
         if (s.access(Secret.Faces) == Access.Off) return s to null
-        val seen = services.faces.current() ?: return s to null
+        val byVoice = voice?.takeIf { it.person != null && SystemClock.elapsedRealtime() - it.at < 60_000 }
+        val seen = byVoice ?: services.faces.current() ?: return s to null
         val person = seen.person
         return when {
             person != null -> s.forRole(person.role) to person.name

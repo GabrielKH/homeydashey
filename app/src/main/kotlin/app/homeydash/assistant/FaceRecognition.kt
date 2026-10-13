@@ -209,7 +209,7 @@ class FaceService(private val context: Context) {
             val sample = runCatching { engine.sample(frame) }.getOrNull()
             enrolling?.let { it(sample); return }
             if (sample == null) return
-            val person = FaceMatcher.match(sample.embedding, _people.value)
+            val person = FaceMatcher.match(sample.embedding, _people.value.filter { it.samples.isNotEmpty() })
             _seen.value = Seen(person, now)
             ContextCompat.getMainExecutor(context).execute { onFace?.invoke() }
         }
@@ -227,8 +227,17 @@ class FaceService(private val context: Context) {
         enrolling = null
     }
 
-    fun add(name: String, role: Role, samples: List<FloatArray>) {
-        _people.update { it + KnownPerson(UUID.randomUUID().toString(), name.trim(), role, samples) }
+    /** Adds someone and returns their id. [samples] may be empty for a voice-only person. */
+    fun add(name: String, role: Role, samples: List<FloatArray>): String {
+        val id = UUID.randomUUID().toString()
+        _people.update { it + KnownPerson(id, name.trim(), role, samples) }
+        save()
+        return id
+    }
+
+    /** Replaces what the tablet knows of someone's voice. */
+    fun setVoice(id: String, voice: List<FloatArray>) {
+        _people.update { list -> list.map { if (it.id == id) it.copy(voice = voice) else it } }
         save()
     }
 
@@ -249,12 +258,18 @@ class FaceService(private val context: Context) {
                     put("id", p.id)
                     put("name", p.name)
                     put("role", p.role.name)
-                    put("samples", buildJsonArray { p.samples.forEach { s -> add(JsonArray(s.map { JsonPrimitive(it) })) } })
+                    put("samples", vectors(p.samples))
+                    put("voice", vectors(p.voice))
                 })
             }
         }
         file.writeText(KeystoreCipher.encrypt(json.toString()))
     }
+
+    private fun vectors(list: List<FloatArray>) = buildJsonArray { list.forEach { v -> add(JsonArray(v.map { JsonPrimitive(it) })) } }
+
+    private fun vectors(element: kotlinx.serialization.json.JsonElement?): List<FloatArray> =
+        (element as? JsonArray)?.map { s -> s.jsonArray.map { it.jsonPrimitive.float }.toFloatArray() }.orEmpty()
 
     private fun load(): List<KnownPerson> {
         if (!file.exists()) return emptyList()
@@ -266,7 +281,8 @@ class FaceService(private val context: Context) {
                 id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
                 name = o["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
                 role = Role.entries.firstOrNull { it.name == o["role"]?.jsonPrimitive?.contentOrNull } ?: Role.Family,
-                samples = o["samples"]?.jsonArray?.map { s -> s.jsonArray.map { it.jsonPrimitive.float }.toFloatArray() }.orEmpty(),
+                samples = vectors(o["samples"]),
+                voice = vectors(o["voice"]),
             )
         }
     }

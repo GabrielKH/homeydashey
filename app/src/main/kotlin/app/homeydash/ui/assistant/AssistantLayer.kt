@@ -126,7 +126,7 @@ fun BoxScope.AssistantLayer(
 @Composable
 fun FaceWatch(services: app.homeydash.assistant.AssistantServices, settings: AgentSettings) {
     val people by services.faces.people.collectAsState()
-    val on = settings.enabled && settings.access(app.homeydash.agent.Secret.Faces) != app.homeydash.agent.Access.Off && people.isNotEmpty()
+    val on = settings.enabled && settings.access(app.homeydash.agent.Secret.Faces) != app.homeydash.agent.Access.Off && people.any { it.samples.isNotEmpty() }
     val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     if (on) {
         androidx.compose.runtime.DisposableEffect(owner) {

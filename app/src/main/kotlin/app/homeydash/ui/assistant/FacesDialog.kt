@@ -58,13 +58,14 @@ import app.homeydash.ui.theme.GlassTheme
 
 private const val SAMPLES = 8
 
-/** Settings → Assistant → Face recognition: the people the tablet knows and what each may do. */
+/** Settings → Assistant → People: who the tablet knows by face or voice, and what each may do. */
 @Composable
 fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss: () -> Unit) {
     val g = GlassTheme.colors
     val faces = services.faces
     val people by faces.people.collectAsState()
     var adding by remember { mutableStateOf(false) }
+    var teaching by remember { mutableStateOf<String?>(null) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
@@ -77,24 +78,27 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Face recognition", style = MaterialTheme.typography.headlineMedium, color = g.fg, modifier = Modifier.weight(1f))
+                Text("People", style = MaterialTheme.typography.headlineMedium, color = g.fg, modifier = Modifier.weight(1f))
                 RoundButton(Sym.close, onDismiss, size = 44.dp, filledIcon = false)
             }
             Text(
-                "The tablet's front camera recognises the people you add here, a couple of times a second, entirely on the tablet. " +
-                    "Only a numeric fingerprint of each face is kept, encrypted; no pictures. It is for convenience, not a lock: a photo can fool it.",
+                "The tablet knows the people you add here by the front camera, and by their voice when they say the wake name, entirely on the tablet. " +
+                    "Only a numeric fingerprint of each face and voice is kept, encrypted; no pictures or recordings. It is for convenience, not a lock: a photo or a recording can fool it.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = g.muted,
             )
             if (settings.access(Secret.Faces) == Access.Off) {
                 Text(
-                    "Turn on \"Face recognition\" under Security for the assistant to use it.",
+                    "Turn on \"Face and voice recognition\" under Security for the assistant to use it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = g.danger,
                 )
             }
-            if (adding) {
-                Enrol(services) { adding = false }
+            val learning = people.firstOrNull { it.id == teaching }
+            if (learning != null) {
+                VoiceEnrol(services, settings, learning) { teaching = null }
+            } else if (adding) {
+                Enrol(services, onVoiceOnly = { id -> adding = false; teaching = id }) { adding = false }
             } else {
                 people.forEach { p ->
                     Column(Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -102,6 +106,21 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                             SymIcon(Sym.face, size = 22.dp)
                             Text(p.name, style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
                             Text("Remove", style = MaterialTheme.typography.labelLarge, color = g.danger, modifier = Modifier.pressable({ faces.remove(p.id) }).padding(8.dp))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                listOfNotNull("Face".takeIf { p.samples.isNotEmpty() }, "Voice".takeIf { p.voice.isNotEmpty() })
+                                    .joinToString(" and ").ifEmpty { "Nothing learned yet" },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = g.muted,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                if (p.voice.isEmpty()) "Teach voice" else "Teach voice again",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = g.fg,
+                                modifier = Modifier.pressable({ teaching = p.id }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
+                            )
                         }
                         RoleChoice(p.role) { faces.setRole(p.id, it) }
                     }
@@ -145,7 +164,7 @@ private fun RoleChoice(role: Role, onPick: (Role) -> Unit) {
 
 /** Adding someone: their name and role, then a few seconds looking at the tablet. */
 @Composable
-private fun Enrol(services: AssistantServices, onDone: () -> Unit) {
+private fun Enrol(services: AssistantServices, onVoiceOnly: (String) -> Unit, onDone: () -> Unit) {
     val g = GlassTheme.colors
     val faces = services.faces
     val owner = LocalLifecycleOwner.current
@@ -238,6 +257,15 @@ private fun Enrol(services: AssistantServices, onDone: () -> Unit) {
                         })
                         .background(if (name.isBlank()) g.muted else g.fg, PillShape)
                         .padding(horizontal = 26.dp, vertical = 12.dp),
+                )
+                Text(
+                    "Voice only",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = g.fg,
+                    modifier = Modifier
+                        .pressable({ if (name.isNotBlank()) onVoiceOnly(faces.add(name, role, emptyList())) })
+                        .glass(PillShape)
+                        .padding(horizontal = 22.dp, vertical = 12.dp),
                 )
             }
         }

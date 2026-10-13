@@ -84,6 +84,10 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.mlkit.face.detection)
     implementation(libs.tensorflow.lite)
+    // Wake name and voice recognition, offline. Vosk calls its native library through JNA,
+    // which must be the Android (aar) build.
+    implementation(libs.vosk.android) { exclude(group = "net.java.dev.jna") }
+    implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

@@ -38,7 +38,7 @@ enum class Secret(val title: String, val detail: String) {
     Alarm("Alarm", "Read the home alarm and arm it. It can never disarm it."),
     Cameras("Cameras and doorbells", "Read motion and rings. Never the pictures."),
     Variables("Homey variables", "Read Homey Logic variables, which often hold codes."),
-    Faces("Face recognition", "Know who is standing at the tablet (first name only)."),
+    Faces("Face and voice recognition", "Know who is at the tablet, by face or by voice (first name only)."),
 }
 
 data class AgentSettings(
@@ -58,6 +58,11 @@ data class AgentSettings(
     val speak: Boolean = true,
     /** Strangers at the tablet (face recognition sees someone it doesn't know) only get guest access. */
     val strangersAreGuests: Boolean = false,
+    /** Saying this name ("Hey Nova") starts listening, like "Hey Siri". */
+    val wake: Boolean = false,
+    val wakeName: String = "Nova",
+    /** The wake name only works for people whose voice the tablet has learned. */
+    val onlyKnownVoices: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
     val guest: Boolean = false,
 ) {

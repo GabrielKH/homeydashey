@@ -49,6 +49,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         speakerVolume = p[VOLUME]?.toIntOrNull() ?: 35,
         speak = p[SPEAK] != "false",
         strangersAreGuests = p[STRANGERS] == "true",
+        wake = p[WAKE] == "true",
+        wakeName = p[WAKE_NAME] ?: AgentSettings().wakeName,
+        onlyKnownVoices = p[KNOWN_VOICES] == "true",
     )
 
     private fun write(p: MutablePreferences, s: AgentSettings) {
@@ -63,6 +66,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[VOLUME] = s.speakerVolume.toString()
         p[SPEAK] = s.speak.toString()
         p[STRANGERS] = s.strangersAreGuests.toString()
+        p[WAKE] = s.wake.toString()
+        p[WAKE_NAME] = s.wakeName
+        p[KNOWN_VOICES] = s.onlyKnownVoices.toString()
     }
 
     private fun connection(p: Preferences, slot: String): Connection? {
@@ -95,6 +101,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val VOLUME = stringPreferencesKey("volume")
         val SPEAK = stringPreferencesKey("speak")
         val STRANGERS = stringPreferencesKey("strangers")
+        val WAKE = stringPreferencesKey("wake")
+        val WAKE_NAME = stringPreferencesKey("wake_name")
+        val KNOWN_VOICES = stringPreferencesKey("known_voices")
 
         inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
             name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default

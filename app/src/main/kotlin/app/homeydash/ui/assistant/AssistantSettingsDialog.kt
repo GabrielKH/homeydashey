@@ -156,6 +156,9 @@ private fun Main(
         color = g.muted,
     )
 
+    Label("Voice activation")
+    WakeSettings(services, settings, update)
+
     Label("Voice")
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -194,7 +197,7 @@ private fun Main(
             }
         }
     }
-    NavRow(Sym.face, "Face recognition: people", onFaces)
+    NavRow(Sym.face, "People: faces and voices", onFaces)
     NavRow(Sym.visibilityOff, "Hide devices from the assistant (${settings.hiddenDevices.size})", onDevices)
     NavRow(Sym.search, "What the assistant sees", onPreview)
 }
