@@ -80,8 +80,18 @@ class Rearrange {
  * change in the grid's items right away, so the other cards slide aside; [onDrop]
  * saves the order when the finger lifts.
  */
+/** Something a held card can be dragged around in: a lazy grid, or the overview's lanes. */
+interface DragSurface {
+    /** Picks up the card at [position]; false when there is none that can move. */
+    fun start(position: Offset): Boolean
+    fun drag(by: Offset)
+    fun end()
+    /** Whether the card at [position] starts rearranging on a still press by itself. */
+    fun holdableAt(position: Offset): Boolean
+}
+
 @Stable
-class GridDrag(val grid: LazyGridState) {
+class GridDrag(val grid: LazyGridState) : DragSurface {
     var key by mutableStateOf<Any?>(null)
         private set
     private var startOffset = Offset.Zero
@@ -96,7 +106,7 @@ class GridDrag(val grid: LazyGridState) {
     /** Cards the grid itself starts rearranging on a long press, for cards with no hold of their own. */
     var holdable: (Any) -> Boolean = { false }
 
-    internal fun holdableAt(position: Offset): Boolean =
+    override fun holdableAt(position: Offset): Boolean =
         grid.layoutInfo.visibleItemsInfo.firstOrNull { it.contains(position) }?.let { holdable(it.key) } == true
     var canMove: (Any, Any) -> Boolean = { _, _ -> false }
     var onMove: (Any, Any) -> Unit = { _, _ -> }
@@ -107,7 +117,7 @@ class GridDrag(val grid: LazyGridState) {
     private fun LazyGridItemInfo.contains(point: Offset) =
         point.x >= offset.x && point.x <= offset.x + size.width && point.y >= offset.y && point.y <= offset.y + size.height
 
-    internal fun start(position: Offset): Boolean {
+    override fun start(position: Offset): Boolean {
         val hit = grid.layoutInfo.visibleItemsInfo.firstOrNull { it.contains(position) } ?: return false
         if (!draggable(hit.key)) return false
         key = hit.key
@@ -116,7 +126,7 @@ class GridDrag(val grid: LazyGridState) {
         return true
     }
 
-    internal fun drag(by: Offset) {
+    override fun drag(by: Offset) {
         delta += by
         retarget()
     }
@@ -138,7 +148,7 @@ class GridDrag(val grid: LazyGridState) {
         }
     }
 
-    internal fun end() {
+    override fun end() {
         if (key != null) onDrop()
         key = null
         delta = Offset.Zero
@@ -176,7 +186,7 @@ fun rememberGridDrag(grid: LazyGridState): GridDrag {
  * up a card once the finger moves while rearranging, and swallows the touch from then
  * on so sliders and buttons under it don't react.
  */
-fun Modifier.rearrangeable(drag: GridDrag, rearrange: Rearrange, onMenu: (Sheet) -> Unit, onHold: () -> Unit = {}): Modifier =
+fun Modifier.rearrangeable(drag: DragSurface, rearrange: Rearrange, onMenu: (Sheet) -> Unit, onHold: () -> Unit = {}): Modifier =
     pointerInput(drag, rearrange) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -268,7 +278,7 @@ fun LazyGridItemScope.RearrangeableItem(
 }
 
 @Composable
-private fun Modifier.jiggle(key: Any): Modifier {
+internal fun Modifier.jiggle(key: Any): Modifier {
     val transition = rememberInfiniteTransition(label = "jiggle")
     // Each card starts at its own point of the wiggle, so they don't move in step.
     val phase = remember(key) { (key.hashCode() and 0xff) / 255f }

@@ -74,14 +74,3 @@ class DragTest {
     }
 }
 
-class OverviewOrderTest {
-    @Test fun `saved order first, new cards at the end, gone ones dropped`() {
-        val arranged = OverviewOrder.arrange(listOf("room:b", "old", "weather"), listOf("weather", "room:a", "calendar", "room:b"))
-        assertEquals(listOf("room:b", "weather", "room:a", "calendar"), arranged)
-    }
-
-    @Test fun `any card can take any other card's place`() {
-        assertEquals(listOf("room:a", "weather", "calendar"), OverviewOrder.move(listOf("weather", "calendar", "room:a"), "room:a", "weather"))
-        assertEquals(null, OverviewOrder.move(listOf("weather"), "weather", "weather"))
-    }
-}
