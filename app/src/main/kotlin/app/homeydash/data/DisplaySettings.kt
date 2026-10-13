@@ -6,6 +6,7 @@ import app.homeydash.homey.CardArrangement
 import app.homeydash.ui.theme.Accent
 import app.homeydash.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -29,6 +30,39 @@ class DisplaySettings(
     val cardArrangement: StateFlow<CardArrangement> = settings.cardArrangement.stateIn(scope, SharingStarted.Eagerly, CardArrangement())
     val uiScale: StateFlow<Float> = settings.uiScale.stateIn(scope, SharingStarted.Eagerly, 0f)
     val calendarView: StateFlow<String> = settings.calendarView.stateIn(scope, SharingStarted.Eagerly, "week")
+
+    val weatherDays: StateFlow<Int> = settings.weatherDays.stateIn(scope, SharingStarted.Eagerly, 3)
+    val palette: StateFlow<String> = settings.palette.stateIn(scope, SharingStarted.Eagerly, "aurora")
+    val flat: StateFlow<Boolean> = settings.flat.stateIn(scope, SharingStarted.Eagerly, false)
+    val kiosk: StateFlow<Boolean> = settings.kiosk.stateIn(scope, SharingStarted.Eagerly, false)
+    /** The saved kiosk setting, without a default before it loads. */
+    val kioskSaved: Flow<Boolean> = settings.kiosk
+    val dimAfter: StateFlow<Int> = settings.dimAfter.stateIn(scope, SharingStarted.Eagerly, 0)
+    val wakeOnProximity: StateFlow<Boolean> = settings.wakeOnProximity.stateIn(scope, SharingStarted.Eagerly, true)
+
+    fun setWeatherDays(days: Int) {
+        scope.launch { settings.setWeatherDays(days) }
+    }
+
+    fun setPalette(key: String) {
+        scope.launch { settings.setPalette(key) }
+    }
+
+    fun setFlat(flat: Boolean) {
+        scope.launch { settings.setFlat(flat) }
+    }
+
+    fun setKiosk(on: Boolean) {
+        scope.launch { settings.setKiosk(on) }
+    }
+
+    fun setDimAfter(minutes: Int) {
+        scope.launch { settings.setDimAfter(minutes) }
+    }
+
+    fun setWakeOnProximity(on: Boolean) {
+        scope.launch { settings.setWakeOnProximity(on) }
+    }
 
     fun setCardOrder(zoneId: String, order: List<String>) {
         scope.launch { settings.setCardOrder(zoneId, order) }

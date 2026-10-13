@@ -32,6 +32,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -76,8 +77,8 @@ fun Wallpaper(modifier: Modifier = Modifier, palette: WallPalette? = null) {
 /** Translucent panel: a diagonal tint, a hairline, and a bright top edge. */
 fun Modifier.glass(shape: Shape = PanelShape): Modifier = composed {
     val g = GlassTheme.colors
-    val fill = remember(g) { glassFill(g) }
-    val edge = remember(g) { Brush.verticalGradient(0f to g.glassEdge, 0.35f to g.glassLine, 1f to g.glassLine) }
+    val fill = remember(g) { if (g.flat) SolidColor(g.flatPanel.copy(alpha = if (g.isDark) 0.92f else 0.9f)) else glassFill(g) }
+    val edge = remember(g) { if (g.flat) SolidColor(g.glassLine) else Brush.verticalGradient(0f to g.glassEdge, 0.35f to g.glassLine, 1f to g.glassLine) }
     this
         .clip(shape)
         .background(fill)
@@ -90,7 +91,7 @@ private fun glassFill(g: GlassColors) = Brush.linearGradient(listOf(g.glassTop, 
 @Composable
 fun onBrush(): Brush {
     val g = GlassTheme.colors
-    return remember(g) { Brush.linearGradient(listOf(g.on, g.onDeep), Offset.Zero, Offset.Infinite) }
+    return remember(g) { if (g.flat) SolidColor(g.on) else Brush.linearGradient(listOf(g.on, g.onDeep), Offset.Zero, Offset.Infinite) }
 }
 
 /**

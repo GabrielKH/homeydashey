@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -185,7 +186,53 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[CALENDAR_VIEW] = view }
     }
 
+    /** Forecast days on the overview's weather card. */
+    val weatherDays: Flow<Int> = context.dataStore.data.map { it[WEATHER_DAYS] ?: 3 }
+
+    suspend fun setWeatherDays(days: Int) {
+        context.dataStore.edit { it[WEATHER_DAYS] = days }
+    }
+
+    val palette: Flow<String> = context.dataStore.data.map { it[PALETTE] ?: "aurora" }
+
+    suspend fun setPalette(key: String) {
+        context.dataStore.edit { it[PALETTE] = key }
+    }
+
+    /** Flat colours instead of glass and gradients. */
+    val flat: Flow<Boolean> = context.dataStore.data.map { it[FLAT] ?: false }
+
+    suspend fun setFlat(flat: Boolean) {
+        context.dataStore.edit { it[FLAT] = flat }
+    }
+
+    val kiosk: Flow<Boolean> = context.dataStore.data.map { it[KIOSK] ?: false }
+
+    suspend fun setKiosk(on: Boolean) {
+        context.dataStore.edit { it[KIOSK] = on }
+    }
+
+    /** Minutes without a touch before the screen dims; 0 keeps it on. */
+    val dimAfter: Flow<Int> = context.dataStore.data.map { it[DIM_AFTER] ?: 0 }
+
+    suspend fun setDimAfter(minutes: Int) {
+        context.dataStore.edit { it[DIM_AFTER] = minutes }
+    }
+
+    /** Wake the dimmed screen when someone comes close (proximity sensor). */
+    val wakeOnProximity: Flow<Boolean> = context.dataStore.data.map { it[WAKE_PROXIMITY] ?: true }
+
+    suspend fun setWakeOnProximity(on: Boolean) {
+        context.dataStore.edit { it[WAKE_PROXIMITY] = on }
+    }
+
     private companion object {
+        val WEATHER_DAYS = intPreferencesKey("weather_days")
+        val PALETTE = stringPreferencesKey("palette")
+        val FLAT = booleanPreferencesKey("flat")
+        val KIOSK = booleanPreferencesKey("kiosk")
+        val DIM_AFTER = intPreferencesKey("dim_after")
+        val WAKE_PROXIMITY = booleanPreferencesKey("wake_proximity")
         const val ORDER_PREFIX = "card_order_"
         val CARD_GROUPS = stringSetPreferencesKey("card_groups")
         val UI_SCALE = floatPreferencesKey("ui_scale")

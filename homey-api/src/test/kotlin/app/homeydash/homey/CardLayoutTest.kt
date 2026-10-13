@@ -27,3 +27,16 @@ class CardLayoutTest {
         assertEquals(0 to 2, CardLayout.position(section, arrangement.copy(order = mapOf("k" to order)), "c"))
     }
 }
+
+class RoomTemperatureTest {
+    private fun temp(id: String, cls: String, value: Double, units: String = "°C") = Device(
+        id, id, deviceClass = cls, capabilities = listOf("measure_temperature"),
+        capabilitiesObj = mapOf("measure_temperature" to Capability("measure_temperature", "number", value = kotlinx.serialization.json.JsonPrimitive(value), units = units)),
+    )
+
+    @Test fun `odd readings are left out and fahrenheit converted`() {
+        assertEquals(21.0, DashboardLayout.roomTemperature(listOf(temp("boiler", "heater", 51.4), temp("s", "sensor", 21.0)))!!, 0.01)
+        assertEquals(10.0, DashboardLayout.roomTemperature(listOf(temp("f", "other", 50.0, "°F")))!!, 0.01)
+        assertEquals(null, DashboardLayout.roomTemperature(listOf(temp("oven", "other", 180.0))))
+    }
+}

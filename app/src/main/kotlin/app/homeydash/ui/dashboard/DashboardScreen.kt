@@ -75,6 +75,7 @@ import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.components.zoneIcon
 import app.homeydash.ui.theme.GlassTheme
+import app.homeydash.ui.theme.Palette
 import app.homeydash.data.AppUpdater
 import app.homeydash.data.Blur
 import app.homeydash.data.CalendarRepository
@@ -251,6 +252,12 @@ fun DashboardScreen(
     val arrangement by display.cardArrangement.collectAsStateWithLifecycle()
     val calendarView by display.calendarView.collectAsStateWithLifecycle()
     val uiScale by display.uiScale.collectAsStateWithLifecycle()
+    val weatherDays by display.weatherDays.collectAsStateWithLifecycle()
+    val palette by display.palette.collectAsStateWithLifecycle()
+    val flat by display.flat.collectAsStateWithLifecycle()
+    val dimAfter by display.dimAfter.collectAsStateWithLifecycle()
+    val wakeOnProximity by display.wakeOnProximity.collectAsStateWithLifecycle()
+    val kiosk by display.kiosk.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
@@ -330,7 +337,7 @@ fun DashboardScreen(
                             hasMusic = speakers.isNotEmpty(),
                             onRoom = { destination = ROOM + it },
                             widgets = {
-                                WeatherCard(weatherState) { actions.open(Sheet.Weather) }
+                                WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                 CalendarCard(
                                     hasPermission = hasCalendar,
                                     events = events,
@@ -366,6 +373,16 @@ fun DashboardScreen(
             onWeather = { showSettings = false; actions.open(Sheet.Weather) },
             uiScale = uiScale,
             onUiScale = display::setUiScale,
+            palette = Palette.of(palette),
+            onPalette = { display.setPalette(it.key) },
+            flat = flat,
+            onFlat = display::setFlat,
+            dimAfter = dimAfter,
+            onDimAfter = display::setDimAfter,
+            wakeOnProximity = wakeOnProximity,
+            onWakeOnProximity = display::setWakeOnProximity,
+            kiosk = kiosk,
+            onKiosk = display::setKiosk,
             onCalendars = { showSettings = false; actions.open(Sheet.Calendars) },
             version = updater.currentVersion,
             update = update,
@@ -410,6 +427,8 @@ fun DashboardScreen(
         )
         Sheet.Weather -> WeatherDialog(
             state = weatherState,
+            days = weatherDays,
+            onDays = display::setWeatherDays,
             source = weatherSource,
             place = weatherPlace,
             hasLocationPermission = weather::hasLocationPermission,

@@ -104,9 +104,12 @@ private fun sky(kind: WeatherKind, isDay: Boolean): List<Color> = when {
 
 private fun deg(value: Double) = "${value.roundToInt()}°"
 
-/** The overview's weather: now, today's high and low, and the next hours. Tap for the full forecast. */
+/**
+ * The overview's weather, a smaller take on the full forecast: now, the next hours and
+ * [days] days ahead (chosen in the weather dialog). Tap for the full forecast.
+ */
 @Composable
-fun WeatherCard(state: WeatherState, onClick: () -> Unit) {
+fun WeatherCard(state: WeatherState, days: Int, onClick: () -> Unit) {
     val forecast = state.forecast
     val current = forecast?.current
     val colors = remember(current?.kind, current?.isDay) { sky(current?.kind ?: WeatherKind.Clear, current?.isDay ?: true) }
@@ -150,6 +153,17 @@ fun WeatherCard(state: WeatherState, onClick: () -> Unit) {
             SymIcon(weatherIcon(current.kind, current.isDay), filled = true, size = 40.dp, tint = Color.White)
         }
         HourlyRow(state, count = 5, iconSize = 20.dp)
+        val shownDays = forecast.days.take(days)
+        if (shownDays.isNotEmpty()) {
+            Divider()
+            val low = shownDays.minOf { it.min }
+            val high = shownDays.maxOf { it.max }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                shownDays.forEachIndexed { i, day ->
+                    DayRow(day, isToday = i == 0, low = low, high = high, now = current.temperature.takeIf { i == 0 }, iconSize = 18.dp)
+                }
+            }
+        }
     }
 }
 
@@ -261,14 +275,14 @@ private fun rememberHour(): String {
 private fun hourKey() = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:00"))
 
 @Composable
-private fun DayRow(day: DayWeather, isToday: Boolean, low: Double, high: Double, now: Double?) {
+private fun DayRow(day: DayWeather, isToday: Boolean, low: Double, high: Double, now: Double?, iconSize: Dp = 22.dp) {
     val name = if (isToday) "Today" else runCatching {
         LocalDate.parse(day.date).dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()).replaceFirstChar { it.titlecase(Locale.getDefault()) }
     }.getOrDefault(day.date)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(name, style = MaterialTheme.typography.labelLarge, color = Color.White, modifier = Modifier.width(52.dp))
         Column(Modifier.width(34.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            SymIcon(weatherIcon(day.kind, true), filled = true, size = 22.dp, tint = Color.White)
+            SymIcon(weatherIcon(day.kind, true), filled = true, size = iconSize, tint = Color.White)
             day.rainChance?.takeIf { it >= 30 }?.let {
                 Text("$it%", style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.sp), color = Color(0xFF9FD8FF))
             }
@@ -318,6 +332,9 @@ private fun tempColor(t: Double): Color = when {
 @Composable
 fun WeatherDialog(
     state: WeatherState,
+    /** Forecast days on the overview card. */
+    days: Int,
+    onDays: (Int) -> Unit,
     source: WeatherSource,
     place: Place?,
     hasLocationPermission: () -> Boolean,
@@ -335,6 +352,23 @@ fun WeatherDialog(
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
         WeatherDetails(state, Modifier.width(420.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("DAYS ON THE OVERVIEW", style = MaterialTheme.typography.labelMedium, color = g.muted)
+        Row(Modifier.fillMaxWidth().glass(PillShape).padding(4.dp)) {
+            listOf(0, 1, 3, 5, 7).forEach { n ->
+                val selected = n == days
+                Text(
+                    if (n == 0) "None" else "$n",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) g.onInk else g.fg,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .pressable({ onDays(n) })
+                        .then(if (selected) Modifier.background(onBrush(), PillShape) else Modifier)
+                        .padding(vertical = 8.dp),
+                )
+            }
+        }
         Text("LOCATION", style = MaterialTheme.typography.labelMedium, color = g.muted)
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(

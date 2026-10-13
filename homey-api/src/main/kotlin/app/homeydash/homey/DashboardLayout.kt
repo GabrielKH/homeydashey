@@ -110,10 +110,25 @@ object DashboardLayout {
             devices = section.devices,
             lights = lights,
             lightsOn = lights.count { it.capability("onoff")?.booleanValue == true },
-            temperature = section.devices.firstNotNullOfOrNull { it.capability("measure_temperature")?.numberValue },
+            temperature = roomTemperature(section.devices),
             humidity = section.devices.firstNotNullOfOrNull { it.capability("measure_humidity")?.numberValue },
             playing = section.devices.firstOrNull { it.capability("speaker_playing")?.booleanValue == true },
         )
+    }
+
+    /**
+     * The room's air temperature. Readings in °F are converted; room sensors and thermostats
+     * win over other devices, and readings no room has (a boiler, a fridge, an oven) are left out.
+     */
+    fun roomTemperature(devices: List<Device>): Double? {
+        val readings = devices.mapNotNull { device ->
+            val cap = device.capability("measure_temperature") ?: return@mapNotNull null
+            val raw = cap.numberValue ?: return@mapNotNull null
+            val celsius = if (cap.units?.contains("F") == true) (raw - 32) * 5 / 9 else raw
+            device to celsius
+        }.filter { (_, c) -> c in 5.0..35.0 }
+        val preferred = readings.filter { (d, _) -> d.effectiveClass in setOf("sensor", "thermostat", "heater") }.ifEmpty { readings }
+        return preferred.map { it.second }.sorted().let { if (it.isEmpty()) null else it[(it.size - 1) / 2] }
     }
 
     /** A zone and the zones under it, for showing a floor together with its rooms. */

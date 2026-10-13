@@ -1,6 +1,15 @@
 package app.homeydash.ui.dashboard
 
+import android.content.Context
+import android.content.Intent
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import app.homeydash.ui.theme.Palette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,6 +66,16 @@ fun SettingsDialog(
     /** 0 for automatic. */
     uiScale: Float,
     onUiScale: (Float) -> Unit,
+    palette: Palette,
+    onPalette: (Palette) -> Unit,
+    flat: Boolean,
+    onFlat: (Boolean) -> Unit,
+    dimAfter: Int,
+    onDimAfter: (Int) -> Unit,
+    wakeOnProximity: Boolean,
+    onWakeOnProximity: (Boolean) -> Unit,
+    kiosk: Boolean,
+    onKiosk: (Boolean) -> Unit,
     version: String,
     update: AppUpdater.State,
     onCheckUpdate: () -> Unit,
@@ -105,6 +124,44 @@ fun SettingsDialog(
                             modifier = Modifier.padding(start = 8.dp),
                         )
                     }
+                }
+            }
+            Text("Theme", style = MaterialTheme.typography.labelMedium, color = g.muted)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Palette.entries.forEach { option ->
+                    val selected = option == palette
+                    val walls = if (g.isDark) option.dark else option.light
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(
+                            Modifier
+                                .size(52.dp)
+                                .pressable({ onPalette(option) })
+                                .border(if (selected) 3.dp else 1.dp, if (selected) g.fg else g.glassLine, CircleShape)
+                                .padding(if (selected) 5.dp else 1.dp)
+                                .background(Brush.linearGradient(listOf(walls[1], walls[2], walls[3]), Offset.Zero, Offset.Infinite), CircleShape),
+                        )
+                        Text(option.label, style = MaterialTheme.typography.bodyMedium, color = if (selected) g.fg else g.muted)
+                    }
+                }
+            }
+            Text("Style", style = MaterialTheme.typography.labelMedium, color = g.muted)
+            Row(
+                Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                listOf(false to "Glass and gradients", true to "Flat colours").forEach { (value, label) ->
+                    val selected = value == flat
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) g.wallBase else g.fg,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .pressable({ onFlat(value) })
+                            .then(if (selected) Modifier.background(g.fg, PillShape) else Modifier)
+                            .padding(vertical = 12.dp),
+                    )
                 }
             }
             Text("Display size", style = MaterialTheme.typography.labelMedium, color = g.muted)
@@ -179,6 +236,7 @@ fun SettingsDialog(
                 style = MaterialTheme.typography.bodyMedium,
                 color = g.muted,
             )
+            ScreenSettings(dimAfter, onDimAfter, wakeOnProximity, onWakeOnProximity, kiosk, onKiosk)
             Text("Homey", style = MaterialTheme.typography.labelMedium, color = g.muted)
             Text(
                 listOfNotNull(info.homeyModelName ?: "Homey", info.homeyVersion?.let { "version $it" }).joinToString(", "),
@@ -283,5 +341,91 @@ fun SettingsDialog(
                 }
             }
         }
+    }
+}
+
+/** Dimming when nobody is around, waking on the proximity sensor, and kiosk mode. */
+@Composable
+private fun ScreenSettings(
+    dimAfter: Int,
+    onDimAfter: (Int) -> Unit,
+    wakeOnProximity: Boolean,
+    onWakeOnProximity: (Boolean) -> Unit,
+    kiosk: Boolean,
+    onKiosk: (Boolean) -> Unit,
+) {
+    val g = GlassTheme.colors
+    val context = LocalContext.current
+    val hasProximity = remember(context) {
+        (context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager)?.getDefaultSensor(Sensor.TYPE_PROXIMITY) != null
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Screen", style = MaterialTheme.typography.labelMedium, color = g.muted)
+        Text("Dim the screen after", style = MaterialTheme.typography.labelLarge, color = g.fg)
+        Row(
+            Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            listOf(0 to "Never", 1 to "1 min", 5 to "5 min", 15 to "15 min", 30 to "30 min").forEach { (minutes, label) ->
+                val selected = minutes == dimAfter
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) g.wallBase else g.fg,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .pressable({ onDimAfter(minutes) })
+                        .then(if (selected) Modifier.background(g.fg, PillShape) else Modifier)
+                        .padding(vertical = 12.dp),
+                )
+            }
+        }
+        SettingSwitch(
+            title = "Wake when someone comes close",
+            detail = if (hasProximity) "Uses the tablet's proximity sensor. A touch always wakes the screen." else "This tablet has no proximity sensor, so a touch wakes the screen.",
+            on = wakeOnProximity && hasProximity,
+            enabled = hasProximity && dimAfter > 0,
+            onChange = onWakeOnProximity,
+        )
+        SettingSwitch(
+            title = "Kiosk mode",
+            detail = "Pins the dashboard so Home and Back can't leave it (Android asks once). To leave, turn this off or hold Back and Overview.",
+            on = kiosk,
+            onChange = onKiosk,
+        )
+        if (kiosk) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable({ runCatching { context.startActivity(Intent(Settings.ACTION_HOME_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } })
+                    .glass(PillShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SymIcon(Sym.home, size = 20.dp)
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text("Make it the home app", style = MaterialTheme.typography.labelLarge, color = g.fg)
+                    Text("Starts the dashboard after a restart and on the Home button.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                }
+                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingSwitch(title: String, detail: String, on: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    val g = GlassTheme.colors
+    Row(
+        Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.5f },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = g.fg)
+            Text(detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        }
+        Toggle(on, onClick = { onChange(!on) }.takeIf { enabled })
     }
 }

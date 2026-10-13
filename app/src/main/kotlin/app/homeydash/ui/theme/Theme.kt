@@ -49,6 +49,10 @@ data class GlassColors(
     val cool: Color,
     val ok: Color,
     val danger: Color,
+    /** Flat colours: solid panels and single-colour highlights instead of glass and gradients. */
+    val flat: Boolean = false,
+    /** The solid panel colour in [flat] style. */
+    val flatPanel: Color = Color.Unspecified,
 )
 
 private val Light = GlassColors(
@@ -121,6 +125,28 @@ private val GlassTypography = Typography(
     labelMedium = TextStyle(fontFamily = Inter, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.9.sp),
 )
 
+/** The colours of the whole app: the wallpaper's colour fields and the panels' tint, light and dark. */
+enum class Palette(
+    val key: String,
+    val label: String,
+    val light: List<Color>,
+    val dark: List<Color>,
+    val lightPanel: Color,
+    val darkPanel: Color,
+) {
+    Aurora("aurora", "Aurora", listOf(Color(0xFFEEF1F7), Color(0xFF9FC3FF), Color(0xFFFFC9A8), Color(0xFFD8C4FF)), listOf(Color(0xFF0D1020), Color(0xFF2B3D8F), Color(0xFF7A3B5C), Color(0xFF13606A)), Color(0xFFF7F8FC), Color(0xFF1B1F31)),
+    Ocean("ocean", "Ocean", listOf(Color(0xFFEAF3FA), Color(0xFF8EC9FF), Color(0xFF9EE7E0), Color(0xFFB7C8FF)), listOf(Color(0xFF08131F), Color(0xFF0F3E6B), Color(0xFF0F5A5A), Color(0xFF1C2C6B)), Color(0xFFF4F9FD), Color(0xFF13202E)),
+    Forest("forest", "Forest", listOf(Color(0xFFEEF3EC), Color(0xFFA9D8A2), Color(0xFFE8E1A8), Color(0xFF9FD1C0)), listOf(Color(0xFF0B140F), Color(0xFF1F4D33), Color(0xFF4A4A1F), Color(0xFF0F4A44)), Color(0xFFF6F9F4), Color(0xFF16211A)),
+    Sunset("sunset", "Sunset", listOf(Color(0xFFFBF0EA), Color(0xFFFFC09E), Color(0xFFFF9EB5), Color(0xFFFFD9A0)), listOf(Color(0xFF1A0E14), Color(0xFF6B2A3F), Color(0xFF7A4220), Color(0xFF3D1F5C)), Color(0xFFFDF7F3), Color(0xFF261A20)),
+    Lilac("lilac", "Lilac", listOf(Color(0xFFF3F0FA), Color(0xFFC9B8FF), Color(0xFFF0C2E6), Color(0xFFB8D0FF)), listOf(Color(0xFF120F20), Color(0xFF3D2B7A), Color(0xFF5C2B5C), Color(0xFF22306B)), Color(0xFFF9F7FD), Color(0xFF1E1A2E)),
+    Graphite("graphite", "Graphite", listOf(Color(0xFFF2F2F4), Color(0xFFD9DCE3), Color(0xFFE8E8EC), Color(0xFFCED2DA)), listOf(Color(0xFF101113), Color(0xFF2A2D33), Color(0xFF22252B), Color(0xFF30343B)), Color(0xFFFAFAFB), Color(0xFF1C1E22)),
+    ;
+
+    companion object {
+        fun of(key: String?) = entries.firstOrNull { it.key == key } ?: Aurora
+    }
+}
+
 /** The highlight for things that are on: a two-colour gradient for lights, the active mood, toggles. */
 enum class Accent(val label: String, val top: Color, val deep: Color, val ink: Color) {
     Lavender("Lavender", Color(0xFFB8C2FF), Color(0xFF8B7BFF), Color(0xFF14123A)),
@@ -140,6 +166,8 @@ fun HomeyDashTheme(
     accent: Accent = Accent.Lavender,
     /** How solid the highlight is, 0.3–1. */
     accentOpacity: Float = 1f,
+    palette: Palette = Palette.Aurora,
+    flat: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val dark = when (mode) {
@@ -148,7 +176,14 @@ fun HomeyDashTheme(
         ThemeMode.Dark -> true
     }
     val alpha = accentOpacity.coerceIn(0.3f, 1f)
+    val walls = if (dark) palette.dark else palette.light
     val glass = (if (dark) Dark else Light).copy(
+        wallBase = walls[0],
+        wallA = walls[1],
+        wallB = walls[2],
+        wallC = walls[3],
+        flat = flat,
+        flatPanel = if (dark) palette.darkPanel else palette.lightPanel,
         on = accent.top.copy(alpha = alpha),
         onDeep = accent.deep.copy(alpha = alpha),
         // See-through highlights let the glass show, so their ink follows the theme.
