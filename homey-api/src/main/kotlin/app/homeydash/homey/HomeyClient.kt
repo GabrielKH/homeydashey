@@ -73,6 +73,22 @@ class HomeyClient(
     suspend fun flowCardActions(): List<FlowCardAction> =
         FlowCards.parseActions(HomeyJson.parseToJsonElement(execute(request("api/manager/flow/flowcardaction").get().build())))
 
+    /** Flows that can be started (with a "This Flow is started" card), advanced ones included. */
+    suspend fun flows(): List<HomeyFlow> {
+        val basic = Goodnight.parseFlows(HomeyJson.parseToJsonElement(execute(request("api/manager/flow/flow").get().build())), advanced = false)
+        val advanced = try {
+            Goodnight.parseFlows(HomeyJson.parseToJsonElement(execute(request("api/manager/flow/advancedflow").get().build())), advanced = true)
+        } catch (e: HomeyHttpException) {
+            emptyList()
+        }
+        return (basic + advanced).sortedBy { it.name.lowercase() }
+    }
+
+    suspend fun triggerFlow(flow: HomeyFlow) {
+        val kind = if (flow.advanced) "advancedflow" else "flow"
+        execute(request("api/manager/flow/$kind/${flow.id}/trigger").post("{}".toRequestBody(JSON_TYPE)).build())
+    }
+
     /** Runs a Flow "Then" card, e.g. an Apple TV remote key; [args] are the card's arguments. */
     suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
         val body = buildJsonObject { put("args", args) }.toString()

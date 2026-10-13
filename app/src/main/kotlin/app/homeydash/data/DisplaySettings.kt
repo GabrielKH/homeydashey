@@ -3,12 +3,14 @@ package app.homeydash.data
 import android.net.Uri
 import androidx.compose.runtime.Stable
 import app.homeydash.homey.CardArrangement
+import app.homeydash.homey.HomeyFlow
 import app.homeydash.ui.theme.Accent
 import app.homeydash.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -39,6 +41,38 @@ class DisplaySettings(
     val kioskSaved: Flow<Boolean> = settings.kiosk
     val dimAfter: StateFlow<Int> = settings.dimAfter.stateIn(scope, SharingStarted.Eagerly, 0)
     val wakeOnProximity: StateFlow<Boolean> = settings.wakeOnProximity.stateIn(scope, SharingStarted.Eagerly, true)
+
+    val overviewDevices: StateFlow<List<String>> = settings.overviewDevices.stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val lastPlayer: StateFlow<String?> = settings.lastPlayer.stateIn(scope, SharingStarted.Eagerly, null)
+    val goodnightKeep: StateFlow<Set<String>> = settings.goodnightKeep.stateIn(scope, SharingStarted.Eagerly, emptySet())
+    val goodnightFlow: StateFlow<HomeyFlow?> = settings.goodnightFlow
+        .map { saved ->
+            saved?.split('\t', limit = 3)?.takeIf { it.size == 3 }?.let { (id, kind, name) -> HomeyFlow(id, name, advanced = kind == "advanced") }
+        }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
+    fun setOverviewDevices(ids: List<String>) {
+        scope.launch { settings.setOverviewDevices(ids) }
+    }
+
+    fun pinToOverview(deviceId: String, pinned: Boolean) {
+        val current = overviewDevices.value
+        setOverviewDevices(if (pinned) (current - deviceId) + deviceId else current - deviceId)
+    }
+
+    fun setLastPlayer(deviceId: String) {
+        if (lastPlayer.value != deviceId) scope.launch { settings.setLastPlayer(deviceId) }
+    }
+
+    fun setGoodnightKeep(ids: Set<String>) {
+        scope.launch { settings.setGoodnightKeep(ids) }
+    }
+
+    fun setGoodnightFlow(flow: HomeyFlow?) {
+        scope.launch {
+            settings.setGoodnightFlow(flow?.let { listOf(it.id, if (it.advanced) "advanced" else "flow", it.name).joinToString("\t") })
+        }
+    }
 
     fun setWeatherDays(days: Int) {
         scope.launch { settings.setWeatherDays(days) }

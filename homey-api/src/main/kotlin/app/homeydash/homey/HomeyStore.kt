@@ -110,6 +110,17 @@ class HomeyStore(
         }
     }
 
+    suspend fun flows(): List<HomeyFlow> = client.flows()
+
+    /** Starts a Flow; failures show in the error banner. */
+    suspend fun triggerFlow(flow: HomeyFlow) {
+        try {
+            client.triggerFlow(flow)
+        } catch (e: Exception) {
+            _snapshot.update { it.copy(error = "Couldn't start ${flow.name}: ${e.message}") }
+        }
+    }
+
     suspend fun autocomplete(card: FlowCardAction, arg: String, query: String = ""): List<AutocompleteItem> =
         client.autocomplete(card, arg, query)
 

@@ -28,7 +28,7 @@ The setup screen lists the Homeys it finds on the Wi-Fi (mDNS `_homey._tcp`, plu
 | Module | What it is |
 |---|---|
 | `homey-api` | Pure Kotlin. HTTP client (`HomeyClient`), realtime Socket.IO client (`HomeyRealtime`), in-memory mirror of the Homey (`HomeyStore`), and the rules that turn zones and devices into dashboard sections and card types (`DashboardLayout`). Unit-tested on the JVM. |
-| `app` | Jetpack Compose UI: setup screen and the glass dashboard (side menu, overview, rooms, moods, media). |
+| `app` | Jetpack Compose UI: setup screen and the glass dashboard (side menu, overview, rooms, moods, media, calendar). |
 
 ### Design
 
@@ -42,7 +42,11 @@ The look is iOS-style glass in light and dark (Settings → Appearance: Auto, Li
 - Devices hidden in the Homey app are left out.
 - Media: an Apple Music-style player with the album art blurred behind it. A Remote button appears on TVs and media boxes: keys come from the app's key cards (the Apple TV app), from a "send key" card with a list of keys (Samsung and other TV apps), and from Homey's TV capabilities (volume, channel, mute, power), and a Music button for speakers that can play favourites, playlists or albums (the Sonos app). The remote's volume keys turn the TV's volume when a TV is in the same room in Homey. Apps on the box show as tiles, streaming services first with their logos (Simple Icons, CC0); the sliders button chooses and orders them. Music can be started from any room, on any of those speakers.
 - The side menu shrinks to icons with the arrow next to the home name (tap the home icon to open it again); the app remembers the choice.
-- Press and hold any card for its menu: move it earlier or later, put it in a group of your own (e.g. "Ceiling"), or hide it on this tablet; lamp controls and unlocking are there too. Room cards on the overview can be moved, hidden or given a background the same way.
+- Press and hold any card and drag it to move it, like on an iPhone: the cards jiggle and make room, and the order is saved when you let go (cards move within their group; rooms among the rooms next to them). Tap Done to stop. Letting go without dragging opens the card's menu: add it to the overview, move it earlier or later, put it in a group of your own (e.g. "Ceiling"), or hide it on this tablet; lamp controls and unlocking are there too. Room cards on the overview have a menu to hide them or give them a background.
+- Any device can be added to the overview (its menu → Add to overview). It shows under Favourites as the same card it has in its room: a player as a player, a lamp as a lamp.
+- Goodnight (on the overview) shows what is on and turns it all off in one tap, pausing what plays, except the devices you keep on. It can also start one of your Homey Flows (or Advanced Flows), for anything else bedtime should do.
+- Media page: one big player, the one playing (the one that started last when several play), else the one that played last. The list beside it shows every player with what it plays; tap one to show it big.
+- Calendar page (side menu, or the arrow on the overview's calendar card): a month with each day's events, a week in columns, or a day on a timeline, with the chosen day's agenda and the next two weeks alongside.
 - Settings → Theme: six colour themes (Aurora, Ocean, Forest, Sunset, Lilac, Graphite) and a Flat colours style instead of glass and gradients.
 - Settings → Screen: dim after 1–30 minutes without a touch (black with a faint clock); a touch, or the proximity sensor when the tablet has one, wakes it. Kiosk mode pins the app and lets it be chosen as the home app.
 - The weather card shows 0–7 forecast days, chosen in the weather dialog. Room temperatures skip readings no room has (boilers, ovens) and convert °F.
@@ -59,6 +63,7 @@ Type is Inter (OFL), the closest open typeface to Apple's SF Pro. Icons are [Pho
 - `GET /api/manager/moods/mood` for moods (skipped if the key may not read them) and `POST /api/manager/moods/mood/:id/set` to set one.
 - `PUT /api/manager/devices/device/:id/capability/:capability` to control a device. The card updates at once and rolls back if Homey refuses.
 - `GET /api/manager/flow/flowcardaction` for app "Then" cards; `POST /api/manager/flow/flowcardaction/:uri/:id/run` runs one (remote keys, play favourite) and `GET …/:uri/:id/autocomplete?name=&query=` lists the choices (favourites, playlists, apps). Skipped if the key has no Flow access.
+- `GET /api/manager/flow/flow` and `/advancedflow` list the Flows Goodnight can start; `POST …/flow/:id/trigger` (or `…/advancedflow/:id/trigger`) starts one.
 - `GET /api/manager/geolocation/option/location` (or `/state`) for the Homey's location, used by the weather card.
 - Socket.IO: `handshakeClient {token, homeyId}`, then `subscribe` to `homey:manager:devices`, `homey:manager:zones`, `homey:manager:moods` and `homey:device:<id>`. After a reconnect the app reloads everything.
 

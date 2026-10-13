@@ -40,3 +40,36 @@ class RoomTemperatureTest {
         assertEquals(null, DashboardLayout.roomTemperature(listOf(temp("oven", "other", 180.0))))
     }
 }
+
+class DragTest {
+    private fun light(id: String) = Device(id, id, zone = "k", deviceClass = "light", capabilities = listOf("onoff"))
+    private fun sensor(id: String) = Device(id, id, zone = "k", deviceClass = "sensor", capabilities = listOf("measure_temperature"))
+    private val section = ZoneSection(Zone("k", "Kitchen"), 1, listOf(light("a"), light("b"), sensor("t"), light("c")))
+
+    @Test fun `a card dropped on another in its group takes its place`() {
+        assertEquals(listOf("c", "a", "b", "t"), CardLayout.moveTo(section, CardArrangement(), "c", "a"))
+        assertEquals(listOf("b", "c", "a", "t"), CardLayout.moveTo(section, CardArrangement(), "a", "c"))
+        assertEquals(null, CardLayout.moveTo(section, CardArrangement(), "a", "t"))
+    }
+
+    @Test fun `rooms are dropped among their siblings only`() {
+        val zones = listOf(Zone("h", "Home"), Zone("f", "Floor", parent = "h"), Zone("a", "A", parent = "f"), Zone("b", "B", parent = "f"), Zone("c", "C", parent = "f"), Zone("g", "Garden", parent = "h"))
+            .associateBy { it.id }
+        val order = DashboardLayout.moveTo(zones, emptyList(), "c", "a")!!
+        assertEquals(listOf("c", "a", "b"), DashboardLayout.siblings(zones, order, "a").map { it.id })
+        assertEquals(null, DashboardLayout.moveTo(zones, emptyList(), "a", "g"))
+    }
+
+    @Test fun `the media page features what is playing, else what played last`() {
+        fun player(id: String, playing: Boolean) = Device(
+            id, id, deviceClass = "speaker", capabilities = listOf("speaker_playing"),
+            capabilitiesObj = mapOf("speaker_playing" to Capability("speaker_playing", "boolean", value = kotlinx.serialization.json.JsonPrimitive(playing), setable = true)),
+        )
+        val players = listOf(player("a", false), player("b", true), player("c", true))
+        assertEquals("c", DashboardLayout.featuredPlayer(players, chosen = null, last = "c")?.id)
+        assertEquals("b", DashboardLayout.featuredPlayer(players, chosen = null, last = "a")?.id)
+        assertEquals("a", DashboardLayout.featuredPlayer(players, chosen = "a", last = "c")?.id)
+        val idle = listOf(player("a", false), player("b", false))
+        assertEquals("b", DashboardLayout.featuredPlayer(idle, chosen = null, last = "b")?.id)
+    }
+}

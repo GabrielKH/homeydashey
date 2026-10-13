@@ -138,14 +138,30 @@ class CalendarRepository(
         return result.sortedWith(compareBy({ it.account.lowercase() }, { it.name.lowercase() }))
     }
 
+    /** Events from [from] up to [until] (exclusive) in the chosen calendars, for the calendar page. */
+    suspend fun events(from: LocalDate, until: LocalDate): List<CalendarEvent> {
+        if (!granted()) return emptyList()
+        val chosen = settings.calendars.first()
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val shown = if (chosen.isEmpty()) queryCalendars().filter { it.visible }.map { it.id }.toSet() else chosen.mapNotNull { it.toLongOrNull() }.toSet()
+                queryEvents(shown, from, until)
+            }.getOrDefault(emptyList())
+        }
+    }
+
+    // From the start of this month (for the month view) to two months ahead.
     private fun queryEvents(calendarIds: Set<Long>): List<CalendarEvent> {
+        val monthStart = LocalDate.now(ZoneId.systemDefault()).withDayOfMonth(1)
+        return queryEvents(calendarIds, monthStart, monthStart.plusMonths(2))
+    }
+
+    private fun queryEvents(calendarIds: Set<Long>, fromDay: LocalDate, untilDay: LocalDate): List<CalendarEvent> {
         if (calendarIds.isEmpty()) return emptyList()
-        // From the start of this month (for the month view) to two months ahead; a day either
-        // side covers all-day events, which are stored at UTC midnight.
+        // A day either side covers all-day events, which are stored at UTC midnight.
         val zone = ZoneId.systemDefault()
-        val monthStart = LocalDate.now(zone).withDayOfMonth(1)
-        val from = monthStart.atStartOfDay(zone).toInstant().toEpochMilli() - DAY
-        val to = monthStart.plusMonths(2).atStartOfDay(zone).toInstant().toEpochMilli() + DAY
+        val from = fromDay.atStartOfDay(zone).toInstant().toEpochMilli() - DAY
+        val to = untilDay.atStartOfDay(zone).toInstant().toEpochMilli() + DAY
         val builder = CalendarContract.Instances.CONTENT_URI.buildUpon()
         ContentUris.appendId(builder, from)
         ContentUris.appendId(builder, to)

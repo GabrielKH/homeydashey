@@ -58,6 +58,8 @@ fun CardMenu(
     onOrder: (zoneId: String, order: List<String>) -> Unit,
     onGroup: (title: String?) -> Unit,
     onHide: () -> Unit,
+    pinned: Boolean,
+    onPin: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val g = GlassTheme.colors
@@ -77,11 +79,14 @@ fun CardMenu(
             }
             if (actions.hasRemote(device)) add(MenuExtra(Sym.remote, "Remote") { actions.open(Sheet.Remote(device.id)) })
         }
-        if (extras.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                extras.forEach { extra -> MenuChip(extra.icon, extra.label, onClick = extra.onClick) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            MenuChip(if (pinned) Sym.pushPinSlash else Sym.pushPin, if (pinned) "Remove from overview" else "Add to overview", selected = pinned) {
+                onPin(!pinned)
+                onDismiss()
             }
+            extras.forEach { extra -> MenuChip(extra.icon, extra.label, onClick = extra.onClick) }
         }
+        Text("Tip: hold a card and drag it to move it.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
 
         if (section != null && position != null && position.second > 1) {
             MenuLabel("Order")

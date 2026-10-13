@@ -2,6 +2,15 @@ package app.homeydash.ui.dashboard
 
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -82,6 +91,13 @@ fun OverviewScreen(
     actions: DashboardActions,
     hasMusic: Boolean,
     onRoom: (String) -> Unit,
+    /** Devices pinned to the overview, each shown as its own card. */
+    favourites: List<Device>,
+    onMoveFavourite: (String, String) -> Unit,
+    canMoveRoom: (String, String) -> Boolean,
+    onMoveRoom: (String, String) -> Unit,
+    /** A drag ended: save the new order. */
+    onDropped: () -> Unit,
     /** Weather and calendar cards for the right-hand column. */
     widgets: @Composable ColumnScope.() -> Unit,
 ) {
@@ -106,7 +122,9 @@ fun OverviewScreen(
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+            if (actions.rearrange.editing) {
+                DoneChip(actions, Modifier.padding(bottom = 4.dp))
+            } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) {
                 if (connection != ConnectionState.Connected) {
                     GlassChip(Sym.wifiOff, "Reconnecting", g.danger)
                 }
@@ -119,6 +137,7 @@ fun OverviewScreen(
                     )
                 }
                 if (hasMusic) MusicChip { actions.open(Sheet.Music(zoneId = null)) }
+                GlassChip(Sym.bedtime, "Goodnight", g.fg, onClick = { actions.open(Sheet.Goodnight) })
                 IconChip(Sym.image) { actions.open(Sheet.Background(HOME_BACKGROUND, "Home")) }
             }
         }
@@ -127,16 +146,48 @@ fun OverviewScreen(
         // The side column takes about a third of the width, so rooms keep at least two columns.
         val sideWidth = (maxWidth * 0.32f).coerceIn(280.dp, 380.dp)
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(GridGap)) {
+            val grid = rememberLazyGridState()
+            val drag = rememberGridDrag(grid)
+            val roomIds = rooms.map { it.zone.id }.toSet()
+            SideEffect {
+                drag.draggable = { key -> key is String && (key.startsWith(FAV) || key in roomIds) }
+                drag.canMove = { a, b ->
+                    a is String && b is String && when {
+                        a.startsWith(FAV) -> b.startsWith(FAV)
+                        else -> b in roomIds && canMoveRoom(a, b)
+                    }
+                }
+                drag.onMove = { a, b ->
+                    if ((a as String).startsWith(FAV)) onMoveFavourite(a.removePrefix(FAV), (b as String).removePrefix(FAV)) else onMoveRoom(a, b as String)
+                }
+                drag.onDrop = onDropped
+            }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(176.dp),
-                modifier = Modifier.weight(1f).fillMaxHeight(),
+                state = grid,
+                modifier = Modifier.weight(1f).fillMaxHeight().rearrangeable(drag, actions.rearrange, actions::open),
                 horizontalArrangement = Arrangement.spacedBy(GridGap),
                 verticalArrangement = Arrangement.spacedBy(GridGap),
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
-                item(span = { GridItemSpan(maxLineSpan) }, contentType = "label") { SectionLabel("Rooms") }
+                if (favourites.isNotEmpty()) {
+                    item(key = "label:favourites", span = { GridItemSpan(maxLineSpan) }, contentType = "label") { SectionLabel("Favourites") }
+                    items(
+                        favourites,
+                        key = { FAV + it.id },
+                        span = { GridItemSpan(tileSpan(it).coerceAtMost(maxLineSpan)) },
+                        contentType = { DashboardLayout.cardKind(it) },
+                    ) { device ->
+                        RearrangeableItem(FAV + device.id, drag, actions.rearrange, menu = { actions.open(Sheet.CardMenu(device.id)) }) {
+                            DeviceTile(device, actions)
+                        }
+                    }
+                }
+                item(key = "label:rooms", span = { GridItemSpan(maxLineSpan) }, contentType = "label") { SectionLabel("Rooms") }
                 items(rooms, key = { it.zone.id }, contentType = { "room" }) { room ->
-                    RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.open(Sheet.RoomMenu(room.zone.id)) })
+                    RearrangeableItem(room.zone.id, drag, actions.rearrange, menu = { actions.open(Sheet.RoomMenu(room.zone.id)) }) {
+                        RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.hold(Sheet.RoomMenu(room.zone.id)) })
+                    }
                 }
             }
             Column(
@@ -292,20 +343,43 @@ fun MoodsScreen(moods: List<Mood>, zones: Map<String, Zone>, actions: DashboardA
 // ---------------------------------------------------------------- Media
 
 @Composable
-fun MediaScreen(players: List<Device>, zones: Map<String, Zone>, actions: DashboardActions, hasMusic: Boolean) {
+fun MediaScreen(players: List<Device>, zones: Map<String, Zone>, actions: DashboardActions, hasMusic: Boolean, lastPlayer: String?) {
+    val g = GlassTheme.colors
+    // A player picked in the list stays until the page is left; otherwise the page follows what plays.
+    var chosen by rememberSaveable { mutableStateOf<String?>(null) }
+    val featured = DashboardLayout.featuredPlayer(players, chosen, lastPlayer)
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        val playing = players.count { it.capability("speaker_playing")?.booleanValue == true }
+        val playing = players.count { DashboardLayout.isPlaying(it) }
         PageHeader(eyebrow = if (playing == 0) "Nothing playing" else "$playing playing", title = "Media") {
             if (hasMusic) MusicChip { actions.open(Sheet.Music(zoneId = null)) }
         }
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(300.dp),
-            horizontalArrangement = Arrangement.spacedBy(GridGap),
-            verticalArrangement = Arrangement.spacedBy(GridGap),
-            contentPadding = PaddingValues(bottom = 24.dp),
-        ) {
-            items(players, key = { it.id }) { player ->
-                MediaPlayerCard(player, actions, large = true, subtitle = player.zone?.let { zones[it]?.name })
+        if (featured == null) {
+            Text("No speakers or TVs on this Homey yet.", style = MaterialTheme.typography.bodyLarge, color = g.muted)
+            return@Column
+        }
+        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(GridGap)) {
+            Crossfade(targetState = featured.id, animationSpec = tween(300), modifier = Modifier.weight(1f).fillMaxHeight(), label = "player") { id ->
+                val device = players.firstOrNull { it.id == id } ?: featured
+                MediaHero(device, actions, Modifier.fillMaxSize(), subtitle = device.zone?.let { zones[it]?.name })
+            }
+            if (players.size > 1) {
+                Column(
+                    Modifier.width(330.dp).fillMaxHeight().glass(TileShape).padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    SectionLabel("Players", Modifier.padding(start = 8.dp, top = 6.dp))
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(players, key = { it.id }) { player ->
+                            PlayerRow(
+                                device = player,
+                                actions = actions,
+                                subtitle = player.zone?.let { zones[it]?.name },
+                                selected = player.id == featured.id,
+                                onClick = { chosen = player.id },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -322,6 +396,7 @@ fun RoomScreen(
     actions: DashboardActions,
     hasMusic: Boolean,
     arrangement: CardArrangement,
+    onCardOrder: (zoneId: String, order: List<String>) -> Unit,
 ) {
     val g = GlassTheme.colors
     val remote = remember(room.devices, actions.deviceCards) { room.devices.firstOrNull { actions.hasRemote(it) } }
@@ -331,22 +406,44 @@ fun RoomScreen(
     val eyebrow = remember(zones, room.zone.id) { DashboardLayout.parents(zones, room.zone.id).firstOrNull()?.name ?: "Room" }
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        PageHeader(eyebrow = eyebrow, title = room.zone.name) {
-            room.temperature?.let { GlassChip(Sym.deviceThermostat, shortTemperature(it), g.cool, filled = false) }
-            room.humidity?.let { GlassChip(Sym.waterDrop, "${it.toInt()}%", g.cool, filled = false) }
-            if (room.lights.size > 1) {
-                val anyOn = room.lightsOn > 0
-                GlassChip(
-                    Sym.lightbulb,
-                    if (anyOn) "All off" else "All on",
-                    if (anyOn) g.on else g.muted,
-                    filled = anyOn,
-                    onClick = { actions.setAll(room.lights.map { it.id }, "onoff", JsonPrimitive(!anyOn)) },
-                )
+        // The order while a card is dragged, until the saved order catches up.
+        var pending by remember(room.zone.id) { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+        LaunchedEffect(arrangement) { pending = emptyMap() }
+        val shown = if (pending.isEmpty()) arrangement else arrangement.copy(order = arrangement.order + pending)
+        val grid = rememberLazyGridState()
+        val drag = rememberGridDrag(grid)
+        SideEffect {
+            fun sectionOf(id: Any) = roomSections.firstOrNull { section -> section.devices.any { it.id == id } }
+            fun current() = arrangement.copy(order = arrangement.order + pending)
+            drag.draggable = { key -> sectionOf(key) != null }
+            drag.canMove = { a, b -> sectionOf(a)?.let { CardLayout.moveTo(it, current(), a as String, b as String) } != null }
+            drag.onMove = { a, b ->
+                val section = sectionOf(a)
+                val order = section?.let { CardLayout.moveTo(it, current(), a as String, b as String) }
+                if (section != null && order != null) pending = pending + (section.zone.id to order)
             }
-            remote?.let { GlassChip(Sym.remote, "Remote", g.fg, onClick = { actions.open(Sheet.Remote(it.id)) }) }
-            if (hasMusic) MusicChip { actions.open(Sheet.Music(room.zone.id)) }
-            IconChip(Sym.image) { actions.open(Sheet.Background(room.zone.id, room.zone.name)) }
+            drag.onDrop = { pending.forEach { (zoneId, order) -> onCardOrder(zoneId, order) } }
+        }
+        PageHeader(eyebrow = eyebrow, title = room.zone.name) {
+            if (actions.rearrange.editing) {
+                DoneChip(actions)
+            } else {
+                room.temperature?.let { GlassChip(Sym.deviceThermostat, shortTemperature(it), g.cool, filled = false) }
+                room.humidity?.let { GlassChip(Sym.waterDrop, "${it.toInt()}%", g.cool, filled = false) }
+                if (room.lights.size > 1) {
+                    val anyOn = room.lightsOn > 0
+                    GlassChip(
+                        Sym.lightbulb,
+                        if (anyOn) "All off" else "All on",
+                        if (anyOn) g.on else g.muted,
+                        filled = anyOn,
+                        onClick = { actions.setAll(room.lights.map { it.id }, "onoff", JsonPrimitive(!anyOn)) },
+                    )
+                }
+                remote?.let { GlassChip(Sym.remote, "Remote", g.fg, onClick = { actions.open(Sheet.Remote(it.id)) }) }
+                if (hasMusic) MusicChip { actions.open(Sheet.Music(room.zone.id)) }
+                IconChip(Sym.image) { actions.open(Sheet.Background(room.zone.id, room.zone.name)) }
+            }
         }
         if (roomMoods.isNotEmpty()) MoodRow(roomMoods, actions)
         LazyVerticalGrid(
@@ -354,7 +451,8 @@ fun RoomScreen(
             horizontalArrangement = Arrangement.spacedBy(GridGap),
             verticalArrangement = Arrangement.spacedBy(GridGap),
             contentPadding = PaddingValues(bottom = 24.dp),
-            modifier = Modifier.weight(1f),
+            state = grid,
+            modifier = Modifier.weight(1f).rearrangeable(drag, actions.rearrange, actions::open),
         ) {
             roomSections.forEach { section ->
                 if (roomSections.size > 1) {
@@ -367,13 +465,13 @@ fun RoomScreen(
                         )
                     }
                 }
-                groupedTiles(section, arrangement, actions)
+                groupedTiles(section, shown, actions, drag)
             }
         }
     }
 }
 
-private fun LazyGridScope.groupedTiles(section: ZoneSection, arrangement: CardArrangement, actions: DashboardActions) {
+private fun LazyGridScope.groupedTiles(section: ZoneSection, arrangement: CardArrangement, actions: DashboardActions, drag: GridDrag) {
     CardLayout.groups(section, arrangement).forEach { group ->
         item(key = "label:${section.zone.id}:${group.custom}:${group.title}", span = { GridItemSpan(maxLineSpan) }, contentType = "label") {
             SectionLabel(group.title)
@@ -384,13 +482,15 @@ private fun LazyGridScope.groupedTiles(section: ZoneSection, arrangement: CardAr
             span = { GridItemSpan(tileSpan(it).coerceAtMost(maxLineSpan)) },
             contentType = { DashboardLayout.cardKind(it) },
         ) { device ->
-            DeviceTile(device, actions)
+            RearrangeableItem(device.id, drag, actions.rearrange, menu = { actions.open(Sheet.CardMenu(device.id)) }) {
+                DeviceTile(device, actions)
+            }
         }
     }
 }
 
 @Composable
-private fun PageHeader(eyebrow: String, title: String, chips: @Composable () -> Unit = {}) {
+internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () -> Unit = {}) {
     val g = GlassTheme.colors
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.Bottom) {
         Column(Modifier.weight(1f)) {
@@ -401,6 +501,29 @@ private fun PageHeader(eyebrow: String, title: String, chips: @Composable () -> 
     }
 }
 
+/** Overview grid keys for pinned devices, apart from the room keys. */
+private const val FAV = "fav:"
+
+/** Ends rearranging. */
+@Composable
+private fun DoneChip(actions: DashboardActions, modifier: Modifier = Modifier) {
+    val g = GlassTheme.colors
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Drag cards to move them, tap one for its menu", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        Row(
+            Modifier
+                .pressable({ actions.rearrange.done() })
+                .background(onBrush(), PillShape)
+                .padding(start = 14.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SymIcon(Sym.check, filled = true, size = 18.dp, tint = g.onInk)
+            Text("Done", style = MaterialTheme.typography.labelLarge, color = g.onInk)
+        }
+    }
+}
+
 @Composable
 private fun MusicChip(onClick: () -> Unit) {
     GlassChip(Sym.musicNotes, "Music", GlassTheme.colors.fg, onClick = onClick)
@@ -408,7 +531,7 @@ private fun MusicChip(onClick: () -> Unit) {
 
 /** A round glass header button with just an icon, e.g. the room's background picker. */
 @Composable
-private fun IconChip(icon: Ic, onClick: () -> Unit) {
+internal fun IconChip(icon: Ic, onClick: () -> Unit) {
     Box(
         Modifier
             .size(42.dp)

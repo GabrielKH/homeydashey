@@ -474,6 +474,8 @@ fun CalendarCard(
     onView: (String) -> Unit,
     onPermissionResult: () -> Unit,
     onChooseCalendars: () -> Unit,
+    /** Opens the full calendar page. */
+    onOpen: (() -> Unit)? = null,
 ) {
     val g = GlassTheme.colors
     val context = LocalContext.current
@@ -517,6 +519,11 @@ fun CalendarCard(
                     }
                 }
                 SymIcon(Sym.sliders, size = 20.dp, tint = g.muted, modifier = Modifier.pressable(onChooseCalendars))
+                if (onOpen != null) {
+                    Box(Modifier.size(32.dp).pressable(onOpen).glass(CircleShape), contentAlignment = Alignment.Center) {
+                        SymIcon(Sym.chevronRight, size = 18.dp, tint = g.fg)
+                    }
+                }
             } else {
                 Text("Calendar", style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f))
             }
@@ -701,7 +708,7 @@ private fun MonthGrid(
 }
 
 /** The local days an event covers; all-day events are stored at UTC midnight. */
-private fun eventDays(event: CalendarEvent, zone: ZoneId): List<LocalDate> {
+internal fun eventDays(event: CalendarEvent, zone: ZoneId): List<LocalDate> {
     val first: LocalDate
     val last: LocalDate
     if (event.allDay) {

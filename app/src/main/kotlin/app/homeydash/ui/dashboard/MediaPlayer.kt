@@ -1,6 +1,15 @@
 package app.homeydash.ui.dashboard
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -354,4 +363,198 @@ private fun rememberAlbumArt(device: Device, actions: DashboardActions, track: S
         value = url?.let { actions.loadArt(it, "$it|$version|$track") }
     }
     return art
+}
+
+/**
+ * The Media page's one big player: large album art beside the track, big transport
+ * buttons, volume and the player's extras, all over the blurred art.
+ */
+@Composable
+fun MediaHero(device: Device, actions: DashboardActions, modifier: Modifier = Modifier, subtitle: String? = null) {
+    val playing = device.capability("speaker_playing")?.booleanValue == true
+    val track = device.capability("speaker_track")?.stringValue?.takeIf { it.isNotBlank() }
+    val artist = device.capability("speaker_artist")?.stringValue?.takeIf { it.isNotBlank() }
+    val album = device.capability("speaker_album")?.stringValue?.takeIf { it.isNotBlank() }
+    val onoff = device.capability("onoff")
+    val poweredOff = onoff?.booleanValue == false
+    val art = rememberAlbumArt(device, actions, track)
+    val hasRemote = actions.hasRemote(device)
+    val hasMusic = actions.musicSources(device.id).isNotEmpty()
+    val canGroup = actions.grouping(device.id) != null
+
+    Box(modifier.clip(TileShape)) {
+        PlayerBackground(art?.blurred, Modifier.matchParentSize())
+        Row(
+            Modifier.fillMaxSize().padding(28.dp),
+            horizontalArrangement = Arrangement.spacedBy(32.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(0.46f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                AlbumArt(art?.sharp, device, Modifier, corner = 26.dp)
+            }
+            Column(Modifier.weight(0.54f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        listOfNotNull(subtitle, device.name).joinToString(" · ").uppercase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = InkSoft,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (playing) PlayingBars(Ink)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        track ?: if (poweredOff) "Off" else if (playing) "Playing" else "Not playing",
+                        style = MaterialTheme.typography.displaySmall,
+                        color = Ink,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    artist?.let { Text(it, style = MaterialTheme.typography.titleLarge, color = InkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    album?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = InkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+                Progress(device, playing)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val prev = device.capability("speaker_prev")?.setable == true
+                    val next = device.capability("speaker_next")?.setable == true
+                    val play = device.capability("speaker_playing")?.setable == true
+                    Transport(Sym.skipPrevious, 46.dp, prev) { actions.set(device.id, "speaker_prev", JsonPrimitive(true)) }
+                    Transport(if (playing) Sym.pause else Sym.playArrow, 84.dp, play) {
+                        actions.set(device.id, "speaker_playing", JsonPrimitive(!playing))
+                    }
+                    Transport(Sym.skipNext, 46.dp, next) { actions.set(device.id, "speaker_next", JsonPrimitive(true)) }
+                }
+                device.capability("volume_set")?.takeIf { it.setable }?.let { volume ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        val mute = device.capability("volume_mute")?.takeIf { it.setable }
+                        val muted = mute?.booleanValue == true
+                        SymIcon(
+                            if (muted) Sym.volumeOff else Sym.volumeDown,
+                            filled = true,
+                            size = 24.dp,
+                            tint = InkSoft,
+                            modifier = Modifier.pressable(mute?.let { { actions.set(device.id, it.id, JsonPrimitive(!muted)) } }),
+                        )
+                        ThinSlider(
+                            value = fraction(volume) ?: 0f,
+                            onValue = { actions.set(device.id, volume.id, JsonPrimitive(valueAt(volume, it))) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        SymIcon(Sym.volumeUp, filled = true, size = 24.dp, tint = InkSoft)
+                    }
+                }
+                val power = onoff?.takeIf { it.setable }
+                if (hasRemote || hasMusic || canGroup || power != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (hasRemote) PlayerPill(Sym.remote, "Remote") { actions.open(Sheet.Remote(device.id)) }
+                        if (hasMusic) PlayerPill(Sym.musicNotes, "Music") { actions.open(Sheet.Music(device.zone, device.id)) }
+                        if (canGroup) PlayerPill(Sym.speakerHifi, "Group") { actions.open(Sheet.Group(device.id)) }
+                        Spacer(Modifier.weight(1f))
+                        power?.let {
+                            Box(
+                                Modifier
+                                    .size(44.dp)
+                                    .pressable({ actions.set(device.id, it.id, JsonPrimitive(poweredOff)) })
+                                    .background(if (poweredOff) InkFaint else Ink.copy(alpha = 0.9f), PillShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                SymIcon(Sym.power, size = 22.dp, tint = if (poweredOff) Ink else Color(0xFF15161C))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A player in the Media page's list: its art, what it plays, and play or pause. */
+@Composable
+fun PlayerRow(device: Device, actions: DashboardActions, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+    val g = GlassTheme.colors
+    val playing = device.capability("speaker_playing")?.booleanValue == true
+    val track = device.capability("speaker_track")?.stringValue?.takeIf { it.isNotBlank() }
+    val artist = device.capability("speaker_artist")?.stringValue?.takeIf { it.isNotBlank() }
+    val art = rememberAlbumArt(device, actions, track)
+    val shape = RoundedCornerShape(18.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .pressable(onClick)
+            .then(if (selected) Modifier.glass(shape) else Modifier)
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).glass(RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            val sharp = art?.sharp
+            if (sharp != null) {
+                Image(sharp, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                SymIcon(deviceIcon(device), filled = true, size = 24.dp, tint = g.muted)
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(device.name, style = MaterialTheme.typography.titleSmall, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (playing) PlayingBars(g.fg)
+            }
+            Text(
+                track?.let { listOfNotNull(it, artist).joinToString(" – ") } ?: "Not playing",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (track != null) g.fg.copy(alpha = 0.85f) else g.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = g.muted, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        if (device.capability("speaker_playing")?.setable == true) {
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .pressable({ actions.set(device.id, "speaker_playing", JsonPrimitive(!playing)) })
+                    .glass(CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                SymIcon(if (playing) Sym.pause else Sym.playArrow, filled = true, size = 18.dp, tint = g.fg)
+            }
+        }
+    }
+}
+
+/** Three bouncing bars, the "now playing" sign. */
+@Composable
+fun PlayingBars(color: Color, modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "bars")
+    val heights = listOf(0, 180, 360).map { delayMs ->
+        transition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(520, delayMillis = delayMs), RepeatMode.Reverse),
+            label = "bar",
+        )
+    }
+    Row(modifier.height(14.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
+        heights.forEach { h ->
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .graphicsLayer {
+                        scaleY = h.value
+                        transformOrigin = TransformOrigin(0.5f, 1f)
+                    }
+                    .background(color, PillShape),
+            )
+        }
+    }
 }

@@ -226,7 +226,41 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[WAKE_PROXIMITY] = on }
     }
 
+    /** Devices pinned to the overview, in the order they show. */
+    val overviewDevices: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[OVERVIEW_DEVICES]?.split('\n')?.filter { it.isNotEmpty() }.orEmpty()
+    }
+
+    suspend fun setOverviewDevices(ids: List<String>) {
+        context.dataStore.edit { it[OVERVIEW_DEVICES] = ids.joinToString("\n") }
+    }
+
+    /** The player that played last, so the media page opens on it. */
+    val lastPlayer: Flow<String?> = context.dataStore.data.map { it[LAST_PLAYER] }
+
+    suspend fun setLastPlayer(id: String) {
+        context.dataStore.edit { if (it[LAST_PLAYER] != id) it[LAST_PLAYER] = id }
+    }
+
+    /** Devices Goodnight leaves alone. */
+    val goodnightKeep: Flow<Set<String>> = context.dataStore.data.map { it[GOODNIGHT_KEEP].orEmpty() }
+
+    suspend fun setGoodnightKeep(ids: Set<String>) {
+        context.dataStore.edit { it[GOODNIGHT_KEEP] = ids }
+    }
+
+    /** The Flow Goodnight also starts, as id, "advanced" or "flow", and name separated by tabs. */
+    val goodnightFlow: Flow<String?> = context.dataStore.data.map { it[GOODNIGHT_FLOW] }
+
+    suspend fun setGoodnightFlow(flow: String?) {
+        context.dataStore.edit { if (flow == null) it.remove(GOODNIGHT_FLOW) else it[GOODNIGHT_FLOW] = flow }
+    }
+
     private companion object {
+        val OVERVIEW_DEVICES = stringPreferencesKey("overview_devices")
+        val LAST_PLAYER = stringPreferencesKey("last_player")
+        val GOODNIGHT_KEEP = stringSetPreferencesKey("goodnight_keep")
+        val GOODNIGHT_FLOW = stringPreferencesKey("goodnight_flow")
         val WEATHER_DAYS = intPreferencesKey("weather_days")
         val PALETTE = stringPreferencesKey("palette")
         val FLAT = booleanPreferencesKey("flat")

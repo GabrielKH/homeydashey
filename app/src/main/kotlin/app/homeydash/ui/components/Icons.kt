@@ -179,4 +179,12 @@ object Sym {
     val mapPin = Ic(R.drawable.ph_map_pin, R.drawable.ph_map_pin_fill)
     val gps = Ic(R.drawable.ph_navigation_arrow, R.drawable.ph_navigation_arrow_fill)
     val globe = Ic(R.drawable.ph_globe_hemisphere_west, R.drawable.ph_globe_hemisphere_west_fill)
+    val star = Ic(R.drawable.ph_star, R.drawable.ph_star_fill)
+    val pushPin = Ic(R.drawable.ph_push_pin, R.drawable.ph_push_pin_fill)
+    val pushPinSlash = Ic(R.drawable.ph_push_pin_slash, R.drawable.ph_push_pin_slash_fill)
+    val dragHandle = Ic(R.drawable.ph_dots_six_vertical, R.drawable.ph_dots_six_vertical_fill)
+    val flow = Ic(R.drawable.ph_flow_arrow, R.drawable.ph_flow_arrow_fill)
+    val move = Ic(R.drawable.ph_arrows_out_cardinal, R.drawable.ph_arrows_out_cardinal_fill)
+    val caretUpDown = Ic(R.drawable.ph_caret_up_down, R.drawable.ph_caret_up_down_fill)
+    val calendarDots = Ic(R.drawable.ph_calendar_dots, R.drawable.ph_calendar_dots_fill)
 }

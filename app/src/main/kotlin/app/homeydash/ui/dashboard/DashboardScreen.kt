@@ -59,6 +59,8 @@ import app.homeydash.homey.Remotes
 import app.homeydash.homey.SpeakerGrouping
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.HomeyInfo
+import app.homeydash.homey.HomeyFlow
+import app.homeydash.homey.GoodnightStep
 import app.homeydash.homey.HomeyStore
 import app.homeydash.homey.Mood
 import app.homeydash.homey.RoomSummary
@@ -107,6 +109,7 @@ sealed interface Sheet {
     data class CardMenu(val deviceId: String) : Sheet
     data class RoomMenu(val zoneId: String) : Sheet
     data object Calendars : Sheet
+    data object Goodnight : Sheet
 }
 
 /** Everything a card can do to the Homey. One instance per dashboard. */
@@ -124,6 +127,29 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
 
     fun close() {
         sheet = null
+    }
+
+    /** Holding and dragging cards to rearrange them. */
+    val rearrange = Rearrange()
+
+    /** A card was held: rearranging starts, and letting go without a drag opens [menu]. */
+    fun hold(menu: Sheet) = rearrange.hold(menu)
+
+    /** The Homey's Flows that can be started, for Goodnight. */
+    suspend fun flows(): List<HomeyFlow> =
+        try {
+            store.flows()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            store.reportError("Couldn't load the Flows: ${e.message}")
+            emptyList()
+        }
+
+    /** Turns off what's on, pauses what plays, and starts the chosen Flow. */
+    fun goodnight(steps: List<GoodnightStep>, flow: HomeyFlow?) {
+        steps.groupBy { it.capability }.forEach { (capability, group) -> setAll(group.map { it.device.id }, capability, JsonPrimitive(false)) }
+        flow?.let { scope.launch { store.triggerFlow(it) } }
     }
 
     fun cards(deviceId: String): List<FlowCardAction> = deviceCards[deviceId].orEmpty()
@@ -218,6 +244,7 @@ private fun decodeScaled(bytes: ByteArray, maxSide: Int): Bitmap? {
 private const val OVERVIEW = "overview"
 private const val MOODS = "moods"
 private const val MEDIA = "media"
+private const val CALENDAR = "calendar"
 private const val ROOM = "room:"
 
 @Composable
@@ -258,11 +285,19 @@ fun DashboardScreen(
     val dimAfter by display.dimAfter.collectAsStateWithLifecycle()
     val wakeOnProximity by display.wakeOnProximity.collectAsStateWithLifecycle()
     val kiosk by display.kiosk.collectAsStateWithLifecycle()
+    val overviewDevices by display.overviewDevices.collectAsStateWithLifecycle()
+    val lastPlayer by display.lastPlayer.collectAsStateWithLifecycle()
+    val goodnightKeep by display.goodnightKeep.collectAsStateWithLifecycle()
+    val goodnightFlow by display.goodnightFlow.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
     val compactSidebar by display.compactSidebar.collectAsStateWithLifecycle()
-    val roomOrder by display.roomOrder.collectAsStateWithLifecycle()
+    val savedRoomOrder by display.roomOrder.collectAsStateWithLifecycle()
+    // While a room card is dragged on the overview, the order it would get; cleared once saved.
+    var roomOrderDraft by remember { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(savedRoomOrder) { roomOrderDraft = null }
+    val roomOrder = roomOrderDraft ?: savedRoomOrder
     val sections = remember(snapshot.zones, snapshot.devices, hidden, hiddenRooms, roomOrder) {
         DashboardLayout.sections(snapshot.zones, snapshot.devices, hidden, hiddenRooms, roomOrder)
     }
@@ -274,10 +309,27 @@ fun DashboardScreen(
     val speakers = remember(visibleDevices, actions.deviceCards) { musicSpeakers(visibleDevices, actions) }
     val groupable = remember(visibleDevices, actions.deviceCards) { visibleDevices.filter { actions.grouping(it.id) != null }.sortedBy { it.name.lowercase() } }
 
+    var favouritesDraft by remember { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(overviewDevices) { favouritesDraft = null }
+    val favouriteIds = favouritesDraft ?: overviewDevices
+    val favourites = remember(favouriteIds, snapshot.devices, hidden) {
+        val shown = DashboardLayout.visible(snapshot.devices, hidden)
+        favouriteIds.mapNotNull { shown[it] }
+    }
+
+    // Remembers the player that started last, so the media page opens on it.
+    var wasPlaying by remember { mutableStateOf(emptySet<String>()) }
+    val nowPlaying = remember(players) { players.filter { DashboardLayout.isPlaying(it) }.map { it.id }.toSet() }
+    LaunchedEffect(nowPlaying) {
+        (nowPlaying - wasPlaying).firstOrNull()?.let(display::setLastPlayer)
+        wasPlaying = nowPlaying
+    }
+
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showDevices by rememberSaveable { mutableStateOf(false) }
 
+    LaunchedEffect(destination) { actions.rearrange.done() }
     val roomId = destination.takeIf { it.startsWith(ROOM) }?.removePrefix(ROOM)
     val (backgroundKey, backgroundSpec) = backgroundFor(backgrounds, roomId)
     Crossfade(targetState = backgroundKey to backgroundSpec, animationSpec = tween(400), label = "backdrop") { (key, spec) ->
@@ -297,6 +349,7 @@ fun DashboardScreen(
             rooms = rooms,
             hasMoods = moods.isNotEmpty(),
             hasMedia = players.isNotEmpty(),
+            hasCalendar = hasCalendar,
             destination = destination,
             onNavigate = { destination = it },
             onSettings = { showSettings = true },
@@ -316,7 +369,14 @@ fun DashboardScreen(
                 ) { target ->
                     when {
                         target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
-                        target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty())
+                        target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
+                        target == CALENDAR -> CalendarScreen(
+                            hasPermission = hasCalendar,
+                            events = events,
+                            load = { from, until -> calendar.events(from, until) },
+                            onPermissionResult = calendar::permissionChanged,
+                            onChooseCalendars = { actions.open(Sheet.Calendars) },
+                        )
                         target.startsWith(ROOM) -> {
                             val id = target.removePrefix(ROOM)
                             val room = rooms.firstOrNull { it.zone.id == id }
@@ -324,7 +384,12 @@ fun DashboardScreen(
                                 // The room was deleted or emptied; go back home.
                                 LaunchedEffect(id) { destination = OVERVIEW }
                             } else {
-                                RoomScreen(room, sections, snapshot.zones, snapshot.moods, actions, hasMusic = speakers.isNotEmpty(), arrangement = arrangement)
+                                RoomScreen(
+                                    room, sections, snapshot.zones, snapshot.moods, actions,
+                                    hasMusic = speakers.isNotEmpty(),
+                                    arrangement = arrangement,
+                                    onCardOrder = display::setCardOrder,
+                                )
                             }
                         }
                         else -> OverviewScreen(
@@ -336,6 +401,21 @@ fun DashboardScreen(
                             actions = actions,
                             hasMusic = speakers.isNotEmpty(),
                             onRoom = { destination = ROOM + it },
+                            favourites = favourites,
+                            onMoveFavourite = { from, to ->
+                                val ids = favouriteIds.toMutableList()
+                                val at = ids.indexOf(to)
+                                if (at >= 0 && ids.remove(from)) {
+                                    ids.add(at, from)
+                                    favouritesDraft = ids
+                                }
+                            },
+                            canMoveRoom = { from, to -> DashboardLayout.moveTo(snapshot.zones, roomOrder, from, to) != null },
+                            onMoveRoom = { from, to -> DashboardLayout.moveTo(snapshot.zones, roomOrder, from, to)?.let { roomOrderDraft = it } },
+                            onDropped = {
+                                roomOrderDraft?.let(display::setRoomOrder)
+                                favouritesDraft?.let(display::setOverviewDevices)
+                            },
                             widgets = {
                                 WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                 CalendarCard(
@@ -345,6 +425,7 @@ fun DashboardScreen(
                                     onView = display::setCalendarView,
                                     onPermissionResult = calendar::permissionChanged,
                                     onChooseCalendars = { actions.open(Sheet.Calendars) },
+                                    onOpen = { destination = CALENDAR },
                                 )
                             },
                         )
@@ -445,6 +526,8 @@ fun DashboardScreen(
                 onOrder = display::setCardOrder,
                 onGroup = { display.setCardGroup(device.id, it) },
                 onHide = { display.setHidden(device.id, true) },
+                pinned = device.id in overviewDevices,
+                onPin = { display.pinToOverview(device.id, it) },
                 onDismiss = actions::close,
             )
         } ?: SideEffect { actions.close() }
@@ -459,6 +542,16 @@ fun DashboardScreen(
                 onDismiss = actions::close,
             )
         } ?: SideEffect { actions.close() }
+        Sheet.Goodnight -> GoodnightDialog(
+            devices = visibleDevices,
+            zones = snapshot.zones,
+            keep = goodnightKeep,
+            flow = goodnightFlow,
+            actions = actions,
+            onKeep = display::setGoodnightKeep,
+            onFlow = display::setGoodnightFlow,
+            onDismiss = actions::close,
+        )
         Sheet.Calendars -> CalendarsDialog(
             calendars = calendars,
             selected = chosenCalendars,
@@ -483,6 +576,7 @@ private fun Sidebar(
     rooms: List<RoomSummary>,
     hasMoods: Boolean,
     hasMedia: Boolean,
+    hasCalendar: Boolean,
     destination: String,
     onNavigate: (String) -> Unit,
     onSettings: () -> Unit,
@@ -533,6 +627,7 @@ private fun Sidebar(
         NavItem(Sym.spaceDashboard, "Overview", destination == OVERVIEW, compact = compact) { onNavigate(OVERVIEW) }
         if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS, compact = compact) { onNavigate(MOODS) }
         if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA, compact = compact) { onNavigate(MEDIA) }
+        if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {

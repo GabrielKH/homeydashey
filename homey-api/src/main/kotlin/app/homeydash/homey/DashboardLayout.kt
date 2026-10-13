@@ -196,6 +196,40 @@ object DashboardLayout {
         return ranked
     }
 
+    /**
+     * A new room order with [zoneId] dropped at [targetId]'s place among its siblings,
+     * or null when the two rooms aren't siblings.
+     */
+    fun moveTo(zones: Map<String, Zone>, order: List<String>, zoneId: String, targetId: String): List<String>? {
+        if (zoneId == targetId) return null
+        val siblings = siblings(zones, order, zoneId).map { it.id }.toMutableList()
+        if (targetId !in siblings) return null
+        val to = siblings.indexOf(targetId)
+        siblings.remove(zoneId)
+        siblings.add(to, zoneId)
+        val ranked = zoneTree(zones, order).map { it.first.id }.toMutableList()
+        // The siblings keep the places they had in the full order, now in their new sequence.
+        val slots = ranked.withIndex().filter { it.value in siblings }.map { it.index }
+        slots.zip(siblings).forEach { (slot, id) -> ranked[slot] = id }
+        return ranked
+    }
+
+    /** Whether a player is playing right now. */
+    fun isPlaying(device: Device): Boolean = device.capability("speaker_playing")?.booleanValue == true
+
+    /**
+     * The player the media page shows big: the one picked by hand, else the one that
+     * started playing last, else any that is playing, else the one that played last.
+     */
+    fun featuredPlayer(players: List<Device>, chosen: String?, last: String?): Device? {
+        players.firstOrNull { it.id == chosen }?.let { return it }
+        val playing = players.filter(::isPlaying)
+        return playing.firstOrNull { it.id == last }
+            ?: playing.firstOrNull()
+            ?: players.firstOrNull { it.id == last }
+            ?: players.firstOrNull()
+    }
+
     private fun siblingOrder(order: List<String>): Comparator<Zone> {
         val rank = order.withIndex().associate { it.value to it.index }
         return compareBy<Zone>({ rank[it.id] ?: Int.MAX_VALUE }, { it.name.lowercase() })

@@ -46,6 +46,22 @@ object CardLayout {
         return reordered.flatten()
     }
 
+    /**
+     * The section's new card order with [deviceId] dropped at [targetId]'s place, or null
+     * when the two cards are in different groups (a card is dragged only within its group).
+     */
+    fun moveTo(section: ZoneSection, arrangement: CardArrangement, deviceId: String, targetId: String): List<String>? {
+        if (deviceId == targetId) return null
+        val groups = groups(section, arrangement).map { group -> group.devices.map { it.id } }
+        val group = groups.firstOrNull { deviceId in it } ?: return null
+        if (targetId !in group) return null
+        val ids = group.toMutableList()
+        val to = ids.indexOf(targetId)
+        ids.remove(deviceId)
+        ids.add(to, deviceId)
+        return groups.flatMap { if (it === group) ids else it }
+    }
+
     /** Where a card sits in its group, to know whether it can move up or down. */
     fun position(section: ZoneSection, arrangement: CardArrangement, deviceId: String): Pair<Int, Int>? {
         val group = groups(section, arrangement).firstOrNull { g -> g.devices.any { it.id == deviceId } } ?: return null
