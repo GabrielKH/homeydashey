@@ -187,4 +187,12 @@ object Sym {
     val move = Ic(R.drawable.ph_arrows_out_cardinal, R.drawable.ph_arrows_out_cardinal_fill)
     val caretUpDown = Ic(R.drawable.ph_caret_up_down, R.drawable.ph_caret_up_down_fill)
     val calendarDots = Ic(R.drawable.ph_calendar_dots, R.drawable.ph_calendar_dots_fill)
+
+    // Assistant
+    val mic = Ic(R.drawable.ph_microphone, R.drawable.ph_microphone_fill)
+    val waveform = Ic(R.drawable.ph_waveform, R.drawable.ph_waveform_fill)
+    val face = Ic(R.drawable.ph_user_focus, R.drawable.ph_user_focus_fill)
+    val key = Ic(R.drawable.ph_key, R.drawable.ph_key_fill)
+    val send = Ic(R.drawable.ph_paper_plane_right, R.drawable.ph_paper_plane_right_fill)
+    val stop = Ic(R.drawable.ph_stop, R.drawable.ph_stop_fill)
 }

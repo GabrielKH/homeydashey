@@ -112,6 +112,10 @@ class HomeyStore(
 
     suspend fun flows(): List<HomeyFlow> = client.flows()
 
+    suspend fun users(): JsonElement = client.users()
+
+    suspend fun logicVariables(): JsonElement = client.logicVariables()
+
     /** Starts a Flow; failures show in the error banner. */
     suspend fun triggerFlow(flow: HomeyFlow) {
         try {

@@ -51,6 +51,12 @@ class HomeyClient(
 
     suspend fun moods(): Map<String, Mood> = get("api/manager/moods/mood")
 
+    /** Homey users with whether they are home; for the assistant, behind its "Who is home" switch. */
+    suspend fun users(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/users/user").get().build()))
+
+    /** Logic variables; for the assistant, behind its "Homey variables" switch. */
+    suspend fun logicVariables(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/logic/variable").get().build()))
+
     /** Where the Homey is (Settings → Location), or null when the key may not read it. */
     suspend fun location(): Pair<Double, Double>? {
         for (path in listOf("api/manager/geolocation/option/location", "api/manager/geolocation/state")) {
