@@ -160,4 +160,10 @@ object Sym {
     val apps = Ic(R.drawable.ph_squares_four, R.drawable.ph_squares_four_fill)
     val airplay = Ic(R.drawable.ph_airplay, R.drawable.ph_airplay_fill)
     val lampPendant = Ic(R.drawable.ph_lamp_pendant, R.drawable.ph_lamp_pendant_fill)
+    val search = Ic(R.drawable.ph_magnifying_glass, R.drawable.ph_magnifying_glass_fill)
+    val musicNotes = Ic(R.drawable.ph_music_notes, R.drawable.ph_music_notes_fill)
+    val playPause = Ic(R.drawable.ph_play_pause, R.drawable.ph_play_pause_fill)
+    val speakerHifi = Ic(R.drawable.ph_speaker_hifi, R.drawable.ph_speaker_hifi_fill)
+    val brightness = Ic(R.drawable.ph_sun_dim, R.drawable.ph_sun_dim_fill)
+    val thermometerSimple = Ic(R.drawable.ph_thermometer_simple, R.drawable.ph_thermometer_simple_fill)
 }

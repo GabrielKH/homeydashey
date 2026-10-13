@@ -82,6 +82,7 @@ private fun LevelTile(
     onTap: (() -> Unit)?,
     onLevel: ((Float) -> Unit)?,
     modifier: Modifier = Modifier,
+    onLongPress: (() -> Unit)? = null,
     content: @Composable ColumnScope.(shownLevel: Float, dragging: Boolean) -> Unit,
 ) {
     var drag by remember { mutableStateOf<Float?>(null) }
@@ -108,7 +109,7 @@ private fun LevelTile(
         modifier
             .fillMaxWidth()
             .height(TileHeight)
-            .pressable(onTap)
+            .pressable(onTap, onLongPress)
             .glass(TileShape)
             .then(gesture),
     ) {
@@ -145,20 +146,24 @@ private fun LightTile(device: Device, actions: DashboardActions, modifier: Modif
             if (!isOn && onoff?.setable == true) actions.set(device.id, "onoff", JsonPrimitive(true))
         }
     }
+    val colour = lightColor(device)
+    val openSheet = { actions.open(Sheet.Light(device.id)) }.takeIf { hasLightControls(device) && device.available }
     LevelTile(
         level = level,
-        fillColor = g.onSoft.copy(alpha = if (g.isDark) 0.30f else 0.42f),
+        fillColor = colour?.copy(alpha = if (g.isDark) 0.34f else 0.5f) ?: g.onSoft.copy(alpha = if (g.isDark) 0.30f else 0.42f),
         onTap = toggle?.takeIf { device.available },
         onLevel = setLevel?.takeIf { device.available },
         modifier = modifier,
+        onLongPress = openSheet,
     ) { shown, dragging ->
         val lit = isOn || dragging
         Row(verticalAlignment = Alignment.Top) {
-            Bubble(deviceIcon(device), on = lit)
+            Bubble(deviceIcon(device), on = lit, onColor = colour)
             Spacer(Modifier.weight(1f))
-            device.capability("measure_power")?.numberValue?.takeIf { lit && it > 0.5 }?.let {
+            device.capability("measure_power")?.numberValue?.takeIf { lit && it > 0.5 && openSheet == null }?.let {
                 Text(formatValue(device.capability("measure_power")!!), style = MaterialTheme.typography.bodyMedium, color = g.muted)
             }
+            openSheet?.let { RoundButton(Sym.sliders, it, size = 38.dp, filledIcon = false, contentDescription = "Adjust ${device.name}") }
         }
         Spacer(Modifier.weight(1f))
         TileTitle(device.name)

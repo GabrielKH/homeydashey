@@ -74,7 +74,7 @@ fun SetupScreen(onConnect: suspend (address: String, apiKey: String) -> Unit) {
             Text("Connect to your Homey", style = MaterialTheme.typography.headlineMedium, color = g.fg)
             Text(
                 "In the Homey web app, open Settings → API Keys and create a key that can view zones and " +
-                    "devices, control devices, and view and set moods. Your Homey's address is in " +
+                    "devices, control devices, view and set moods, and view and run Flows (for the Apple TV remote and Sonos music). Your Homey's address is in " +
                     "Settings → General, for example 192.168.1.20.",
                 color = g.muted,
                 style = MaterialTheme.typography.bodyLarge,

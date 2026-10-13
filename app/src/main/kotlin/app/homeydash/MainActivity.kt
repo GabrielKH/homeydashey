@@ -25,7 +25,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val themeMode by container.display.themeMode.collectAsStateWithLifecycle()
             val accent by container.display.accent.collectAsStateWithLifecycle()
-            HomeyDashTheme(themeMode, accent) {
+            val accentOpacity by container.display.accentOpacity.collectAsStateWithLifecycle()
+            HomeyDashTheme(themeMode, accent, accentOpacity) {
                 AppRoot(container)
             }
         }

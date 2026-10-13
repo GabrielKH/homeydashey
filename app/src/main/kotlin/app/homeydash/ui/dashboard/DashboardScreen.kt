@@ -1,8 +1,10 @@
 package app.homeydash.ui.dashboard
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -29,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,13 +47,21 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.homeydash.homey.AutocompleteItem
 import app.homeydash.homey.ConnectionState
+import app.homeydash.homey.FlowCardAction
+import app.homeydash.homey.FlowCards
+import app.homeydash.homey.MusicSource
+import app.homeydash.homey.RemoteKey
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.HomeyInfo
 import app.homeydash.homey.HomeyStore
 import app.homeydash.homey.Mood
 import app.homeydash.homey.RoomSummary
+import app.homeydash.ui.components.Backdrop
+import app.homeydash.ui.components.HOME_BACKGROUND
 import app.homeydash.ui.components.PillShape
+import app.homeydash.ui.components.backgroundFor
 import app.homeydash.ui.components.RoundButton
 import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
@@ -59,16 +70,62 @@ import app.homeydash.ui.components.glass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.components.zoneIcon
 import app.homeydash.ui.theme.GlassTheme
+import app.homeydash.data.Blur
 import app.homeydash.data.DisplaySettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+
+/** Album art, and a tiny blurred copy that is stretched behind the player. */
+class AlbumArtImages(val sharp: ImageBitmap, val blurred: ImageBitmap)
+
+/** A panel opened over the dashboard. */
+sealed interface Sheet {
+    data class Light(val deviceId: String) : Sheet
+    data class Remote(val deviceId: String) : Sheet
+    /** Music for a room ([zoneId]), or straight to one speaker ([deviceId]). */
+    data class Music(val zoneId: String?, val deviceId: String? = null) : Sheet
+    data class Background(val key: String, val title: String) : Sheet
+}
 
 /** Everything a card can do to the Homey. One instance per dashboard. */
 @Stable
 class DashboardActions(private val store: HomeyStore, private val scope: CoroutineScope) {
+    var sheet by mutableStateOf<Sheet?>(null)
+
+    /** Flow cards per device, kept in step with the store by the dashboard. */
+    var deviceCards by mutableStateOf<Map<String, List<FlowCardAction>>>(emptyMap())
+        internal set
+
+    fun open(sheet: Sheet) {
+        this.sheet = sheet
+    }
+
+    fun close() {
+        sheet = null
+    }
+
+    fun cards(deviceId: String): List<FlowCardAction> = deviceCards[deviceId].orEmpty()
+
+    fun remoteKeys(deviceId: String): Map<RemoteKey, FlowCardAction> = FlowCards.remoteKeys(cards(deviceId))
+
+    fun musicSources(deviceId: String): List<MusicSource> = FlowCards.musicSources(cards(deviceId))
+
+    fun run(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
+        scope.launch { store.runAction(card, args) }
+    }
+
+    suspend fun autocomplete(card: FlowCardAction, arg: String, query: String): List<AutocompleteItem> =
+        runCatching { store.autocomplete(card, arg, query) }.getOrElse {
+            store.reportError("Couldn't load the list: ${it.message}")
+            emptyList()
+        }
+
+    fun reportError(message: String) = store.reportError(message)
+
     /** The mood tapped last; Homey doesn't report an active mood, so the dashboard remembers it. */
     var lastMood by mutableStateOf<String?>(null)
         private set
@@ -86,6 +143,21 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
     fun setMood(mood: Mood) {
         lastMood = mood.id
         scope.launch { store.setMood(mood) }
+    }
+
+    private val arts = LruCache<String, AlbumArtImages>(6)
+
+    /** Album art with a softly blurred copy for the player's background. */
+    suspend fun loadArt(path: String, cacheKey: String): AlbumArtImages? {
+        arts.get(cacheKey)?.let { return it }
+        return runCatching {
+            val bytes = store.image(path)
+            withContext(Dispatchers.Default) {
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@withContext null
+                val small = Bitmap.createScaledBitmap(bitmap, 48, (48f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1), true)
+                AlbumArtImages(bitmap.asImageBitmap(), Blur.box(small, radius = 3, passes = 3).asImageBitmap())
+            }
+        }.getOrNull()?.also { arts.put(cacheKey, it) }
     }
 
     /** Album art and other Homey images, decoded off the main thread and kept for a few tracks. */
@@ -116,6 +188,10 @@ fun DashboardScreen(
     val connection by store.connection.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val actions = remember(store) { DashboardActions(store, scope) }
+    SideEffect { actions.deviceCards = snapshot.deviceCards }
+    val accent by display.accent.collectAsStateWithLifecycle()
+    val accentOpacity by display.accentOpacity.collectAsStateWithLifecycle()
+    val backgrounds by display.backgrounds.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val sections = remember(snapshot.zones, snapshot.devices, hidden) { DashboardLayout.sections(snapshot.zones, snapshot.devices, hidden) }
@@ -123,10 +199,18 @@ fun DashboardScreen(
     val players = remember(snapshot.devices, hidden) { DashboardLayout.mediaPlayers(snapshot.devices, hidden) }
     val moods = remember(snapshot.moods) { DashboardLayout.moods(snapshot.moods) }
     val homeName = remember(snapshot.zones) { snapshot.zones.values.firstOrNull { it.parent == null }?.name ?: "Home" }
+    val visibleDevices = remember(snapshot.devices, hidden) { DashboardLayout.visible(snapshot.devices, hidden).values }
+    val speakers = remember(visibleDevices, actions.deviceCards) { musicSpeakers(visibleDevices, actions) }
 
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showDevices by rememberSaveable { mutableStateOf(false) }
+
+    val roomId = destination.takeIf { it.startsWith(ROOM) }?.removePrefix(ROOM)
+    val (backgroundKey, backgroundSpec) = backgroundFor(backgrounds, roomId)
+    Crossfade(targetState = backgroundKey to backgroundSpec, animationSpec = tween(400), label = "backdrop") { (key, spec) ->
+        Backdrop(key, spec, display.photos)
+    }
 
     Row(
         Modifier
@@ -158,7 +242,7 @@ fun DashboardScreen(
                 ) { target ->
                     when {
                         target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
-                        target == MEDIA -> MediaScreen(players, snapshot.zones, actions)
+                        target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty())
                         target.startsWith(ROOM) -> {
                             val id = target.removePrefix(ROOM)
                             val room = rooms.firstOrNull { it.zone.id == id }
@@ -166,7 +250,7 @@ fun DashboardScreen(
                                 // The room was deleted or emptied; go back home.
                                 LaunchedEffect(id) { destination = OVERVIEW }
                             } else {
-                                RoomScreen(room, sections, snapshot.zones, snapshot.moods, actions)
+                                RoomScreen(room, sections, snapshot.zones, snapshot.moods, actions, hasMusic = speakers.isNotEmpty())
                             }
                         }
                         else -> OverviewScreen(
@@ -176,6 +260,7 @@ fun DashboardScreen(
                             zones = snapshot.zones,
                             connection = connection,
                             actions = actions,
+                            hasMusic = speakers.isNotEmpty(),
                             onRoom = { destination = ROOM + it },
                         )
                     }
@@ -192,6 +277,11 @@ fun DashboardScreen(
             info = info,
             themeMode = themeMode,
             onThemeMode = display::setThemeMode,
+            accent = accent,
+            onAccent = display::setAccent,
+            accentOpacity = accentOpacity,
+            onAccentOpacity = display::setAccentOpacity,
+            onHomeBackground = { showSettings = false; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
             onChooseDevices = { showSettings = false; showDevices = true },
             onForget = { showSettings = false; onForget() },
             onDismiss = { showSettings = false },
@@ -205,6 +295,20 @@ fun DashboardScreen(
             hiddenOnTablet = hiddenOnTablet,
             onSetHidden = display::setHidden,
             onDismiss = { showDevices = false },
+        )
+    }
+    when (val sheet = actions.sheet) {
+        null -> Unit
+        is Sheet.Light -> snapshot.devices[sheet.deviceId]?.let { LightSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
+        is Sheet.Remote -> snapshot.devices[sheet.deviceId]?.let { RemoteSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
+        is Sheet.Music -> MusicSheet(sheet.zoneId, sheet.deviceId, speakers, snapshot.zones, actions, actions::close)
+        is Sheet.Background -> BackgroundDialog(
+            key = sheet.key,
+            title = sheet.title,
+            current = backgrounds[sheet.key],
+            display = display,
+            onError = actions::reportError,
+            onDismiss = actions::close,
         )
     }
 }

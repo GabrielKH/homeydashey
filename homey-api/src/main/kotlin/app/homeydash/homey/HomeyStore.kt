@@ -112,6 +112,9 @@ class HomeyStore(
 
     fun clearError() = _snapshot.update { it.copy(error = null) }
 
+    /** Shows a message from the app itself in the error banner. */
+    fun reportError(message: String) = _snapshot.update { it.copy(error = message) }
+
     internal fun apply(event: HomeyEvent) {
         when (event) {
             is HomeyEvent.CapabilityChanged -> _snapshot.update { snap ->

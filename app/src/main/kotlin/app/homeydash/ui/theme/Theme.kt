@@ -121,27 +121,39 @@ private val GlassTypography = Typography(
     labelMedium = TextStyle(fontFamily = Inter, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.9.sp),
 )
 
-/** The highlight for things that are on: lights, the active mood, toggles. */
+/** The highlight for things that are on: a two-colour gradient for lights, the active mood, toggles. */
 enum class Accent(val label: String, val top: Color, val deep: Color, val ink: Color) {
-    Lavender("Lavender", Color(0xFFA5B4FF), Color(0xFF8B7BFF), Color(0xFF14123A)),
-    Sky("Sky", Color(0xFF8FD3FF), Color(0xFF4FA3FF), Color(0xFF06223D)),
-    Mint("Mint", Color(0xFF9BF0D0), Color(0xFF3CCB9A), Color(0xFF05301F)),
-    Rose("Rose", Color(0xFFFFB3C7), Color(0xFFFF7EA1), Color(0xFF3D0817)),
-    Warm("Warm white", Color(0xFFFFF1D6), Color(0xFFFFD8A0), Color(0xFF3A2606)),
+    Lavender("Lavender", Color(0xFFB8C2FF), Color(0xFF8B7BFF), Color(0xFF14123A)),
+    Sky("Sky", Color(0xFF9EDBFF), Color(0xFF4F8DFF), Color(0xFF06223D)),
+    Aqua("Aqua", Color(0xFF8EF1F1), Color(0xFF8E9BFF), Color(0xFF07253A)),
+    Mint("Mint", Color(0xFFB2F5D9), Color(0xFF3CCB9A), Color(0xFF05301F)),
+    Lime("Lime", Color(0xFFE4F79A), Color(0xFF8BD45C), Color(0xFF1C2E05)),
+    Rose("Rose", Color(0xFFFFC2D2), Color(0xFFFF7EA1), Color(0xFF3D0817)),
+    Sunset("Sunset", Color(0xFFFFC98B), Color(0xFFFF7E9B), Color(0xFF3A0D12)),
+    Warm("Warm white", Color(0xFFFFF4DE), Color(0xFFFFD39A), Color(0xFF3A2606)),
+    Frost("Frost", Color(0xFFFFFFFF), Color(0xFFCBD3E1), Color(0xFF15181F)),
 }
 
 @Composable
-fun HomeyDashTheme(mode: ThemeMode = ThemeMode.System, accent: Accent = Accent.Lavender, content: @Composable () -> Unit) {
+fun HomeyDashTheme(
+    mode: ThemeMode = ThemeMode.System,
+    accent: Accent = Accent.Lavender,
+    /** How solid the highlight is, 0.3–1. */
+    accentOpacity: Float = 1f,
+    content: @Composable () -> Unit,
+) {
     val dark = when (mode) {
         ThemeMode.System -> isSystemInDarkTheme()
         ThemeMode.Light -> false
         ThemeMode.Dark -> true
     }
+    val alpha = accentOpacity.coerceIn(0.3f, 1f)
     val glass = (if (dark) Dark else Light).copy(
-        on = accent.top,
-        onDeep = accent.deep,
-        onInk = accent.ink,
-        onSoft = accent.deep.copy(alpha = if (dark) 0.30f else 0.36f),
+        on = accent.top.copy(alpha = alpha),
+        onDeep = accent.deep.copy(alpha = alpha),
+        // See-through highlights let the glass show, so their ink follows the theme.
+        onInk = if (alpha < 0.65f) (if (dark) Color.White else Color(0xFF14161C)) else accent.ink,
+        onSoft = accent.deep.copy(alpha = (if (dark) 0.30f else 0.36f) * alpha),
     )
     val colors = if (dark) {
         darkColorScheme(primary = glass.onDeep, onPrimary = Color.White, surface = glass.wallBase, onSurface = glass.fg, background = glass.wallBase)

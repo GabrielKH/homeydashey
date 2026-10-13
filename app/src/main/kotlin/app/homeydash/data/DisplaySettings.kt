@@ -19,6 +19,7 @@ class DisplaySettings(
 ) {
     val themeMode: StateFlow<ThemeMode> = settings.themeMode.stateIn(scope, SharingStarted.Eagerly, ThemeMode.System)
     val accent: StateFlow<Accent> = settings.accent.stateIn(scope, SharingStarted.Eagerly, Accent.Lavender)
+    val accentOpacity: StateFlow<Float> = settings.accentOpacity.stateIn(scope, SharingStarted.Eagerly, 1f)
     val hiddenDevices: StateFlow<Set<String>> = settings.hiddenDevices.stateIn(scope, SharingStarted.Eagerly, emptySet())
     val backgrounds: StateFlow<Map<String, String>> = settings.backgrounds.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
@@ -28,6 +29,10 @@ class DisplaySettings(
 
     fun setAccent(accent: Accent) {
         scope.launch { settings.setAccent(accent) }
+    }
+
+    fun setAccentOpacity(opacity: Float) {
+        scope.launch { settings.setAccentOpacity(opacity) }
     }
 
     fun setHidden(deviceId: String, hidden: Boolean) {

@@ -2,6 +2,7 @@ package app.homeydash.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -64,6 +65,12 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[ACCENT] = accent.name }
     }
 
+    val accentOpacity: Flow<Float> = context.dataStore.data.map { it[ACCENT_OPACITY] ?: 1f }
+
+    suspend fun setAccentOpacity(opacity: Float) {
+        context.dataStore.edit { it[ACCENT_OPACITY] = opacity }
+    }
+
     /** Backgrounds by key ("home" or a zone id), as [BackgroundSpec] strings. */
     val backgrounds: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
         prefs.asMap().entries
@@ -82,6 +89,7 @@ class SettingsRepository(private val context: Context) {
     private companion object {
         const val BG_PREFIX = "bg_"
         val ACCENT = stringPreferencesKey("accent")
+        val ACCENT_OPACITY = floatPreferencesKey("accent_opacity")
 
         val ADDRESS = stringPreferencesKey("address")
         val API_KEY = stringPreferencesKey("api_key")

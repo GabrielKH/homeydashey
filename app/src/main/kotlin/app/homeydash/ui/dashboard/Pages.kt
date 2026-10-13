@@ -44,6 +44,7 @@ import app.homeydash.homey.Zone
 import app.homeydash.homey.ZoneSection
 import app.homeydash.ui.components.Bubble
 import app.homeydash.ui.components.GlassChip
+import app.homeydash.ui.components.HOME_BACKGROUND
 import app.homeydash.ui.components.PillShape
 import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
@@ -74,6 +75,7 @@ fun OverviewScreen(
     zones: Map<String, Zone>,
     connection: ConnectionState,
     actions: DashboardActions,
+    hasMusic: Boolean,
     onRoom: (String) -> Unit,
 ) {
     val g = GlassTheme.colors
@@ -109,6 +111,8 @@ fun OverviewScreen(
                         if (unlocked == 0) g.ok else g.danger,
                     )
                 }
+                if (hasMusic) MusicChip { actions.open(Sheet.Music(zoneId = null)) }
+                IconChip(Sym.image) { actions.open(Sheet.Background(HOME_BACKGROUND, "Home")) }
             }
         }
         if (moods.isNotEmpty()) MoodRow(moods, actions)
@@ -270,10 +274,12 @@ fun MoodsScreen(moods: List<Mood>, zones: Map<String, Zone>, actions: DashboardA
 // ---------------------------------------------------------------- Media
 
 @Composable
-fun MediaScreen(players: List<Device>, zones: Map<String, Zone>, actions: DashboardActions) {
+fun MediaScreen(players: List<Device>, zones: Map<String, Zone>, actions: DashboardActions, hasMusic: Boolean) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         val playing = players.count { it.capability("speaker_playing")?.booleanValue == true }
-        PageHeader(eyebrow = if (playing == 0) "Nothing playing" else "$playing playing", title = "Media")
+        PageHeader(eyebrow = if (playing == 0) "Nothing playing" else "$playing playing", title = "Media") {
+            if (hasMusic) MusicChip { actions.open(Sheet.Music(zoneId = null)) }
+        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(300.dp),
             horizontalArrangement = Arrangement.spacedBy(GridGap),
@@ -296,8 +302,10 @@ fun RoomScreen(
     zones: Map<String, Zone>,
     moods: Map<String, Mood>,
     actions: DashboardActions,
+    hasMusic: Boolean,
 ) {
     val g = GlassTheme.colors
+    val remote = remember(room.devices, actions.deviceCards) { room.devices.firstOrNull { actions.remoteKeys(it.id).isNotEmpty() } }
     val subtree = remember(zones, room.zone.id) { DashboardLayout.subtree(zones, room.zone.id) }
     val roomSections = remember(sections, subtree) { sections.filter { it.zone.id in subtree } }
     val roomMoods = remember(moods, room.zone.id) { DashboardLayout.moods(moods, room.zone.id) }
@@ -317,6 +325,9 @@ fun RoomScreen(
                     onClick = { actions.setAll(room.lights.map { it.id }, "onoff", JsonPrimitive(!anyOn)) },
                 )
             }
+            remote?.let { GlassChip(Sym.remote, "Remote", g.fg, onClick = { actions.open(Sheet.Remote(it.id)) }) }
+            if (hasMusic) MusicChip { actions.open(Sheet.Music(room.zone.id)) }
+            IconChip(Sym.image) { actions.open(Sheet.Background(room.zone.id, room.zone.name)) }
         }
         if (roomMoods.isNotEmpty()) MoodRow(roomMoods, actions)
         LazyVerticalGrid(
@@ -370,5 +381,24 @@ private fun PageHeader(eyebrow: String, title: String, chips: @Composable () -> 
             Text(title, style = MaterialTheme.typography.headlineLarge, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) { chips() }
+    }
+}
+
+@Composable
+private fun MusicChip(onClick: () -> Unit) {
+    GlassChip(Sym.musicNotes, "Music", GlassTheme.colors.fg, onClick = onClick)
+}
+
+/** A round glass header button with just an icon, e.g. the room's background picker. */
+@Composable
+private fun IconChip(icon: Ic, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(42.dp)
+            .pressable(onClick)
+            .glass(CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        SymIcon(icon, size = 20.dp)
     }
 }

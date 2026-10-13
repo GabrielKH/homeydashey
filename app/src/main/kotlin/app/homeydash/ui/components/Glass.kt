@@ -11,6 +11,9 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -39,6 +42,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import app.homeydash.ui.theme.GlassColors
 import app.homeydash.ui.theme.GlassTheme
 
@@ -214,4 +219,39 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
         color = GlassTheme.colors.muted,
         modifier = modifier.padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
     )
+}
+
+/** A floating glass panel over the dimmed dashboard, for lamps, the remote and music. */
+@Composable
+fun GlassDialog(
+    onDismiss: () -> Unit,
+    width: Dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val g = GlassTheme.colors
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier
+                .width(width)
+                .background(g.wallBase.copy(alpha = if (g.isDark) 0.94f else 0.96f), PanelShape)
+                .glass()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+            content = content,
+        )
+    }
+}
+
+/** Title row of a [GlassDialog], with a close button. */
+@Composable
+fun DialogHeader(title: String, subtitle: String?, onClose: () -> Unit, leading: (@Composable () -> Unit)? = null) {
+    val g = GlassTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        leading?.invoke()
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineMedium, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = g.muted, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        RoundButton(Sym.close, onClose, size = 44.dp, filledIcon = false)
+    }
 }

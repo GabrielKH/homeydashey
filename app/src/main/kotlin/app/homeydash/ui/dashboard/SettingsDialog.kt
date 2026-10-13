@@ -14,6 +14,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import app.homeydash.ui.components.Bubble
+import app.homeydash.ui.theme.Accent
 import app.homeydash.homey.HomeyInfo
 import app.homeydash.ui.components.PanelShape
 import app.homeydash.ui.components.PillShape
@@ -30,17 +43,24 @@ fun SettingsDialog(
     info: HomeyInfo,
     themeMode: ThemeMode,
     onThemeMode: (ThemeMode) -> Unit,
+    accent: Accent,
+    onAccent: (Accent) -> Unit,
+    accentOpacity: Float,
+    onAccentOpacity: (Float) -> Unit,
+    onHomeBackground: () -> Unit,
     onChooseDevices: () -> Unit,
     onForget: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val g = GlassTheme.colors
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
-                .width(460.dp)
+                .width(560.dp)
+                .heightIn(max = 760.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
@@ -75,6 +95,53 @@ fun SettingsDialog(
                     }
                 }
             }
+            Text("Highlight", style = MaterialTheme.typography.labelMedium, color = g.muted)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Accent.entries.forEach { option ->
+                    val selected = option == accent
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .pressable({ onAccent(option) })
+                            .border(if (selected) 3.dp else 0.dp, if (selected) g.fg else Color.Transparent, CircleShape)
+                            .padding(if (selected) 5.dp else 0.dp)
+                            .background(Brush.linearGradient(listOf(option.top, option.deep), Offset.Zero, Offset.Infinite), CircleShape),
+                    )
+                }
+            }
+            Text(accent.label, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Opacity", style = MaterialTheme.typography.labelLarge, color = g.fg)
+                GlassSlider(
+                    value = ((accentOpacity - 0.3f) / 0.7f).coerceIn(0f, 1f),
+                    onValue = { onAccentOpacity(0.3f + it * 0.7f) },
+                    modifier = Modifier.weight(1f),
+                )
+                Text(percent(accentOpacity), style = MaterialTheme.typography.labelLarge, color = g.fg)
+            }
+            // A preview of the highlight as it looks on lights and moods.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Bubble(Sym.lightbulb, on = true)
+                Bubble(Sym.autoAwesome, on = true)
+                Text("Lights that are on and the active mood use this.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(onHomeBackground)
+                    .glass(PillShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SymIcon(Sym.image, size = 20.dp)
+                Text("Home background", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
+            Text(
+                "Each room can have its own background: open the room and tap the picture button.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = g.muted,
+            )
             Text("Homey", style = MaterialTheme.typography.labelMedium, color = g.muted)
             Text(
                 listOfNotNull(info.homeyModelName ?: "Homey", info.homeyVersion?.let { "version $it" }).joinToString(", "),
