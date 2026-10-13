@@ -86,6 +86,7 @@ import app.homeydash.ui.assistant.AssistantSettingsDialog
 import app.homeydash.ui.assistant.FaceWatch
 import app.homeydash.ui.assistant.FacesDialog
 import app.homeydash.ui.assistant.WakeWatch
+import app.homeydash.ui.assistant.VoiceOverlay
 import androidx.compose.runtime.rememberUpdatedState
 import app.homeydash.data.Blur
 import app.homeydash.data.CalendarRepository
@@ -451,6 +452,8 @@ fun DashboardScreen(
             }
         }
     }
+    // While talking to the assistant, its face fills the whole screen.
+    if (assistantSettings.enabled) VoiceOverlay(assistant, assistantSettings)
 
     if (showSettings) {
         SettingsDialog(

@@ -22,6 +22,7 @@ import app.homeydash.agent.BrainMode
 import app.homeydash.agent.ChatClient
 import app.homeydash.agent.Connection
 import app.homeydash.agent.DashboardControl
+import app.homeydash.agent.FollowUp
 import app.homeydash.agent.HomeView
 import app.homeydash.agent.KnownPerson
 import app.homeydash.agent.PendingAction
@@ -29,6 +30,7 @@ import app.homeydash.agent.Role
 import app.homeydash.agent.Secret
 import app.homeydash.agent.StoreHomeControl
 import app.homeydash.agent.VoiceTrack
+import app.homeydash.agent.WakeName
 import app.homeydash.agent.WebSearch
 import app.homeydash.homey.Device
 import app.homeydash.homey.HomeyStore
@@ -55,10 +57,20 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val web = WebSearch(http)
     val voiceModels = VoiceModels(appContext, http, scope)
     val wake = WakeListener(voiceModels, scope)
+    /** Called when the assistant starts listening or ringing, so a dimmed screen lights up. */
+    var onActive: (() -> Unit)? = null
 }
 
 /** One line in the assistant's conversation. */
-data class Line(val fromUser: Boolean, val text: String, val error: Boolean = false, val brain: String? = null, val local: Boolean? = null)
+data class Line(
+    val fromUser: Boolean,
+    val text: String,
+    val error: Boolean = false,
+    val brain: String? = null,
+    val local: Boolean? = null,
+    /** Speech recognition lacks a language: the line offers a way to Android's speech settings. */
+    val speechSettings: Boolean = false,
+)
 
 /** A kitchen timer started by voice or by hand. */
 data class KitchenTimer(val id: Long, val label: String?, val endsAt: Long, val seconds: Int)
@@ -96,6 +108,15 @@ class Assistant(
         private set
     var partial by mutableStateOf("")
         private set
+    /** A spoken conversation is going on: after each answer it listens again for a while. */
+    var conversing by mutableStateOf(false)
+        private set
+    /** The last question was spoken, so the answer is followed by listening. */
+    private var lastByVoice by mutableStateOf(false)
+
+    /** Talking by voice right now: the face fills the screen. */
+    val voiceActive: Boolean
+        get() = state == AssistantState.Listening || conversing || (lastByVoice && state != AssistantState.Idle)
     val lines = mutableStateListOf<Line>()
     var pending by mutableStateOf<PendingAction?>(null)
         private set
@@ -104,6 +125,13 @@ class Assistant(
     private var job: Job? = null
     /** Who said the wake name last, and when; a known voice outranks the camera for a minute. */
     private var voice: Seen? = null
+    /** Until when questions are heard offline because Google's speech service didn't answer. */
+    private var offlineUntil = 0L
+    private var toldOffline = false
+    /** The offline model is hearing a question (it holds the microphone). */
+    private var dictating = false
+    /** When the conversation stops listening for a next question (elapsed realtime). */
+    private var conversationUntil = 0L
     private val settings: AgentSettings get() = services.settings.value
     private val home = StoreHomeControl(store) { store.snapshot.value.deviceCards }
 
@@ -124,25 +152,107 @@ class Assistant(
     fun listen() {
         services.output.stop()
         job?.cancel()
+        services.onActive?.invoke()
+        warmUp()
         open = true
         partial = ""
         state = AssistantState.Listening
         val local = settings.mode == BrainMode.Local
+        if (SystemClock.elapsedRealtime() < offlineUntil && listenOffline()) return
         services.input.start(settings.language, preferOnDevice = local, listener = object : SpeechInput.Listener {
             override fun onLevel(level: Float) = meter(floatArrayOf(level, level, level * 0.8f, level * 0.6f))
             override fun onPartial(text: String) { partial = text }
-            override fun onResult(text: String) {
-                level = 0f
-                partial = ""
-                if (text.isBlank()) state = AssistantState.Idle else send(text)
-            }
-            override fun onError(message: String) {
-                level = 0f
-                partial = ""
-                state = AssistantState.Idle
-                if (message.isNotBlank()) lines += Line(false, message, error = true)
+            override fun onResult(text: String) = heard(text)
+            override fun onError(message: String) = failed(message)
+            override fun onUnavailable(message: String) {
+                // Google's speech service is down or unreachable: hear this (and the next few) offline.
+                offlineUntil = SystemClock.elapsedRealtime() + OFFLINE_FOR_MS
+                if (!listenOffline()) failed(message)
             }
         })
+    }
+
+    /** Listens with the offline model (English only) when it's downloaded; false when it isn't. */
+    private fun listenOffline(): Boolean {
+        if (services.voiceModels.state.value != VoiceModels.State.Ready) return false
+        if (!toldOffline) {
+            toldOffline = true
+            lines += Line(false, "Google's speech service isn't answering, so I'm listening offline for now, in English only.")
+        }
+        dictating = true
+        services.wake.dictate(
+            onText = { text -> dictating = false; heard(text) },
+            onError = { message -> dictating = false; failed(message) },
+        )
+        return true
+    }
+
+    private fun heard(text: String) {
+        meter(FloatArray(4))
+        partial = ""
+        when {
+            text.isBlank() -> listenAgainOrRest()
+            // Just the name ("Hey Nova") during a conversation: still here, keep listening.
+            WakeName.heard(text, settings.wakeName) -> { keepConversation(); listenAgainOrRest() }
+            FollowUp.ends(text, settings.wakeName) -> endConversation()
+            else -> send(text, byVoice = true)
+        }
+    }
+
+    private fun failed(message: String) {
+        meter(FloatArray(4))
+        partial = ""
+        if (message.isNotBlank()) {
+            lines += Line(false, message, error = true, speechSettings = message == SpeechInput.MISSING_LANGUAGE)
+            endConversation()
+        } else {
+            // Nothing was said: keep listening while the conversation lasts.
+            listenAgainOrRest()
+        }
+    }
+
+    /** Loads a local model while the question is still being said, so the answer starts sooner. */
+    private fun warmUp() {
+        val local = settings.local?.takeIf { it.usable && settings.mode != BrainMode.Internet } ?: return
+        scope.launch { services.chat.warm(local) }
+    }
+
+    /** Listens again if the conversation is still open, otherwise goes quiet. */
+    private fun listenAgainOrRest() {
+        state = AssistantState.Idle
+        if (!conversing || SystemClock.elapsedRealtime() >= conversationUntil) {
+            endConversation()
+            return
+        }
+        job?.cancel()
+        job = scope.launch {
+            // Lets the recogniser release the microphone before it starts again.
+            delay(RELISTEN_GAP_MS)
+            if (conversing && state == AssistantState.Idle) listen()
+        }
+    }
+
+    /** Keeps listening for the next question, for as long as the owner chose. */
+    private fun keepConversation() {
+        val follow = settings.followUp
+        conversing = true
+        conversationUntil = when (follow) {
+            FollowUp.Always -> Long.MAX_VALUE
+            // A yes/no question gets a short window even when follow-up is off.
+            FollowUp.Off -> SystemClock.elapsedRealtime() + FollowUp.Short.ms
+            else -> SystemClock.elapsedRealtime() + follow.ms
+        }
+    }
+
+    private fun endConversation() {
+        conversing = false
+        conversationUntil = 0L
+        if (state == AssistantState.Listening) services.input.stop()
+        if (dictating) {
+            dictating = false
+            services.wake.stop()
+        }
+        state = AssistantState.Idle
     }
 
     /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
@@ -158,11 +268,17 @@ class Assistant(
 
     fun stopListening() {
         services.input.stop()
-        level = 0f
+        if (dictating) {
+            dictating = false
+            services.wake.stop()
+        }
+        meter(FloatArray(4))
+        conversing = false
+        conversationUntil = 0L
         if (state == AssistantState.Listening) state = AssistantState.Idle
     }
 
-    /** Stops whatever the assistant is doing. */
+    /** Stops whatever the assistant is doing, and ends the conversation. */
     fun stop() {
         stopListening()
         job?.cancel()
@@ -170,8 +286,16 @@ class Assistant(
         state = AssistantState.Idle
     }
 
-    fun send(text: String) {
+    fun send(text: String, byVoice: Boolean = false) {
         if (text.isBlank()) return
+        // Heard with the microphone left open after an answer: may be people talking, not a question.
+        val followUp = byVoice && conversing
+        lastByVoice = byVoice
+        // A typed question ends a spoken conversation.
+        if (!byVoice) {
+            conversing = false
+            conversationUntil = 0L
+        }
         open = true
         lines += Line(true, text.trim())
         job?.cancel()
@@ -183,7 +307,7 @@ class Assistant(
                     text.trim(), s,
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
-                    context = AskContext(speaker = speakerName(s), person = person),
+                    context = AskContext(speaker = speakerName(s), person = person, followUp = followUp),
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -242,13 +366,25 @@ class Assistant(
     }
 
     private suspend fun show(reply: AgentReply) {
+        if (reply.ignored) {
+            // Not meant for the assistant: drop what was heard and keep listening quietly.
+            if (lines.lastOrNull()?.fromUser == true) lines.removeAt(lines.lastIndex)
+            listenAgainOrRest()
+            return
+        }
         pending = services.agent.pending
         val brain: Connection? = reply.brain
         lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local)
         if (settings.speak && !reply.error) say(reply.text)
         state = AssistantState.Idle
-        // A yes/no question is answered by voice straight away.
-        if (pending?.tapOnly == false && settings.speakerId == null) listen()
+        // A spoken question, or a yes/no question, is followed by listening for the next one.
+        val yesNo = pending?.tapOnly == false
+        if (yesNo || (lastByVoice && settings.followUp != FollowUp.Off)) {
+            keepConversation()
+            listen()
+        } else {
+            conversing = false
+        }
     }
 
     /** Says [text] on the chosen speaker, or on the tablet when there is none or it fails. */
@@ -328,6 +464,7 @@ class Assistant(
     }
 
     private suspend fun ring(timer: KitchenTimer) {
+        services.onActive?.invoke()
         open = true
         val swedish = when (settings.language) {
             app.homeydash.agent.Language.Swedish -> true
@@ -351,5 +488,7 @@ class Assistant(
 
     private companion object {
         const val SPEAKER_DELAY_MS = 800L
+        const val RELISTEN_GAP_MS = 300L
+        const val OFFLINE_FOR_MS = 2 * 60 * 1000L
     }
 }

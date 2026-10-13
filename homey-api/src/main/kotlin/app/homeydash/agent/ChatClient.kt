@@ -63,6 +63,26 @@ class ChatClient(http: OkHttpClient) {
         }
     }
 
+    private var warmed = 0L
+
+    /**
+     * Loads a local Ollama model into memory ahead of the question, so the answer doesn't
+     * wait for it; called when the assistant starts listening. Other providers need nothing.
+     */
+    suspend fun warm(connection: Connection) = withContext(Dispatchers.IO) {
+        if (connection.provider != Provider.Ollama) return@withContext
+        val now = System.currentTimeMillis()
+        if (now - warmed < WARM_EVERY_MS) return@withContext
+        warmed = now
+        val base = connection.baseUrl.trimEnd('/').removeSuffix("/v1")
+        val body = buildJsonObject {
+            put("model", connection.model)
+            put("keep_alive", "2h")
+        }.toString()
+        val request = Request.Builder().url("$base/api/generate").post(body.toRequestBody(JSON)).build()
+        runCatching { localHttp.newCall(request).execute().close() }.onFailure { warmed = 0L }
+    }
+
     /** Checks a connection with a tiny question; returns null when it works, else what went wrong. */
     suspend fun test(connection: Connection): String? = try {
         complete(connection, listOf(ChatMessage.user("Reply with the word OK.")), emptyList())
@@ -73,6 +93,7 @@ class ChatClient(http: OkHttpClient) {
 
     companion object {
         private val JSON = "application/json".toMediaType()
+        private const val WARM_EVERY_MS = 5 * 60 * 1000L
         private val Lenient = Json { ignoreUnknownKeys = true; isLenient = true }
 
         /** [noThinking] turns off a local model's reasoning step, so spoken answers come quickly. */
@@ -130,7 +151,29 @@ class ChatClient(http: OkHttpClient) {
                 val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: "call_$i"
                 ToolCall(id, name, parseArguments(fn["arguments"]))
             }
+            if (calls.isEmpty() && content != null) {
+                // Small local models sometimes write the tool call as text instead of calling it.
+                val (written, rest) = callsInText(content)
+                if (written.isNotEmpty()) return ChatMessage("assistant", rest, written)
+            }
             return ChatMessage("assistant", content, calls)
+        }
+
+        private val TOOL_CALL_TAG = Regex("""<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>""")
+
+        /** Tool calls written into the answer text, as <tool_call>{…}</tool_call> or bare JSON, and the text left over. */
+        fun callsInText(content: String): Pair<List<ToolCall>, String> {
+            val tagged = TOOL_CALL_TAG.findAll(content).toList()
+            val raws = if (tagged.isNotEmpty()) tagged.map { it.groupValues[1] } else listOf(content.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim())
+            val calls = raws.mapIndexedNotNull { i, raw ->
+                val obj = runCatching { Lenient.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return@mapIndexedNotNull null
+                val fn = (obj["function"] as? JsonObject) ?: obj
+                val name = (fn["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapIndexedNotNull null
+                ToolCall("call_text_$i", name, parseArguments(fn["arguments"] ?: fn["parameters"]))
+            }
+            if (calls.isEmpty()) return emptyList<ToolCall>() to content
+            val rest = if (tagged.isNotEmpty()) content.replace(TOOL_CALL_TAG, "").trim() else ""
+            return calls to rest
         }
 
         /** Arguments arrive as a JSON string (OpenAI, Gemini) or an object (some Ollama versions). */

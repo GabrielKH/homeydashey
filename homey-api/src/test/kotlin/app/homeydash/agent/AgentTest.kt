@@ -86,12 +86,13 @@ class AgentTest {
     private fun call(name: String, vararg args: Pair<String, Any>) =
         ToolCall("c1", name, JsonObject(args.associate { (k, v) -> k to if (v is Number) JsonPrimitive(v) else JsonPrimitive(v.toString()) }))
 
-    @Test fun `secret devices and hidden devices stay out by default`() {
+    @Test fun `secret devices stay out, dashboard-hidden ones only when the owner says`() {
         val v = view()
-        assertEquals(setOf("Kitchen lamp", "Spots"), v.devices.map { it.name }.toSet())
+        assertEquals(setOf("Kitchen lamp", "Spots", "Secret plug"), v.devices.map { it.name }.toSet())
         assertFalse(v.describe().contains("Front door"))
-        assertFalse(v.describe().contains("Secret plug"))
         assertEquals(setOf("z-kitchen"), v.rooms.keys)
+        val strict = view(AgentSettings(seeHiddenDevices = false), hidden = setOf("d-spot"))
+        assertEquals(setOf("Kitchen lamp"), strict.devices.map { it.name }.toSet())
     }
 
     @Test fun `local only switches reach only the local brain`() {
@@ -120,7 +121,7 @@ class AgentTest {
 
     @Test fun `unknown and hidden devices are refused without touching Homey`() = runTest {
         val home = FakeHome()
-        val tools = AgentTools(view(), home, FakeDashboard())
+        val tools = AgentTools(view(AgentSettings(seeHiddenDevices = false)), home, FakeDashboard())
         val r = tools.run(call("set_device", "device" to "lock_1", "capability" to "locked", "value" to "false"))
         assertTrue(r.text.contains("can't see"))
         tools.run(call("set_device", "device" to "Secret plug", "capability" to "onoff", "value" to "true"))
@@ -307,7 +308,10 @@ class AgentTest {
         assertTrue(WakeName.heard("Hey Nova", "Nova"))
         assertTrue(WakeName.heard("nova", " nova! "))
         assertFalse(WakeName.heard("hey there", "Nova"))
-        assertEquals("[\"hey nova\",\"hi nova\",\"okay nova\",\"nova\",\"[unk]\"]", WakeName.grammar("Nova"))
+        assertEquals("[\"hey nova\",\"hi nova\",\"okay nova\",\"nova\",\"hello\",\"[unk]\"]", WakeName.grammar("Nova", setOf("hello", "nova")))
+        // Decoys never include the name itself.
+        assertEquals(1, Regex("\"max\"").findAll(WakeName.grammar("Max")).count())
+        assertTrue(WakeName.grammar("Nova").contains("\"noah\""))
         assertEquals(listOf("jarvizz"), WakeName.unknownWords("Jarvizz", setOf("hey", "nova")))
         assertTrue(WakeName.phrases("  ").isEmpty())
     }
@@ -380,5 +384,92 @@ class AgentTest {
         assertEquals(0f, track.at(800)[0])
         assertEquals(0f, track.at(5000)[0])
         assertNull(VoiceFx.readWav(ByteArray(10)))
+    }
+
+    @Test
+    fun `thanks and stop end a conversation, questions don't`() {
+        assertTrue(FollowUp.ends("Thanks!"))
+        assertTrue(FollowUp.ends("Tack så mycket"))
+        assertTrue(FollowUp.ends("ok stop"))
+        assertTrue(FollowUp.ends("that's all, Nova", "Nova"))
+        assertTrue(FollowUp.ends("Hej då"))
+        assertFalse(FollowUp.ends("stop the music"))
+        assertFalse(FollowUp.ends("thanks, turn off the lights"))
+        assertFalse(FollowUp.ends(""))
+    }
+
+    @Test
+    fun `mic sensitivity boosts gain and lowers the bar`() {
+        assertEquals(1f, MicSensitivity.gain(50), 1e-4f)
+        assertEquals(4f, MicSensitivity.gain(100), 1e-4f)
+        assertEquals(0.25f, MicSensitivity.gain(0), 1e-4f)
+        assertEquals(0.675, MicSensitivity.minConfidence(50), 1e-9)
+        assertTrue(MicSensitivity.minConfidence(100) < MicSensitivity.minConfidence(0))
+        assertEquals(4f, MicSensitivity.gain(250), 1e-4f)
+    }
+
+    @Test fun `names match loosely in Swedish and English`() {
+        assertTrue(NameMatch.score("lampan i köket", "Kök lampa", "Kök") > 1.0)
+        assertTrue(NameMatch.score("kökslampan", "Kök lampa") >= 1.0)
+        assertTrue(NameMatch.score("taklampan i hallen", "Taklampa", "Hall") > NameMatch.score("taklampan i hallen", "Taklampa", "Kök"))
+        assertEquals(0.0, NameMatch.score("tv", "Kök lampa", "Kök"), 0.0)
+        assertTrue(NameMatch.sameWord("vardagsrummet", "vardagsrum"))
+        assertTrue(NameMatch.sameWord("lampa", "lamoa"))
+        assertFalse(NameMatch.sameWord("hall", "bad"))
+    }
+
+    @Test fun `devices, rooms and capabilities are found from loose words`() = runTest {
+        val v = view()
+        assertEquals("Kitchen lamp", v.device("the kitchen lamp")?.name)
+        assertEquals("Kitchen lamp", v.device("LIGHT_1")?.name)
+        assertEquals("z-kitchen", v.room("the kitchen"))
+        assertEquals("Dinner", v.mood("dinner mood")?.mood?.name)
+        val home = FakeHome()
+        val tools = AgentTools(v, home, FakeDashboard())
+        tools.run(call("set_device", "device" to "kitchen lamp", "capability" to "brightness", "value" to "30"))
+        assertEquals(Triple("d-lamp", "dim", JsonPrimitive(0.3)), home.sets.single())
+        // Unclear names come back with suggestions instead of a guess.
+        val r = tools.run(call("set_device", "device" to "kitchen spot lamp", "capability" to "onoff", "value" to "on"))
+        assertTrue(r.text, r.text.contains("light_1") && r.text.contains("light_2"))
+        assertEquals(1, home.sets.size)
+        // Room-wide changes leave dashboard-hidden devices alone unless their class is named.
+        home.sets.clear()
+        tools.run(call("set_room", "room" to "kitchen", "capability" to "on", "value" to "false", "device_class" to "sockets"))
+        assertEquals(listOf("d-hidden"), home.sets.map { it.first })
+    }
+
+    @Test fun `talk not meant for the assistant is ignored in follow-ups`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"[ignore]"}}]}"""))
+        server.start()
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val reply = agent.ask("ja men jag ringer dig sen", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(followUp = true))
+        assertTrue(reply.ignored)
+        assertTrue(server.takeRequest().body.readUtf8().contains("reply with exactly [ignore]"))
+        server.shutdown()
+    }
+
+    @Test fun `tool calls written as text are still run`() {
+        val (calls, rest) = ChatClient.callsInText("""Okej. <tool_call>{"name":"set_device","arguments":{"device":"light_1","capability":"onoff","value":"true"}}</tool_call>""")
+        assertEquals("set_device", calls.single().name)
+        assertEquals("light_1", (calls.single().arguments["device"] as JsonPrimitive).content)
+        assertEquals("Okej.", rest)
+        assertEquals("set_room", ChatClient.callsInText("""{"name":"set_room","arguments":"{\"room\":\"kök\"}"}""").first.single().name)
+        assertTrue(ChatClient.callsInText("Lampan är tänd.").first.isEmpty())
+    }
+
+    @Test fun `a promise without a tool call gets one nudge`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"I'm going to turn on the kitchen lamp."}}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"a","type":"function","function":{"name":"set_device","arguments":"{\"device\":\"light_1\",\"capability\":\"onoff\",\"value\":\"true\"}"}}]}}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Done."}}]}"""))
+        server.start()
+        val home = FakeHome()
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val reply = Agent(ChatClient(OkHttpClient())).ask("turn on the kitchen lamp", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) })
+        assertEquals("Done.", reply.text)
+        assertEquals(Triple("d-lamp", "onoff", JsonPrimitive(true)), home.sets.single())
+        server.shutdown()
     }
 }

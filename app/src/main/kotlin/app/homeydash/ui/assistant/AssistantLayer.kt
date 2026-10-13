@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -107,7 +106,7 @@ fun BoxScope.AssistantLayer(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         AnimatedVisibility(
-            visible = assistant.open,
+            visible = assistant.open && !assistant.voiceActive,
             enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.92f, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)),
             exit = fadeOut(tween(120)) + scaleOut(targetScale = 0.92f, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)),
         ) {
@@ -217,15 +216,6 @@ private fun Panel(
             RoundButton(Sym.settings, onOpenSettings, size = 40.dp, filledIcon = false)
             RoundButton(Sym.close, { assistant.stop(); assistant.open = false }, size = 40.dp, filledIcon = false)
         }
-        AnimatedVisibility(visible = assistant.state != AssistantState.Idle) {
-            VoiceFace(
-                settings.face,
-                assistant.state,
-                levels = { VoiceLevels(assistant.level, assistant.low, assistant.mid, assistant.high) },
-                modifier = Modifier.fillMaxWidth().height(140.dp),
-                classicRed = settings.classicRed,
-            )
-        }
         SpeakerPicker(assistant, settings, onChooseSpeaker)
 
         val list = rememberLazyListState()
@@ -317,7 +307,8 @@ private fun SpeakerPicker(assistant: Assistant, settings: AgentSettings, onChoos
 @Composable
 private fun Bubble(line: Line, partial: Boolean = false) {
     val g = GlassTheme.colors
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (line.fromUser) Arrangement.End else Arrangement.Start) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.fromUser) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val shape = RoundedCornerShape(20.dp)
         Text(
             line.text,
@@ -332,7 +323,19 @@ private fun Bubble(line: Line, partial: Boolean = false) {
                 .then(if (line.fromUser) Modifier.background(g.fg.copy(alpha = if (partial) 0.55f else 0.9f), shape) else Modifier.glass(shape))
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         )
+        if (line.speechSettings) SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
     }
+}
+
+/** Opens Android's speech settings, where the recognition languages are added. */
+@Composable
+fun SpeechSettingsButton(onClick: () -> Unit) {
+    Text(
+        "Speech settings",
+        style = MaterialTheme.typography.labelLarge,
+        color = GlassTheme.colors.fg,
+        modifier = Modifier.pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+    )
 }
 
 @Composable

@@ -10,10 +10,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -40,8 +38,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.homeydash.ui.components.dialogSize
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.Role
@@ -73,71 +71,76 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                 .dialogSize(560.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("People", style = MaterialTheme.typography.headlineMedium, color = g.fg, modifier = Modifier.weight(1f))
                 RoundButton(Sym.close, onDismiss, size = 44.dp, filledIcon = false)
             }
-            Text(
-                "The tablet knows the people you add here by the front camera, and by their voice when they say the wake name, entirely on the tablet. " +
-                    "Only a numeric fingerprint of each face and voice is kept, encrypted; no pictures or recordings. It is for convenience, not a lock: a photo or a recording can fool it.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
-            )
-            if (settings.access(Secret.Faces) == Access.Off) {
+            // Only the content scrolls; the title and close button stay put.
+            Column(
+                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
                 Text(
-                    "Turn on \"Face and voice recognition\" under Security for the assistant to use it.",
+                    "The tablet knows the people you add here by the front camera, and by their voice when they say the wake name, entirely on the tablet. " +
+                        "Only a numeric fingerprint of each face and voice is kept, encrypted; no pictures or recordings. It is for convenience, not a lock: a photo or a recording can fool it.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = g.danger,
+                    color = g.muted,
                 )
-            }
-            val learning = people.firstOrNull { it.id == teaching }
-            if (learning != null) {
-                VoiceEnrol(services, settings, learning) { teaching = null }
-            } else if (adding) {
-                Enrol(services, onVoiceOnly = { id -> adding = false; teaching = id }) { adding = false }
-            } else {
-                people.forEach { p ->
-                    Column(Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            SymIcon(Sym.face, size = 22.dp)
-                            Text(p.name, style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
-                            Text("Remove", style = MaterialTheme.typography.labelLarge, color = g.danger, modifier = Modifier.pressable({ faces.remove(p.id) }).padding(8.dp))
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                listOfNotNull("Face".takeIf { p.samples.isNotEmpty() }, "Voice".takeIf { p.voice.isNotEmpty() })
-                                    .joinToString(" and ").ifEmpty { "Nothing learned yet" },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = g.muted,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                if (p.voice.isEmpty()) "Teach voice" else "Teach voice again",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = g.fg,
-                                modifier = Modifier.pressable({ teaching = p.id }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
-                            )
-                        }
-                        RoleChoice(p.role) { faces.setRole(p.id, it) }
-                    }
+                if (settings.access(Secret.Faces) == Access.Off) {
+                    Text(
+                        "Turn on \"Face and voice recognition\" under Security for the assistant to use it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = g.danger,
+                    )
                 }
-                Row(
-                    Modifier.fillMaxWidth().pressable({ adding = true }).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    SymIcon(Sym.add, size = 20.dp)
-                    Text("Add a person", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.padding(start = 10.dp))
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Strangers are guests", style = MaterialTheme.typography.labelLarge, color = g.fg)
-                        Text("Someone the tablet doesn't know only gets lights, music, climate, timers and weather.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                val learning = people.firstOrNull { it.id == teaching }
+                if (learning != null) {
+                    VoiceEnrol(services, settings, learning) { teaching = null }
+                } else if (adding) {
+                    Enrol(services, onVoiceOnly = { id -> adding = false; teaching = id }) { adding = false }
+                } else {
+                    people.forEach { p ->
+                        Column(Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                SymIcon(Sym.face, size = 22.dp)
+                                Text(p.name, style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                                Text("Remove", style = MaterialTheme.typography.labelLarge, color = g.danger, modifier = Modifier.pressable({ faces.remove(p.id) }).padding(8.dp))
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    listOfNotNull("Face".takeIf { p.samples.isNotEmpty() }, "Voice".takeIf { p.voice.isNotEmpty() })
+                                        .joinToString(" and ").ifEmpty { "Nothing learned yet" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = g.muted,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    if (p.voice.isEmpty()) "Teach voice" else "Teach voice again",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = g.fg,
+                                    modifier = Modifier.pressable({ teaching = p.id }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
+                                )
+                            }
+                            RoleChoice(p.role) { faces.setRole(p.id, it) }
+                        }
                     }
-                    Toggle(settings.strangersAreGuests, onClick = { services.settingsStore.update { it.copy(strangersAreGuests = !it.strangersAreGuests) } })
+                    Row(
+                        Modifier.fillMaxWidth().pressable({ adding = true }).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SymIcon(Sym.add, size = 20.dp)
+                        Text("Add a person", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.padding(start = 10.dp))
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Strangers are guests", style = MaterialTheme.typography.labelLarge, color = g.fg)
+                            Text("Someone the tablet doesn't know only gets lights, music, climate, timers and weather.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                        }
+                        Toggle(settings.strangersAreGuests, onClick = { services.settingsStore.update { it.copy(strangersAreGuests = !it.strangersAreGuests) } })
+                    }
                 }
             }
         }

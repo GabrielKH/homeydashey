@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -48,6 +47,7 @@ import app.homeydash.agent.AskContext
 import app.homeydash.agent.BrainMode
 import app.homeydash.agent.Connection
 import app.homeydash.agent.FaceStyle
+import app.homeydash.agent.FollowUp
 import app.homeydash.agent.VoiceStyle
 import app.homeydash.assistant.AssistantState
 import app.homeydash.agent.HomeView
@@ -90,11 +90,10 @@ fun AssistantSettingsDialog(
                 .dialogSize(620.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (page != "main") RoundButton(Sym.arrowBack, { page = "main" }, size = 44.dp, filledIcon = false)
                 Text(
                     when (page) { "devices" -> "Hidden from the assistant"; "preview" -> "What the assistant sees"; else -> "Assistant" },
@@ -105,12 +104,18 @@ fun AssistantSettingsDialog(
                 if (page == "main") Toggle(settings.enabled, onClick = { update { it.copy(enabled = !it.enabled) } })
                 RoundButton(Sym.close, onDismiss, size = 44.dp, filledIcon = false)
             }
-            when (page) {
-                "devices" -> HiddenDevices(zones, devices, hidden, settings) { id, hide ->
-                    update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
+            // Only the content scrolls; the title and close button stay put.
+            Column(
+                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                when (page) {
+                    "devices" -> HiddenDevices(services, zones, devices, hidden, settings) { id, hide ->
+                        update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
+                    }
+                    "preview" -> Preview(services, settings, preview)
+                    else -> Main(services, settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
                 }
-                "preview" -> Preview(services, settings, preview)
-                else -> Main(services, settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
             }
         }
     }
@@ -165,6 +170,23 @@ private fun Main(
 
     Label("Voice activation")
     WakeSettings(services, settings, update)
+    Text("Keep listening after an answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Segmented(FollowUp.entries, settings.followUp, { it.label }) { f -> update { it.copy(followUp = f) } }
+    Text(
+        settings.followUp.detail + " Say \"stop\", \"thanks\" or \"tack\" to end early.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            "The tablet's speech recognition needs Swedish and English. If it says a language is missing, add them in Android's speech settings.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+            modifier = Modifier.weight(1f),
+        )
+        SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
+    }
 
     Label("Voice")
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
@@ -236,7 +258,7 @@ private fun ConnectionFields(services: AssistantServices, connection: Connection
         )
         Text(
             result ?: when (connection.provider) {
-                Provider.Ollama -> "On the computer: install Ollama, run \"ollama pull ${connection.model}\", and on a Mac run \"launchctl setenv OLLAMA_HOST 0.0.0.0\" then restart Ollama so the tablet can reach it."
+                Provider.Ollama -> "On the computer: install Ollama, run \"ollama pull ${connection.model}\", and on a Mac run \"launchctl setenv OLLAMA_HOST 0.0.0.0\", \"launchctl setenv OLLAMA_CONTEXT_LENGTH 16384\" (room for all your devices) and \"launchctl setenv OLLAMA_KEEP_ALIVE 2h\" (stays loaded, answers faster), then restart Ollama."
                 Provider.Gemini -> "Get a key at aistudio.google.com."
                 Provider.OpenAI -> "Get a key at platform.openai.com."
             },
@@ -248,14 +270,19 @@ private fun ConnectionFields(services: AssistantServices, connection: Connection
 }
 
 @Composable
-private fun HiddenDevices(zones: Map<String, Zone>, devices: Map<String, Device>, hidden: Set<String>, settings: AgentSettings, onHide: (String, Boolean) -> Unit) {
+private fun HiddenDevices(services: AssistantServices, zones: Map<String, Zone>, devices: Map<String, Device>, hidden: Set<String>, settings: AgentSettings, onHide: (String, Boolean) -> Unit) {
     val g = GlassTheme.colors
     Text(
-        "Turn off devices the assistant shouldn't know about. Devices hidden on the dashboard, locks, alarms and cameras are already left out unless switched on under Security.",
+        "Turn off devices the assistant shouldn't know about. Locks, alarms and cameras are left out unless switched on under Security.",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
-    devices.values.filter { !it.hidden && it.id !in hidden }
+    SwitchRow(
+        "Also devices hidden on the dashboard",
+        "The assistant can find and control devices you've hidden on the dashboard or in the Homey app.",
+        settings.seeHiddenDevices,
+    ) { on -> services.settingsStore.update { it.copy(seeHiddenDevices = on) } }
+    devices.values.filter { settings.seeHiddenDevices || (!it.hidden && it.id !in hidden) }
         .groupBy { it.zone?.let { z -> zones[z]?.name } ?: "No room" }
         .toSortedMap()
         .forEach { (room, list) ->
