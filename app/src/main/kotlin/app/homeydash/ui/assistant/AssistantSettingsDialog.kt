@@ -168,6 +168,9 @@ private fun Main(
         color = g.muted,
     )
 
+    Label("Who hears your questions")
+    Hearing(services, settings, update)
+
     Label("Voice activation")
     WakeSettings(services, settings, update)
     Text("Keep listening after an answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
@@ -230,6 +233,73 @@ private fun Main(
     NavRow(Sym.face, "People: faces and voices", onFaces)
     NavRow(Sym.visibilityOff, "Hide devices from the assistant (${settings.hiddenDevices.size})", onDevices)
     NavRow(Sym.search, "What the assistant sees", onPreview)
+}
+
+/** Whisper on the computer and/or OpenAI turn questions into text instead of Google. */
+@Composable
+private fun Hearing(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    var result by remember { mutableStateOf<Pair<app.homeydash.agent.Hearer, String>?>(null) }
+    Text(
+        "With neither on, Android's speech recognition from Google hears your questions. With both on, Whisper is tried first and OpenAI when the computer doesn't answer.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    SwitchRow(
+        "Whisper on your computer",
+        "Best Swedish, free, and nothing leaves the house. Runs next to Ollama.",
+        settings.useWhisper,
+    ) { on -> update { it.copy(useWhisper = on) } }
+    if (settings.useWhisper) {
+        Field("Address", settings.whisperUrl.ifBlank { settings.whisperUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(whisperUrl = url) } }
+        HearingTest(app.homeydash.agent.Hearer.Whisper, result, "On the Mac: \"brew install whisper-cpp\", download a model, then run whisper-server with --host 0.0.0.0 --port 8080.") { h ->
+            result = h to "Testing…"
+            scope.launch { result = h to (services.transcriber.test(services.settings.value, h)?.let { "Didn't work: $it" } ?: "Works.") }
+        }
+    }
+    SwitchRow(
+        "OpenAI",
+        "ChatGPT-level hearing in Swedish and English, about 3 öre a minute. Your question's audio is sent to OpenAI.",
+        settings.useOpenAiSpeech,
+    ) { on -> update { it.copy(useOpenAiSpeech = on) } }
+    if (settings.useOpenAiSpeech) {
+        val brainKey = settings.internet?.takeIf { it.provider == Provider.OpenAI && it.apiKey.isNotBlank() } != null
+        Field("API key", settings.openAiSpeechKey, secret = true) { key -> update { it.copy(openAiSpeechKey = key) } }
+        HearingTest(
+            app.homeydash.agent.Hearer.OpenAI,
+            result,
+            if (brainKey) "Leave the key empty to use the internet AI's OpenAI key." else "Get a key at platform.openai.com.",
+        ) { h ->
+            result = h to "Testing…"
+            scope.launch { result = h to (services.transcriber.test(services.settings.value, h)?.let { "Didn't work: $it" } ?: "Works.") }
+        }
+    }
+}
+
+@Composable
+private fun HearingTest(
+    hearer: app.homeydash.agent.Hearer,
+    result: Pair<app.homeydash.agent.Hearer, String>?,
+    hint: String,
+    onTest: (app.homeydash.agent.Hearer) -> Unit,
+) {
+    val g = GlassTheme.colors
+    val text = result?.takeIf { it.first == hearer }?.second
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            "Test",
+            style = MaterialTheme.typography.labelLarge,
+            color = g.fg,
+            modifier = Modifier.pressable({ onTest(hearer) }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+        )
+        Text(
+            text ?: hint,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (text?.startsWith("Didn't") == true) g.danger else g.muted,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
 @Composable

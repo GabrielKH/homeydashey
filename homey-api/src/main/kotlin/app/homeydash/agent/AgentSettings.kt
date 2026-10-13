@@ -114,7 +114,23 @@ data class AgentSettings(
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
     val guest: Boolean = false,
+    /** Questions are heard by Whisper on your own computer (whisper.cpp's server) instead of Google. */
+    val useWhisper: Boolean = false,
+    /** Whisper's address; empty means the Ollama computer on port 8080. */
+    val whisperUrl: String = "",
+    /** Questions are heard by OpenAI instead of Google (after Whisper, when both are on). */
+    val useOpenAiSpeech: Boolean = false,
+    /** OpenAI key for hearing; empty means the internet brain's key when that is OpenAI. */
+    val openAiSpeechKey: String = "",
 ) {
+    /** Who hears questions, in order; empty means Android's own speech recognition. */
+    fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })
+
+    fun whisperUrlOrGuess(): String = whisperUrl.trim().ifBlank { Transcriber.guessUrl(local) }
+
+    fun openAiSpeechKeyOrBrain(): String =
+        openAiSpeechKey.trim().ifBlank { internet?.takeIf { it.provider == Provider.OpenAI }?.apiKey.orEmpty() }
+
     fun access(secret: Secret): Access = secrets[secret] ?: Access.Off
 
     /** Whether [secret] may be used by a brain that is local ([local] = true) or on the internet. */

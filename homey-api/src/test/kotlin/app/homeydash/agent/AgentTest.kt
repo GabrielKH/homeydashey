@@ -205,6 +205,49 @@ class AgentTest {
         assertTrue((body["tools"] as JsonArray).size > 5)
     }
 
+    @Test fun `the endpointer hears a question start and stop`() {
+        val e = Endpointer(16000, silenceMs = 500, noSpeechMs = 3000)
+        val quiet = ShortArray(1600) { ((it % 7) - 3).toShort() }
+        val loud = ShortArray(1600) { if (it % 2 == 0) 4000 else -4000 }
+        repeat(5) { assertEquals(Endpointer.State.Waiting, e.feed(quiet, quiet.size)) }
+        repeat(10) { e.feed(loud, loud.size) }
+        assertEquals(Endpointer.State.Speaking, e.state)
+        repeat(6) { e.feed(quiet, quiet.size) }
+        assertEquals(Endpointer.State.Done, e.state)
+
+        val silent = Endpointer(16000, noSpeechMs = 1000)
+        repeat(11) { silent.feed(quiet, quiet.size) }
+        assertEquals(Endpointer.State.NoSpeech, silent.state)
+    }
+
+    @Test fun `whisper's made-up words for silence count as nothing said`() {
+        assertEquals("", Transcriber.cleanUp(" Tack för att du tittade! "))
+        assertEquals("", Transcriber.cleanUp("[BLANK_AUDIO]"))
+        assertEquals("Tänd taklampan.", Transcriber.cleanUp(" Tänd taklampan. "))
+        assertEquals("http://192.168.1.2:8080", Transcriber.guessUrl(Connection(Provider.Ollama)))
+    }
+
+    @Test fun `questions are heard by whisper, then openai when whisper is off`() = runTest {
+        val whisper = MockWebServer().apply { start() }
+        val openai = MockWebServer().apply { start() }
+        whisper.enqueue(MockResponse().setBody("""{"text":" Sätt på taklampan."}"""))
+        openai.enqueue(MockResponse().setBody("""{"text":"Hej"}"""))
+        val t = Transcriber(OkHttpClient(), openai.url("/v1").toString().trimEnd('/'))
+        val both = AgentSettings(useWhisper = true, whisperUrl = whisper.url("/").toString(), useOpenAiSpeech = true, openAiSpeechKey = "k")
+        val heard = t.transcribe(both, ByteArray(100), "sv", "taklampan")
+        assertEquals(Heard("Sätt på taklampan.", Hearer.Whisper), heard)
+        val sent = whisper.takeRequest().body.readUtf8()
+        assertTrue(sent.contains("taklampan") && sent.contains("sv"))
+
+        whisper.shutdown()
+        val fallback = t.transcribe(both, ByteArray(100), null, "")
+        assertEquals(Hearer.OpenAI, fallback.by)
+        val request = openai.takeRequest()
+        assertEquals("/v1/audio/transcriptions", request.path)
+        assertEquals("Bearer k", request.getHeader("Authorization"))
+        openai.shutdown()
+    }
+
     @Test fun `voice fingerprints add up to a limit, newest kept`() {
         val first = List(FaceMatcher.MAX_VOICE) { floatArrayOf(1f, it.toFloat()) }
         val more = FaceMatcher.withVoice(first, listOf(floatArrayOf(0f, 2f)))

@@ -57,6 +57,9 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val web = WebSearch(http)
     val voiceModels = VoiceModels(appContext, http, scope)
     val wake = WakeListener(voiceModels, scope)
+    /** Records questions for Whisper or OpenAI, when they hear instead of Google. */
+    val recorder = SpeechRecorder()
+    val transcriber = app.homeydash.agent.Transcriber(http)
     /** Called when the assistant starts listening or ringing, so a dimmed screen lights up. */
     var onActive: (() -> Unit)? = null
 }
@@ -129,6 +132,10 @@ class Assistant(
     private var voice: Seen? = null
     /** Until when questions are heard offline because Google's speech service didn't answer. */
     private var offlineUntil = 0L
+    /** Until when Google hears questions because Whisper and OpenAI didn't answer. */
+    private var hearersDownUntil = 0L
+    /** A question is being recorded for Whisper or OpenAI (the recorder holds the microphone). */
+    private var recording = false
     /** Until when questions are heard as Swedish, because the last one was (elapsed realtime). */
     private var swedishUntil = 0L
     private var toldOffline = false
@@ -171,6 +178,10 @@ class Assistant(
             settings.language
         }
         val swedish = language == app.homeydash.agent.Language.Swedish
+        if (settings.hearers().isNotEmpty() && SystemClock.elapsedRealtime() >= hearersDownUntil) {
+            listenRecorded(language)
+            return
+        }
         if (!swedish && SystemClock.elapsedRealtime() < offlineUntil && listenOffline()) return
         services.input.start(language, preferOnDevice = local, listener = object : SpeechInput.Listener {
             override fun onLevel(level: Float) = meter(floatArrayOf(level, level, level * 0.8f, level * 0.6f))
@@ -183,6 +194,55 @@ class Assistant(
                 if (swedish || !listenOffline()) failed(message)
             }
         })
+    }
+
+    /**
+     * Records the question and has Whisper on the user's computer and/or OpenAI write it down,
+     * instead of Android's speech recognition. When neither answers, Google hears the next
+     * questions for a couple of minutes.
+     */
+    private fun listenRecorded(language: app.homeydash.agent.Language) {
+        recording = true
+        val s = settings
+        services.recorder.record(
+            gain = app.homeydash.agent.MicSensitivity.gain(s.micSensitivity),
+            onLevel = { l -> meter(floatArrayOf(l, l, l * 0.8f, l * 0.6f)) },
+            onDone = done@{ wav ->
+                recording = false
+                if (wav == null) {
+                    heard("")
+                    return@done
+                }
+                partial = "…"
+                val code = when (language) {
+                    app.homeydash.agent.Language.Swedish -> "sv"
+                    app.homeydash.agent.Language.English -> "en"
+                    else -> null
+                }
+                job?.cancel()
+                job = scope.launch {
+                    val text = try {
+                        services.transcriber.transcribe(s, wav, code, hint(s)).text
+                    } catch (e: java.io.IOException) {
+                        if (state != AssistantState.Listening) return@launch
+                        hearersDownUntil = SystemClock.elapsedRealtime() + OFFLINE_FOR_MS
+                        failed("Couldn't make out the question (${e.message}). Google's speech recognition hears the next few.")
+                        return@launch
+                    }
+                    if (state == AssistantState.Listening) heard(text)
+                },
+            },
+            onError = { message ->
+                recording = false
+                failed(message)
+            },
+        )
+    }
+
+    /** Names worth expecting in a question: the wake name, rooms and devices. */
+    private fun hint(s: AgentSettings): String {
+        val v = runCatching { view(s, true) }.getOrNull() ?: return s.wakeName
+        return (listOf(s.wakeName) + v.rooms.values + v.devices.map { it.name }).distinct().joinToString(", ").take(HINT_CHARS)
     }
 
     /** Listens with the offline model (English only) when it's downloaded; false when it isn't. */
@@ -268,6 +328,10 @@ class Assistant(
             dictating = false
             services.wake.stop()
         }
+        if (recording) {
+            recording = false
+            services.recorder.stop()
+        }
         state = AssistantState.Idle
     }
 
@@ -287,6 +351,10 @@ class Assistant(
         if (dictating) {
             dictating = false
             services.wake.stop()
+        }
+        if (recording) {
+            recording = false
+            services.recorder.stop()
         }
         meter(FloatArray(4))
         conversing = false
@@ -507,5 +575,6 @@ class Assistant(
         const val RELISTEN_GAP_MS = 300L
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
+        const val HINT_CHARS = 400
     }
 }

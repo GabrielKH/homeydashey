@@ -62,6 +62,10 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         face = enumOr(p[FACE], FaceStyle.Orb),
         voice = enumOr(p[VOICE], VoiceStyle.Natural),
         classicRed = p[CLASSIC_RED] == "true",
+        useWhisper = p[USE_WHISPER] == "true",
+        whisperUrl = p[WHISPER_URL].orEmpty(),
+        useOpenAiSpeech = p[USE_OPENAI_SPEECH] == "true",
+        openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
     )
 
     private fun write(p: MutablePreferences, s: AgentSettings) {
@@ -85,6 +89,10 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[FACE] = s.face.name
         p[VOICE] = s.voice.name
         p[CLASSIC_RED] = s.classicRed.toString()
+        p[USE_WHISPER] = s.useWhisper.toString()
+        p[WHISPER_URL] = s.whisperUrl.trim()
+        p[USE_OPENAI_SPEECH] = s.useOpenAiSpeech.toString()
+        p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
     }
 
     private fun connection(p: Preferences, slot: String): Connection? {
@@ -126,6 +134,10 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val FACE = stringPreferencesKey("face")
         val VOICE = stringPreferencesKey("voice")
         val CLASSIC_RED = stringPreferencesKey("classic_red")
+        val USE_WHISPER = stringPreferencesKey("use_whisper")
+        val WHISPER_URL = stringPreferencesKey("whisper_url")
+        val USE_OPENAI_SPEECH = stringPreferencesKey("use_openai_speech")
+        val OPENAI_SPEECH_KEY = stringPreferencesKey("openai_speech_key")
 
         inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
             name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default
