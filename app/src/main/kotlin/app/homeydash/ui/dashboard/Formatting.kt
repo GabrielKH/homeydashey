@@ -37,3 +37,26 @@ fun stepTo(capability: Capability, direction: Int): Double? {
     val max = capability.max ?: Double.POSITIVE_INFINITY
     return next.coerceIn(min, max)
 }
+
+/** A number capability's value as 0–1 of its range (dim, volume, blind position). */
+fun fraction(capability: Capability): Float? {
+    val value = capability.numberValue ?: return null
+    val min = capability.min ?: 0.0
+    val max = capability.max ?: 1.0
+    if (max <= min) return null
+    return ((value - min) / (max - min)).toFloat().coerceIn(0f, 1f)
+}
+
+/** The capability value for a 0–1 [fraction] of its range, snapped to its step. */
+fun valueAt(capability: Capability, fraction: Float): Double {
+    val min = capability.min ?: 0.0
+    val max = capability.max ?: 1.0
+    val raw = min + (max - min) * fraction.coerceIn(0f, 1f)
+    val step = capability.step?.takeIf { it > 0 } ?: return raw
+    return (round((raw - min) / step) * step + min).coerceIn(min, max)
+}
+
+fun percent(fraction: Float): String = "${round(fraction * 100).toInt()}%"
+
+/** "21.5°" for temperatures on cards, where the unit is obvious. */
+fun shortTemperature(value: Double): String = String.format(Locale.getDefault(), "%.1f°", value)

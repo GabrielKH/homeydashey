@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Homey is often reached by its LAN IP over plain HTTP, and Android can't scope
-     cleartext to private IP ranges, so cleartext is allowed app-wide. The app only
-     ever talks to the Homey address the user entered. -->
+     cleartext to private IP ranges, so cleartext is allowed app-wide. The app talks to
+     the Homey, to Homeys it looks for on the local network, and to GitHub (HTTPS) for updates. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

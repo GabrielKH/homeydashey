@@ -1,0 +1,108 @@
+package app.homeydash.agent
+
+import app.homeydash.homey.FlowCardAction
+import app.homeydash.homey.FlowCards
+import app.homeydash.homey.HomeyFlow
+import app.homeydash.homey.HomeyStore
+import app.homeydash.homey.Mood
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import java.time.LocalDate
+
+/** A Homey user, for "who is home". */
+data class HomeyPerson(val name: String, val present: Boolean?, val asleep: Boolean?)
+
+/** A Homey Logic variable. */
+data class LogicVariable(val name: String, val type: String, val value: JsonElement)
+
+/** What the assistant may do to the Homey. Everything goes through the Homey Web API. */
+interface HomeControl {
+    suspend fun setCapability(deviceId: String, capability: String, value: JsonElement)
+    suspend fun setMood(mood: Mood)
+    suspend fun flows(): List<HomeyFlow>
+    suspend fun triggerFlow(flow: HomeyFlow)
+    suspend fun people(): List<HomeyPerson>
+    suspend fun variables(): List<LogicVariable>
+    /** Plays the first match for [query] from the player's favourites, playlists or radio; returns its name. */
+    suspend fun playMusic(deviceId: String, query: String): String?
+}
+
+/** One calendar event as the assistant sees it. */
+data class AgentEvent(val title: String, val start: String, val end: String?, val allDay: Boolean, val location: String?)
+
+/** What the assistant may do to the dashboard on the tablet. */
+interface DashboardControl {
+    /** Opens `overview`, `moods`, `media`, `calendar`, or a room by id. */
+    fun openPage(page: String, roomId: String? = null): Boolean
+    fun openDevice(deviceId: String): Boolean
+    /** What Goodnight would switch off now, in words. */
+    fun goodnightPreview(): String
+    fun goodnight()
+    suspend fun weather(): String?
+    suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent>
+    fun startTimer(seconds: Int, label: String?)
+    fun cancelTimer(label: String?): Boolean
+    fun timers(): List<String>
+    fun setTheme(mode: String): Boolean
+}
+
+/** [HomeControl] on top of the dashboard's [HomeyStore], so changes show on the cards at once. */
+class StoreHomeControl(
+    private val store: HomeyStore,
+    private val cards: () -> Map<String, List<FlowCardAction>>,
+) : HomeControl {
+    override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) =
+        store.setCapability(deviceId, capability, value)
+
+    override suspend fun setMood(mood: Mood) = store.setMood(mood)
+
+    override suspend fun flows(): List<HomeyFlow> = store.flows()
+
+    override suspend fun triggerFlow(flow: HomeyFlow) = store.triggerFlow(flow)
+
+    override suspend fun people(): List<HomeyPerson> = parsePeople(store.users())
+
+    override suspend fun variables(): List<LogicVariable> = parseVariables(store.logicVariables())
+
+    override suspend fun playMusic(deviceId: String, query: String): String? {
+        for (source in FlowCards.musicSources(cards()[deviceId].orEmpty())) {
+            val items = runCatching {
+                if (source.arg.type == "dropdown") FlowCards.dropdownItems(source.arg) else store.autocomplete(source.card, source.arg.name, query)
+            }.getOrDefault(emptyList())
+            val match = items.firstOrNull { it.name.equals(query, ignoreCase = true) }
+                ?: items.firstOrNull { it.name.contains(query, ignoreCase = true) }
+                ?: items.takeIf { source.arg.type == "autocomplete" && query.isNotBlank() }?.firstOrNull()
+                ?: continue
+            store.runAction(source.card, JsonObject(mapOf(source.arg.name to FlowCards.argValue(source.arg, match))))
+            return match.name
+        }
+        return null
+    }
+
+    companion object {
+        /** Parses `GET /api/manager/users/user`. */
+        fun parsePeople(json: JsonElement): List<HomeyPerson> =
+            values(json).mapNotNull { u ->
+                val name = (u["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+                HomeyPerson(name, (u["present"] as? JsonPrimitive)?.booleanOrNull, (u["asleep"] as? JsonPrimitive)?.booleanOrNull)
+            }.sortedBy { it.name.lowercase() }
+
+        /** Parses `GET /api/manager/logic/variable`. */
+        fun parseVariables(json: JsonElement): List<LogicVariable> =
+            values(json).mapNotNull { v ->
+                val name = (v["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+                LogicVariable(name, (v["type"] as? JsonPrimitive)?.contentOrNull ?: "string", v["value"] ?: JsonNull)
+            }.sortedBy { it.name.lowercase() }
+
+        private fun values(json: JsonElement): List<JsonObject> = when (json) {
+            is JsonObject -> json.values.filterIsInstance<JsonObject>()
+            is JsonArray -> json.filterIsInstance<JsonObject>()
+            else -> emptyList()
+        }
+    }
+}

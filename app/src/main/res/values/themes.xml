@@ -1,5 +1,5 @@
 <resources>
     <style name="Theme.HomeyDash" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">#FFEEF1F7</item>
     </style>
 </resources>

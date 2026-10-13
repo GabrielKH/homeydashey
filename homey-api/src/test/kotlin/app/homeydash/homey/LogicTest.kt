@@ -1,11 +1,14 @@
 package app.homeydash.homey
 
 import kotlinx.coroutines.test.TestScope
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -38,6 +41,57 @@ class LogicTest {
         assertEquals(listOf("Kitchen", "Living room", "Other"), sections.map { it.zone.name })
         assertEquals(listOf("Coffee machine", "Kitchen lamp"), sections[0].devices.map { it.name })
         assertEquals(1, sections[0].depth)
+    }
+
+    @Test fun `rooms can be hidden and reordered`() {
+        val kitchen = zones.values.first { it.name == "Kitchen" }.id
+        val living = zones.values.first { it.name == "Living room" }.id
+        val hidden = DashboardLayout.sections(zones, devices, hiddenZones = setOf(kitchen))
+        assertEquals(listOf("Living room", "Other"), hidden.map { it.zone.name })
+
+        val order = DashboardLayout.move(zones, emptyList(), living, -1)
+        assertEquals(listOf("Living room", "Kitchen", "Other"), DashboardLayout.sections(zones, devices, order = order).map { it.zone.name })
+        // Moving the first sibling up changes nothing.
+        val first = DashboardLayout.siblings(zones, order, living).first().id
+        assertEquals(order, DashboardLayout.move(zones, order, first, -1))
+        assertTrue(DashboardLayout.zoneTree(zones, order).any { it.first.id == kitchen })
+    }
+
+    @Test fun `devices hidden in Homey stay off the dashboard`() {
+        val all = DashboardLayout.sections(zones, devices).flatMap { it.devices }.map { it.id }
+        assertFalse("d-hidden" in all)
+        assertTrue(devices.getValue("d-hidden").hidden)
+        val alsoHidden = DashboardLayout.sections(zones, devices, hidden = setOf("d-plug")).flatMap { it.devices }.map { it.id }
+        assertFalse("d-plug" in alsoHidden)
+    }
+
+    @Test fun `user properties can hide devices`() {
+        val user: JsonObject = HomeyJson.decodeFromString(
+            """{"name": "Gabriel", "properties": {"hiddenDevices": ["d-plug", 3], "deviceHidden": {"d-lamp": true, "d-temp": false}, "favoriteDevices": ["d-temp"]}}""",
+        )
+        assertEquals(setOf("d-plug", "d-lamp"), hiddenDeviceIds(user))
+        assertEquals(emptySet<String>(), hiddenDeviceIds(JsonObject(emptyMap())))
+    }
+
+    @Test fun `room summaries count lights and read climate`() {
+        val rooms = DashboardLayout.rooms(DashboardLayout.sections(zones, devices))
+        val kitchen = rooms.first { it.zone.id == "z-kitchen" }
+        assertEquals(listOf("d-lamp"), kitchen.lights.map { it.id })
+        assertEquals(1, kitchen.lightsOn)
+        assertEquals(21.5, rooms.first { it.zone.id == "z-living" }.temperature)
+        assertEquals(listOf("Home"), DashboardLayout.parents(zones, "z-kitchen").map { it.name })
+        assertEquals(setOf("z-home", "z-kitchen", "z-living", "z-attic"), DashboardLayout.subtree(zones, "z-home"))
+    }
+
+    @Test fun `moods parse and filter by zone`() {
+        val moods: Map<String, Mood> = HomeyJson.decodeFromString(Fixtures.moods)
+        assertEquals(listOf("Cooking", "Movie"), DashboardLayout.moods(moods).map { it.name })
+        assertEquals(listOf("Cooking"), DashboardLayout.moods(moods, "z-kitchen").map { it.name })
+        val changed = HomeyRealtime.parseEvent(
+            HomeyRealtime.MOODS_URI, "mood.update",
+            buildJsonObject { put("id", "m-cook"); put("name", "Cook"); put("zone", "z-kitchen") },
+        )
+        assertEquals(HomeyEvent.MoodChanged(Mood("m-cook", "Cook", "z-kitchen")), changed)
     }
 
     @Test fun `socket events become typed events`() {

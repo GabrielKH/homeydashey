@@ -1,6 +1,13 @@
 package app.homeydash
 
 import android.content.Context
+import app.homeydash.assistant.AssistantServices
+import app.homeydash.data.AppUpdater
+import app.homeydash.data.BackgroundPhotos
+import app.homeydash.data.CalendarRepository
+import app.homeydash.data.WeatherRepository
+import app.homeydash.data.DisplaySettings
+import app.homeydash.data.HomeyDiscovery
 import app.homeydash.data.SavedHomey
 import app.homeydash.data.SettingsRepository
 import app.homeydash.homey.HomeyConnectException
@@ -15,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -38,10 +46,28 @@ class AppContainer(context: Context) {
     private val settings = SettingsRepository(context)
     private val connector = HomeyConnector(http)
 
+    val discovery = HomeyDiscovery(context, http)
+    val updater = AppUpdater(context, http)
+    val calendar = CalendarRepository(context, settings, scope)
+
+    val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
+
+    val assistant = AssistantServices(context, http, scope)
+
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
 
+    val weather = WeatherRepository(context, http, settings, scope) {
+        (_session.value as? SessionState.Ready)?.store?.location()
+    }
+
     init {
+        scope.launch {
+            while (true) {
+                updater.check()
+                delay(UPDATE_CHECK_MS)
+            }
+        }
         scope.launch {
             val saved = settings.saved.first()
             if (saved == null) _session.value = SessionState.NeedsSetup else open(saved)
@@ -79,6 +105,8 @@ class AppContainer(context: Context) {
     private fun start(ready: SessionState.Ready) {
         ready.store.start()
         _session.value = ready
+        // The weather may use the Homey's location, known only now.
+        weather.refresh()
     }
 
     private fun HomeySession.newStore(saved: SavedHomey) = SessionState.Ready(
@@ -86,3 +114,5 @@ class AppContainer(context: Context) {
         info = info,
     )
 }
+
+private const val UPDATE_CHECK_MS = 3 * 60 * 60 * 1000L

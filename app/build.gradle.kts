@@ -14,16 +14,32 @@ android {
         applicationId = "app.homeydash"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI numbers each build, so a newer APK installs over the one on the tablet.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "0.2.$build"
+    }
+
+    signingConfigs {
+        // One key for every build, so updates install over the old app instead of
+        // needing it removed first. It is a sideload-only kiosk app; swap in a key
+        // kept outside the repo before ever publishing it.
+        create("shared") {
+            storeFile = file("signing/homeydash.jks")
+            storePassword = "homeydash"
+            keyAlias = "homeydash"
+            keyPassword = "homeydash"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("shared")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the debug key until there is a release key; this is a sideloaded kiosk app.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("shared")
         }
     }
 
@@ -34,10 +50,16 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+
+    // The face model is memory-mapped straight from the APK.
+    androidResources {
+        noCompress += "tflite"
     }
 }
 
@@ -56,6 +78,16 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.datastore.preferences)
+
+    // Assistant: on-device face recognition.
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.mlkit.face.detection)
+    implementation(libs.tensorflow.lite)
+    // Wake name and voice recognition, offline. Vosk calls its native library through JNA,
+    // which must be the Android (aar) build.
+    implementation(libs.vosk.android) { exclude(group = "net.java.dev.jna") }
+    implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
