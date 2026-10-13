@@ -54,6 +54,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.homeydash.ui.components.DialogHeightShare
+import app.homeydash.ui.components.screenSizeDp
 import app.homeydash.data.PartWear
 import app.homeydash.data.VacuumUsage
 import app.homeydash.homey.AutocompleteItem
@@ -219,9 +221,10 @@ fun VacuumSheet(device: Device, actions: DashboardActions, onDismiss: () -> Unit
     val controls = remember(device, cards) { Vacuums.controls(device, cards) }
     val usage = VacuumUsage.get(context)
     val counted by usage.usage.collectAsState()
-    val screen = LocalConfiguration.current
-    val width = (screen.screenWidthDp - 64).coerceIn(480, 1280).dp
-    val height = (screen.screenHeightDp * 0.78f - 90f).coerceAtLeast(360f).dp
+    val screen = screenSizeDp()
+    val width = (screen.width - 64.dp).coerceIn(480.dp, 1280.dp)
+    // The panel's padding, header and gaps take about 140dp of its height.
+    val height = (screen.height * DialogHeightShare - 140.dp).coerceAtLeast(300.dp)
     var choice by remember { mutableStateOf<VacuumChoiceCard?>(null) }
 
     GlassDialog(onDismiss = onDismiss, width = width) {
