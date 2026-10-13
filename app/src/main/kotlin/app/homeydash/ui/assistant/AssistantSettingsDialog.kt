@@ -177,6 +177,16 @@ private fun Main(
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            "The tablet's speech recognition needs Swedish and English. If it says a language is missing, add them in Android's speech settings.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+            modifier = Modifier.weight(1f),
+        )
+        SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
+    }
 
     Label("Voice")
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }

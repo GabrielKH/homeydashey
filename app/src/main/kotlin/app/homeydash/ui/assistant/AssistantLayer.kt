@@ -307,7 +307,8 @@ private fun SpeakerPicker(assistant: Assistant, settings: AgentSettings, onChoos
 @Composable
 private fun Bubble(line: Line, partial: Boolean = false) {
     val g = GlassTheme.colors
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (line.fromUser) Arrangement.End else Arrangement.Start) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.fromUser) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val shape = RoundedCornerShape(20.dp)
         Text(
             line.text,
@@ -322,7 +323,19 @@ private fun Bubble(line: Line, partial: Boolean = false) {
                 .then(if (line.fromUser) Modifier.background(g.fg.copy(alpha = if (partial) 0.55f else 0.9f), shape) else Modifier.glass(shape))
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         )
+        if (line.speechSettings) SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
     }
+}
+
+/** Opens Android's speech settings, where the recognition languages are added. */
+@Composable
+fun SpeechSettingsButton(onClick: () -> Unit) {
+    Text(
+        "Speech settings",
+        style = MaterialTheme.typography.labelLarge,
+        color = GlassTheme.colors.fg,
+        modifier = Modifier.pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+    )
 }
 
 @Composable

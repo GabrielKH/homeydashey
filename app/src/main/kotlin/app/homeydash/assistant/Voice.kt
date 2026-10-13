@@ -108,8 +108,7 @@ class SpeechInput(private val context: Context) {
                         SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> ""
                         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The assistant needs the microphone permission."
                         SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the network."
-                        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
-                            "Speech recognition on this tablet has no Swedish or English. Install \"Speech Recognition & Synthesis from Google\" from the Play Store, then add the languages under Android Settings, then Speech."
+                        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> MISSING_LANGUAGE
                         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy."
                         else -> "Speech recognition failed ($error)."
                     },
@@ -125,6 +124,28 @@ class SpeechInput(private val context: Context) {
     fun stop() {
         recognizer?.destroy()
         recognizer = null
+    }
+
+    companion object {
+        const val MISSING_LANGUAGE =
+            "Speech recognition on this tablet has no Swedish or English yet. Tap \"Speech settings\" and add them there."
+
+        /**
+         * Opens where the tablet's speech recognition and its languages are set up: the
+         * voice input screen, else the language and input screen, else Settings.
+         */
+        fun openSettings(context: Context) {
+            val intents = listOf(
+                Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS),
+                Intent("com.android.settings.VOICE_INPUT_SETTINGS"),
+                Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS),
+                Intent(android.provider.Settings.ACTION_SETTINGS),
+            )
+            for (i in intents) {
+                val ok = runCatching { context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+                if (ok) return
+            }
+        }
     }
 
     private fun best(bundle: Bundle?): String =

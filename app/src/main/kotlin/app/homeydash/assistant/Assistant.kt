@@ -62,7 +62,15 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
 }
 
 /** One line in the assistant's conversation. */
-data class Line(val fromUser: Boolean, val text: String, val error: Boolean = false, val brain: String? = null, val local: Boolean? = null)
+data class Line(
+    val fromUser: Boolean,
+    val text: String,
+    val error: Boolean = false,
+    val brain: String? = null,
+    val local: Boolean? = null,
+    /** Speech recognition lacks a language: the line offers a way to Android's speech settings. */
+    val speechSettings: Boolean = false,
+)
 
 /** A kitchen timer started by voice or by hand. */
 data class KitchenTimer(val id: Long, val label: String?, val endsAt: Long, val seconds: Int)
@@ -162,7 +170,7 @@ class Assistant(
                 meter(FloatArray(4))
                 partial = ""
                 if (message.isNotBlank()) {
-                    lines += Line(false, message, error = true)
+                    lines += Line(false, message, error = true, speechSettings = message == SpeechInput.MISSING_LANGUAGE)
                     endConversation()
                 } else {
                     // Nothing was said: keep listening while the conversation lasts.
