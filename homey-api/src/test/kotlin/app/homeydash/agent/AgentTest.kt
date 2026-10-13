@@ -205,6 +205,14 @@ class AgentTest {
         assertTrue((body["tools"] as JsonArray).size > 5)
     }
 
+    @Test fun `local requests turn thinking off every way Ollama understands`() {
+        val body = ChatClient.requestBody("q", listOf(ChatMessage("system", "Be brief."), ChatMessage.user("Hej")), emptyList(), noThinking = true)
+        assertEquals("none", body["reasoning_effort"]!!.jsonPrimitive.content)
+        assertEquals("false", body["think"]!!.jsonPrimitive.content)
+        assertTrue(body["messages"]!!.jsonArray[0].jsonObject["content"]!!.jsonPrimitive.content.endsWith("/no_think"))
+        assertNull(ChatClient.requestBody("m", listOf(ChatMessage("system", "x")), emptyList())["think"])
+    }
+
     @Test fun `smart mode falls back to the internet when the PC is off and hides local-only turns from it`() = runTest {
         val server = MockWebServer().apply { start() }
         val internet = Connection(Provider.OpenAI, baseUrl = server.url("/v1").toString(), apiKey = "k", model = "m")

@@ -96,12 +96,22 @@ class ChatClient(http: OkHttpClient) {
         private const val WARM_EVERY_MS = 5 * 60 * 1000L
         private val Lenient = Json { ignoreUnknownKeys = true; isLenient = true }
 
-        /** [noThinking] turns off a local model's reasoning step, so spoken answers come quickly. */
+        /**
+         * [noThinking] turns off a local model's reasoning step, so spoken answers come quickly.
+         * It's said three ways, since Ollama versions and models each listen to a different one:
+         * `reasoning_effort`, Ollama's own `think`, and Qwen's `/no_think` in the system prompt.
+         */
         fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>, noThinking: Boolean = false): JsonObject = buildJsonObject {
             put("model", model)
             put("temperature", 0.3)
-            if (noThinking) put("reasoning_effort", "none")
-            put("messages", buildJsonArray { messages.forEach { add(encode(it)) } })
+            if (noThinking) {
+                put("reasoning_effort", "none")
+                put("think", false)
+            }
+            val sent = if (!noThinking) messages else messages.mapIndexed { i, m ->
+                if (i == 0 && m.role == "system") m.copy(content = m.content.orEmpty() + "\n\n/no_think") else m
+            }
+            put("messages", buildJsonArray { sent.forEach { add(encode(it)) } })
             if (tools.isNotEmpty()) {
                 put("tools", buildJsonArray {
                     tools.forEach { t ->
