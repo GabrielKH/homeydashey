@@ -2,7 +2,7 @@ package app.homeydash.agent
 
 /** Where an AI model runs. Ollama is on a computer at home; the others are on the internet. */
 enum class Provider(val label: String, val defaultUrl: String, val defaultModel: String, val local: Boolean) {
-    Ollama("Ollama (your PC)", "http://192.168.1.2:11434/v1", "qwen3:8b", local = true),
+    Ollama("Ollama (your computer)", "http://192.168.1.2:11434/v1", "qwen3.5:9b", local = true),
     Gemini("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", local = false),
     OpenAI("OpenAI", "https://api.openai.com/v1", "gpt-4.1-mini", local = false),
 }

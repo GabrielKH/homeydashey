@@ -135,16 +135,16 @@ private fun Main(
     Segmented(BrainMode.entries, settings.mode, { it.label }) { m -> update { it.copy(mode = m) } }
     Text(
         when (settings.mode) {
-            BrainMode.Smart -> "Your PC first. When it's off or can't answer, the internet AI takes over. " +
-                "For things it doesn't know, like news or opening hours, your PC asks the internet AI with web search, sending only the question."
-            BrainMode.Local -> "Only Ollama on your PC. Nothing leaves the house, except speech recognition when the tablet can't do it on its own."
+            BrainMode.Smart -> "Your computer first. When it's off or can't answer, the internet AI takes over. " +
+                "For things it doesn't know, like news or opening hours, your computer asks the internet AI with web search, sending only the question."
+            BrainMode.Local -> "Only Ollama on your computer. Nothing leaves the house, except speech recognition when the tablet can't do it on its own."
             BrainMode.Internet -> "Only Gemini or OpenAI, which can search the web."
         },
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
 
-    Label("Local AI: Ollama on your PC")
+    Label("Local AI: Ollama on your computer")
     val local = settings.local ?: Connection(Provider.Ollama)
     ConnectionFields(services, local, showKey = false) { c -> update { it.copy(local = c) } }
 
@@ -236,7 +236,7 @@ private fun ConnectionFields(services: AssistantServices, connection: Connection
         )
         Text(
             result ?: when (connection.provider) {
-                Provider.Ollama -> "On the PC: install Ollama, run \"ollama pull ${connection.model}\", and set OLLAMA_HOST=0.0.0.0 so the tablet can reach it."
+                Provider.Ollama -> "On the computer: install Ollama, run \"ollama pull ${connection.model}\", and on a Mac run \"launchctl setenv OLLAMA_HOST 0.0.0.0\" then restart Ollama so the tablet can reach it."
                 Provider.Gemini -> "Get a key at aistudio.google.com."
                 Provider.OpenAI -> "Get a key at platform.openai.com."
             },

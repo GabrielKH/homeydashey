@@ -49,7 +49,7 @@ class ChatClient(http: OkHttpClient) {
     private val cloudHttp = http.newBuilder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 
     suspend fun complete(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>): ChatMessage = withContext(Dispatchers.IO) {
-        val body = requestBody(connection.model, messages, tools).toString()
+        val body = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama).toString()
         val request = Request.Builder()
             .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
             .apply { if (connection.apiKey.isNotBlank()) header("Authorization", "Bearer ${connection.apiKey}") }
@@ -75,9 +75,11 @@ class ChatClient(http: OkHttpClient) {
         private val JSON = "application/json".toMediaType()
         private val Lenient = Json { ignoreUnknownKeys = true; isLenient = true }
 
-        fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>): JsonObject = buildJsonObject {
+        /** [noThinking] turns off a local model's reasoning step, so spoken answers come quickly. */
+        fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>, noThinking: Boolean = false): JsonObject = buildJsonObject {
             put("model", model)
             put("temperature", 0.3)
+            if (noThinking) put("reasoning_effort", "none")
             put("messages", buildJsonArray { messages.forEach { add(encode(it)) } })
             if (tools.isNotEmpty()) {
                 put("tools", buildJsonArray {
