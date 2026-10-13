@@ -28,6 +28,7 @@ import app.homeydash.agent.PendingAction
 import app.homeydash.agent.Role
 import app.homeydash.agent.Secret
 import app.homeydash.agent.StoreHomeControl
+import app.homeydash.agent.VoiceTrack
 import app.homeydash.agent.WebSearch
 import app.homeydash.homey.Device
 import app.homeydash.homey.HomeyStore
@@ -87,6 +88,12 @@ class Assistant(
         private set
     var level by mutableFloatStateOf(0f)
         private set
+    var low by mutableFloatStateOf(0f)
+        private set
+    var mid by mutableFloatStateOf(0f)
+        private set
+    var high by mutableFloatStateOf(0f)
+        private set
     var partial by mutableStateOf("")
         private set
     val lines = mutableStateListOf<Line>()
@@ -122,7 +129,7 @@ class Assistant(
         state = AssistantState.Listening
         val local = settings.mode == BrainMode.Local
         services.input.start(settings.language, preferOnDevice = local, listener = object : SpeechInput.Listener {
-            override fun onLevel(level: Float) { this@Assistant.level = level }
+            override fun onLevel(level: Float) = meter(floatArrayOf(level, level, level * 0.8f, level * 0.6f))
             override fun onPartial(text: String) { partial = text }
             override fun onResult(text: String) {
                 level = 0f
@@ -250,25 +257,53 @@ class Assistant(
         val s = settings
         val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
         if (speaker != null && sayOn(speaker.second, text, s)) return
-        services.output.speak(text, s.language)
+        services.output.speak(text, s.language, s.voice, ::meter)
+    }
+
+    /** The voice's level and its low, middle and high parts, for the face. */
+    private fun meter(frame: FloatArray) {
+        level = frame[0]
+        low = frame[1]
+        mid = frame[2]
+        high = frame[3]
     }
 
     private suspend fun sayOn(card: AnnounceCard, text: String, s: AgentSettings): Boolean = try {
+        var spoken: Spoken? = null
         val content = when (card.kind) {
             AnnounceCard.Kind.Text -> text
             AnnounceCard.Kind.Url -> {
                 val file = File(services.appContext.cacheDir, "answer.wav")
-                if (!services.output.toFile(text, s.language, file)) null else services.server.publish(file)
+                spoken = services.output.render(text, s.language, s.voice, file)
+                spoken?.let { services.server.publish(it.file) }
             }
         }
         if (content == null) false else {
             store.runAction(card.card, card.args(content, s.speakerVolume))
+            // Move along with the speaker; it starts after a short buffer.
+            spoken?.let { follow(it.track, startAfterMs = SPEAKER_DELAY_MS) }
             true
         }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         false
+    }
+
+    /** Plays [track] on the face by the clock, for answers that play on another speaker. */
+    private suspend fun follow(track: VoiceTrack, startAfterMs: Long) {
+        try {
+            delay(startAfterMs)
+            val start = SystemClock.elapsedRealtime()
+            while (true) {
+                val at = SystemClock.elapsedRealtime() - start
+                if (at > track.durationMs) break
+                meter(track.at(at))
+                delay(16)
+            }
+        } finally {
+            meter(FloatArray(4))
+        }
     }
 
     // Kitchen timers
@@ -312,5 +347,9 @@ class Assistant(
         }
         say(text)
         state = AssistantState.Idle
+    }
+
+    private companion object {
+        const val SPEAKER_DELAY_MS = 800L
     }
 }

@@ -12,6 +12,16 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import app.homeydash.agent.Confirmation
 import app.homeydash.agent.Language
+import app.homeydash.agent.VoiceFx
+import app.homeydash.agent.VoiceStyle
+import app.homeydash.agent.VoiceTrack
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.net.Inet4Address
@@ -91,11 +101,16 @@ class SpeechInput(private val context: Context) {
     }
 }
 
-/** Speaks answers with Android's text-to-speech, on the tablet or into a file for a speaker. */
+/** A spoken answer ready to play: the sound file and how loud it is moment by moment. */
+class Spoken(val file: File, val track: VoiceTrack)
+
+/** Speaks answers with Android's text-to-speech, in one of the voice styles, on the tablet or into a file for a speaker. */
 class SpeechOutput(context: Context) {
+    private val appContext = context.applicationContext
     private var ready = false
     private val done = mutableMapOf<String, () -> Unit>()
-    private val tts: TextToSpeech = TextToSpeech(context.applicationContext) { status -> ready = status == TextToSpeech.SUCCESS }
+    private val tts: TextToSpeech = TextToSpeech(appContext) { status -> ready = status == TextToSpeech.SUCCESS }
+    @Volatile private var player: MediaPlayer? = null
 
     init {
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -110,19 +125,34 @@ class SpeechOutput(context: Context) {
         })
     }
 
-    private fun prepare(text: String, language: Language) {
+    private fun prepare(text: String, language: Language, voice: VoiceStyle) {
         val locale = when (language) {
             Language.Swedish -> SWEDISH
             Language.English -> Locale.UK
             Language.Auto -> if (Confirmation.looksSwedish(text)) SWEDISH else Locale.UK
         }
         if (tts.setLanguage(locale) < TextToSpeech.LANG_AVAILABLE) tts.setLanguage(Locale.getDefault())
+        tts.setPitch(voice.pitch)
+        tts.setSpeechRate(voice.rate)
     }
 
-    /** Speaks on the tablet; returns when it has finished. */
-    suspend fun speak(text: String, language: Language) {
+    /**
+     * Speaks on the tablet and returns when it has finished. [onFrame] gets the voice's
+     * level, low, mid and high (0..1) about 60 times a second while it plays.
+     */
+    suspend fun speak(text: String, language: Language, voice: VoiceStyle = VoiceStyle.Natural, onFrame: (FloatArray) -> Unit = {}) {
         if (!ready || text.isBlank()) return
-        prepare(text, language)
+        val spoken = render(text, language, voice, File(appContext.cacheDir, "say.wav"))
+        if (spoken == null) {
+            plain(text, language, voice)
+            return
+        }
+        play(spoken, onFrame)
+    }
+
+    /** The plain engine, when the voice can't be made into a file. */
+    private suspend fun plain(text: String, language: Language, voice: VoiceStyle) {
+        prepare(text, language, voice)
         suspendCancellableCoroutine { cont ->
             val id = UUID.randomUUID().toString()
             synchronized(done) { done[id] = { if (cont.isActive) cont.resume(Unit) } }
@@ -131,19 +161,60 @@ class SpeechOutput(context: Context) {
         }
     }
 
-    fun stop() = tts.stop()
+    private suspend fun play(spoken: Spoken, onFrame: (FloatArray) -> Unit) {
+        val finished = CompletableDeferred<Unit>()
+        val p = MediaPlayer()
+        player = p
+        try {
+            p.setAudioAttributes(
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build(),
+            )
+            p.setDataSource(spoken.file.path)
+            p.setOnCompletionListener { finished.complete(Unit) }
+            p.setOnErrorListener { _, _, _ -> finished.complete(Unit); true }
+            p.prepare()
+            p.start()
+            while (!finished.isCompleted) {
+                onFrame(spoken.track.at(runCatching { p.currentPosition.toLong() }.getOrDefault(0L)))
+                delay(16)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Nothing to play; the answer is still shown as text.
+        } finally {
+            onFrame(FloatArray(4))
+            runCatching { p.stop() }
+            p.release()
+            if (player === p) player = null
+        }
+    }
 
-    /** Writes the spoken answer to a WAV file, for a speaker to play. */
-    suspend fun toFile(text: String, language: Language, file: File): Boolean {
-        if (!ready || text.isBlank()) return false
-        prepare(text, language)
-        return suspendCancellableCoroutine { cont ->
+    fun stop() {
+        tts.stop()
+        player?.let { runCatching { it.stop() } }
+    }
+
+    /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
+    suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
+        if (!ready || text.isBlank()) return null
+        val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
+        prepare(text, language, voice)
+        val made = suspendCancellableCoroutine { cont ->
             val id = UUID.randomUUID().toString()
-            synchronized(done) { done[id] = { if (cont.isActive) cont.resume(file.length() > 0) } }
-            if (tts.synthesizeToFile(text, Bundle(), file, id) != TextToSpeech.SUCCESS) {
+            synchronized(done) { done[id] = { if (cont.isActive) cont.resume(raw.length() > 0) } }
+            if (tts.synthesizeToFile(text, Bundle(), raw, id) != TextToSpeech.SUCCESS) {
                 synchronized(done) { done.remove(id) }
                 cont.resume(false)
             }
+        }
+        if (!made) return null
+        return withContext(Dispatchers.Default) {
+            val pcm = VoiceFx.readWav(raw.readBytes()) ?: return@withContext null
+            val shaped = VoiceFx.apply(voice, pcm)
+            file.writeBytes(VoiceFx.writeWav(shaped))
+            raw.delete()
+            Spoken(file, VoiceFx.analyse(shaped))
         }
     }
 

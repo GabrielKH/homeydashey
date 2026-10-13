@@ -10,6 +10,8 @@ import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.BrainMode
 import app.homeydash.agent.Connection
+import app.homeydash.agent.FaceStyle
+import app.homeydash.agent.VoiceStyle
 import app.homeydash.agent.Language
 import app.homeydash.agent.Provider
 import app.homeydash.agent.Secret
@@ -52,6 +54,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         wake = p[WAKE] == "true",
         wakeName = p[WAKE_NAME] ?: AgentSettings().wakeName,
         onlyKnownVoices = p[KNOWN_VOICES] == "true",
+        face = enumOr(p[FACE], FaceStyle.Orb),
+        voice = enumOr(p[VOICE], VoiceStyle.Natural),
+        classicRed = p[CLASSIC_RED] == "true",
     )
 
     private fun write(p: MutablePreferences, s: AgentSettings) {
@@ -69,6 +74,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[WAKE] = s.wake.toString()
         p[WAKE_NAME] = s.wakeName
         p[KNOWN_VOICES] = s.onlyKnownVoices.toString()
+        p[FACE] = s.face.name
+        p[VOICE] = s.voice.name
+        p[CLASSIC_RED] = s.classicRed.toString()
     }
 
     private fun connection(p: Preferences, slot: String): Connection? {
@@ -104,6 +112,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WAKE = stringPreferencesKey("wake")
         val WAKE_NAME = stringPreferencesKey("wake_name")
         val KNOWN_VOICES = stringPreferencesKey("known_voices")
+        val FACE = stringPreferencesKey("face")
+        val VOICE = stringPreferencesKey("voice")
+        val CLASSIC_RED = stringPreferencesKey("classic_red")
 
         inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
             name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default

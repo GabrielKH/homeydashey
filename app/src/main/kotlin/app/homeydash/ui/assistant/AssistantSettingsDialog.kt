@@ -5,6 +5,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -43,6 +46,9 @@ import app.homeydash.agent.AgentTools
 import app.homeydash.agent.AskContext
 import app.homeydash.agent.BrainMode
 import app.homeydash.agent.Connection
+import app.homeydash.agent.FaceStyle
+import app.homeydash.agent.VoiceStyle
+import app.homeydash.assistant.AssistantState
 import app.homeydash.agent.HomeView
 import app.homeydash.agent.Language
 import app.homeydash.agent.Provider
@@ -162,6 +168,7 @@ private fun Main(
 
     Label("Voice")
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
+    LookAndVoice(services, settings, update)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Speaker volume", style = MaterialTheme.typography.labelLarge, color = g.fg)
         GlassSlider(settings.speakerVolume / 100f, { v -> update { it.copy(speakerVolume = (v * 100).toInt()) } }, Modifier.weight(1f))
@@ -361,4 +368,54 @@ private fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick: 
         Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
         SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
     }
+}
+
+/** How the assistant looks while it talks, and how it sounds. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    var previewState by remember { mutableStateOf(AssistantState.Speaking) }
+    Text("Look", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Box(Modifier.fillMaxWidth().height(150.dp).glass(RoundedCornerShape(22.dp))) {
+        VoiceFace(settings.face, previewState, levels = { VoiceLevels(0f, 0f, 0f, 0f) }, modifier = Modifier.fillMaxWidth().height(150.dp), classicRed = settings.classicRed, demo = true)
+    }
+    Segmented(listOf(AssistantState.Listening, AssistantState.Thinking, AssistantState.Speaking), previewState, { it.name }) { previewState = it }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FaceStyle.entries.forEach { f -> Chip(f.label, f == settings.face) { update { it.copy(face = f) } } }
+        if (settings.face == FaceStyle.Scanner) Chip("Classic red", settings.classicRed) { update { it.copy(classicRed = !it.classicRed) } }
+    }
+    Text(settings.face.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+
+    Text("Voice", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        VoiceStyle.entries.forEach { v -> Chip(v.label, v == settings.voice) { update { it.copy(voice = v) } } }
+        Chip("Hear it", false) {
+            scope.launch {
+                val sample = if (settings.language == Language.English) "Hi, I'm your kitchen assistant. Dinner music in the living room?"
+                else "Hej, jag är er köksassistent. Ska jag sätta på middagsmusik?"
+                services.output.speak(sample, settings.language, settings.voice)
+            }
+        }
+    }
+    Text(
+        settings.voice.detail + " Made from the tablet's own voice with pitch, speed and a sound filter.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+}
+
+@Composable
+private fun Chip(text: String, on: Boolean, onClick: () -> Unit) {
+    val g = GlassTheme.colors
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (on) g.wallBase else g.fg,
+        modifier = Modifier
+            .pressable(onClick)
+            .then(if (on) Modifier.background(g.fg, PillShape) else Modifier.glass(PillShape))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    )
 }

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -215,6 +216,15 @@ private fun Panel(
             }
             RoundButton(Sym.settings, onOpenSettings, size = 40.dp, filledIcon = false)
             RoundButton(Sym.close, { assistant.stop(); assistant.open = false }, size = 40.dp, filledIcon = false)
+        }
+        AnimatedVisibility(visible = assistant.state != AssistantState.Idle) {
+            VoiceFace(
+                settings.face,
+                assistant.state,
+                levels = { VoiceLevels(assistant.level, assistant.low, assistant.mid, assistant.high) },
+                modifier = Modifier.fillMaxWidth().height(140.dp),
+                classicRed = settings.classicRed,
+            )
         }
         SpeakerPicker(assistant, settings, onChooseSpeaker)
 

@@ -63,6 +63,11 @@ data class AgentSettings(
     val wakeName: String = "Nova",
     /** The wake name only works for people whose voice the tablet has learned. */
     val onlyKnownVoices: Boolean = false,
+    /** How the assistant looks and sounds. */
+    val face: FaceStyle = FaceStyle.Orb,
+    val voice: VoiceStyle = VoiceStyle.Natural,
+    /** The scanner in KITT's red instead of the theme's accent. */
+    val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
     val guest: Boolean = false,
 ) {

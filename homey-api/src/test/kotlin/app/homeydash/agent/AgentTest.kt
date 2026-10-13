@@ -24,6 +24,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import kotlin.math.sin
 
 class AgentTest {
     private val zones: Map<String, Zone> = HomeyJson.decodeFromString(
@@ -358,5 +359,26 @@ class AgentTest {
         val body = """{"output":[{"type":"web_search_call"},{"type":"message","content":[{"type":"output_text","text":"Sunny tomorrow."}]}]}"""
         assertEquals("Sunny tomorrow.", WebSearch.parseOpenAi(body))
         assertTrue(WebSearch.openAiBody("gpt-4.1-mini", "q").toString().contains("web_search"))
+    }
+
+    @Test fun `voices round trip as wav, keep their length and are measured for the face`() {
+        val rate = 16000
+        // Half a second of a 200 Hz tone, then half a second of silence.
+        val samples = ShortArray(rate) { i -> if (i < rate / 2) (sin(2 * Math.PI * 200 * i / rate) * 12000).toInt().toShort() else 0 }
+        val pcm = Pcm(rate, samples)
+        val back = VoiceFx.readWav(VoiceFx.writeWav(pcm))!!
+        assertEquals(rate, back.sampleRate)
+        assertEquals(samples.toList(), back.samples.toList())
+        VoiceStyle.entries.forEach { style ->
+            val out = VoiceFx.apply(style, pcm)
+            assertEquals(samples.size, out.samples.size)
+            assertTrue(out.samples.maxOf { kotlin.math.abs(it.toInt()) } <= 32767)
+        }
+        val track = VoiceFx.analyse(pcm)
+        assertTrue(track.durationMs in 990..1030)
+        assertTrue(track.at(200)[0] > 0.8f)
+        assertEquals(0f, track.at(800)[0])
+        assertEquals(0f, track.at(5000)[0])
+        assertNull(VoiceFx.readWav(ByteArray(10)))
     }
 }
