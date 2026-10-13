@@ -57,6 +57,15 @@ class HomeView(
     private val byAlias = devices.associateBy { it.alias }
 
     /**
+     * [text] with device and mood aliases ("light_3", or "light 3" as a model may write it)
+     * swapped for their names, since answers are read and spoken to people.
+     */
+    fun named(text: String): String = ALIAS.replace(text) { m ->
+        val alias = "${m.groupValues[1].lowercase()}_${m.groupValues[2]}"
+        byAlias[alias]?.name ?: moods.firstOrNull { it.alias == alias }?.mood?.name ?: m.value
+    }
+
+    /**
      * A device by its alias, or by its name said loosely ("lampan i köket"), which small
      * models and speech recognition often give instead. Null when nothing clearly matches.
      */
@@ -166,6 +175,8 @@ class HomeView(
                 ?.let { JsonPrimitive(it.content.take(120) + "…") } ?: c.value
             return AgentCapability(c.id, c.title, c.type, value, c.units, c.min, c.max, c.setable, c.values?.map { it.id })
         }
+
+        private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)[_ ](\d+)\b""", RegexOption.IGNORE_CASE)
 
         private fun aliasPrefix(cls: String): String = when (cls) {
             "light" -> "light"

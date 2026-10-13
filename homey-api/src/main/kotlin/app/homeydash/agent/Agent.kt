@@ -107,12 +107,12 @@ class Agent(
                         }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
-                        return AgentReply(answer.content.orEmpty().ifBlank { "Okay." }, brain, pending, actions = actions)
+                        return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions)
                     }
                     for (call in answer.toolCalls) {
                         acted = true
                         val result = toolbox.run(call)
-                        actions += "${call.name} ${call.arguments} → ${result.text.take(140)}"
+                        actions += homeView.named("${call.name} ${call.arguments} → ${result.text.take(140)}")
                         localOnly = localOnly || result.localOnly
                         result.pending?.let { pending = it }
                         turn += ChatMessage.tool(call.id, result.text)
@@ -193,7 +193,7 @@ class Agent(
             append("This was heard while the microphone stayed open after your last answer. If it clearly isn't said to you ")
             append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
         }
-        append("Rules: use device aliases (like light_3) in tool calls. People name things loosely, in Swedish or English ")
+        append("Rules: use device aliases (like light_3) in tool calls, but in answers call things by their names, never the alias. People name things loosely, in Swedish or English ")
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
         append("use one of the devices it suggests or ask which one. Only use devices, rooms and moods listed below; ")
         append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")

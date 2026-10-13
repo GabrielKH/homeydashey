@@ -160,8 +160,17 @@ class Assistant(
         partial = ""
         state = AssistantState.Listening
         val local = settings.mode == BrainMode.Local
-        if (SystemClock.elapsedRealtime() < offlineUntil && listenOffline()) return
-        services.input.start(settings.language, preferOnDevice = local, listener = object : SpeechInput.Listener {
+        // Once a conversation is in Swedish, follow-ups are heard as Swedish: language detection
+        // on a short sentence often guesses English. The offline recogniser only knows English,
+        // so it isn't used for Swedish.
+        val language = if (conversing && settings.language == app.homeydash.agent.Language.Auto && talkingSwedish()) {
+            app.homeydash.agent.Language.Swedish
+        } else {
+            settings.language
+        }
+        val swedish = language == app.homeydash.agent.Language.Swedish
+        if (!swedish && SystemClock.elapsedRealtime() < offlineUntil && listenOffline()) return
+        services.input.start(language, preferOnDevice = local, listener = object : SpeechInput.Listener {
             override fun onLevel(level: Float) = meter(floatArrayOf(level, level, level * 0.8f, level * 0.6f))
             override fun onPartial(text: String) { partial = text }
             override fun onResult(text: String) = heard(text)
@@ -169,12 +178,16 @@ class Assistant(
             override fun onUnavailable(message: String) {
                 // Google's speech service is down or unreachable: hear this (and the next few) offline.
                 offlineUntil = SystemClock.elapsedRealtime() + OFFLINE_FOR_MS
-                if (!listenOffline()) failed(message)
+                if (swedish || !listenOffline()) failed(message)
             }
         })
     }
 
     /** Listens with the offline model (English only) when it's downloaded; false when it isn't. */
+    /** Whether the last thing said to the assistant was Swedish. */
+    private fun talkingSwedish(): Boolean =
+        lines.lastOrNull { it.fromUser && it.text.isNotBlank() }?.let { app.homeydash.agent.Confirmation.looksSwedish(it.text) } ?: false
+
     private fun listenOffline(): Boolean {
         if (services.voiceModels.state.value != VoiceModels.State.Ready) return false
         if (!toldOffline) {

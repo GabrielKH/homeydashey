@@ -205,6 +205,15 @@ class AgentTest {
         assertTrue((body["tools"] as JsonArray).size > 5)
     }
 
+    @Test fun `answers name devices instead of their aliases`() {
+        val v = view()
+        val d = v.devices.first()
+        val spaced = d.alias.replace('_', ' ').replaceFirstChar { it.uppercase() }
+        assertEquals("${d.name} är tänd.", v.named("${d.alias} är tänd."))
+        assertEquals("${d.name} is on.", v.named("$spaced is on."))
+        assertEquals("light_999 stays", v.named("light_999 stays"))
+    }
+
     @Test fun `local requests turn thinking off every way Ollama understands`() {
         val body = ChatClient.requestBody("q", listOf(ChatMessage("system", "Be brief."), ChatMessage.user("Hej")), emptyList(), noThinking = true)
         assertEquals("none", body["reasoning_effort"]!!.jsonPrimitive.content)
