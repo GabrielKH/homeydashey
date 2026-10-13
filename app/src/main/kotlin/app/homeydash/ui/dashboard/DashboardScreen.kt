@@ -133,7 +133,7 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
     val rearrange = Rearrange()
 
     /** A card was held: rearranging starts, and letting go without a drag opens [menu]. */
-    fun hold(menu: Sheet) = rearrange.hold(menu)
+    fun hold(menu: Sheet?) = rearrange.hold(menu)
 
     /** The Homey's Flows that can be started, for Goodnight. */
     suspend fun flows(): List<HomeyFlow> =
@@ -286,6 +286,7 @@ fun DashboardScreen(
     val wakeOnProximity by display.wakeOnProximity.collectAsStateWithLifecycle()
     val kiosk by display.kiosk.collectAsStateWithLifecycle()
     val overviewDevices by display.overviewDevices.collectAsStateWithLifecycle()
+    val overviewWidgets by display.overviewWidgets.collectAsStateWithLifecycle()
     val lastPlayer by display.lastPlayer.collectAsStateWithLifecycle()
     val goodnightKeep by display.goodnightKeep.collectAsStateWithLifecycle()
     val goodnightFlow by display.goodnightFlow.collectAsStateWithLifecycle()
@@ -416,9 +417,11 @@ fun DashboardScreen(
                                 roomOrderDraft?.let(display::setRoomOrder)
                                 favouritesDraft?.let(display::setOverviewDevices)
                             },
-                            widgets = {
-                                WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
-                                CalendarCard(
+                            widgetOrder = overviewWidgets,
+                            onWidgetOrder = display::setOverviewWidgets,
+                            widget = { key ->
+                                if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
+                                if (key == "calendar") CalendarCard(
                                     hasPermission = hasCalendar,
                                     events = events,
                                     view = calendarView,

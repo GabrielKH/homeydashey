@@ -40,10 +40,13 @@ class Rearrange {
 
     /** The menu of the card being held, opened if the hold ends without a drag. */
     private var held: Sheet? = null
+    private var holding = false
     private var holdStartedEditing = false
 
-    fun hold(menu: Sheet) {
+    /** A card was held; [menu] opens if it's let go without a drag (null: stay rearranging). */
+    fun hold(menu: Sheet?) {
         held = menu
+        holding = true
         if (!editing) {
             editing = true
             holdStartedEditing = true
@@ -53,16 +56,19 @@ class Rearrange {
     fun done() {
         editing = false
         held = null
+        holding = false
         holdStartedEditing = false
     }
 
     /** The finger lifted. Returns the menu to open when it was a hold without a drag. */
     internal fun release(dragged: Boolean): Sheet? {
         val menu = held
+        val wasHolding = holding
         held = null
+        holding = false
         val started = holdStartedEditing
         holdStartedEditing = false
-        if (menu == null || dragged) return null
+        if (!wasHolding || dragged || menu == null) return null
         if (started) editing = false
         return menu
     }
@@ -86,6 +92,12 @@ class GridDrag(val grid: LazyGridState) {
         private set
 
     var draggable: (Any) -> Boolean = { false }
+
+    /** Cards the grid itself starts rearranging on a long press, for cards with no hold of their own. */
+    var holdable: (Any) -> Boolean = { false }
+
+    internal fun holdableAt(position: Offset): Boolean =
+        grid.layoutInfo.visibleItemsInfo.firstOrNull { it.contains(position) }?.let { holdable(it.key) } == true
     var canMove: (Any, Any) -> Boolean = { _, _ -> false }
     var onMove: (Any, Any) -> Unit = { _, _ -> }
     var onDrop: () -> Unit = {}
@@ -164,17 +176,41 @@ fun rememberGridDrag(grid: LazyGridState): GridDrag {
  * up a card once the finger moves while rearranging, and swallows the touch from then
  * on so sliders and buttons under it don't react.
  */
-fun Modifier.rearrangeable(drag: GridDrag, rearrange: Rearrange, onMenu: (Sheet) -> Unit): Modifier =
+fun Modifier.rearrangeable(drag: GridDrag, rearrange: Rearrange, onMenu: (Sheet) -> Unit, onHold: () -> Unit = {}): Modifier =
     pointerInput(drag, rearrange) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             var dragging = false
             var gaveUp = false
             var moved = Offset.Zero
-            while (true) {
+            var ended = false
+            var selfHeld = false
+            if (!rearrange.editing && drag.holdableAt(down.position)) {
+                // Cards like the weather have no hold of their own: a still press starts rearranging.
+                val timedOut = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                    while (true) {
+                        val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id }
+                        if (change == null || !change.pressed) {
+                            ended = true
+                            break
+                        }
+                        if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
+                    }
+                } == null
+                if (timedOut) {
+                    selfHeld = true
+                    rearrange.hold(null)
+                    onHold()
+                }
+            }
+            while (!ended) {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                if (!change.pressed) break
+                if (!change.pressed) {
+                    // The card under a hold isn't tapped when the finger lifts.
+                    if (selfHeld) change.consume()
+                    break
+                }
                 val step = change.position - change.previousPosition
                 if (!rearrange.editing || gaveUp) continue
                 if (!dragging) {
@@ -186,7 +222,7 @@ fun Modifier.rearrangeable(drag: GridDrag, rearrange: Rearrange, onMenu: (Sheet)
                 } else {
                     drag.drag(step)
                 }
-                if (dragging) change.consume()
+                if (dragging || selfHeld) change.consume()
             }
             if (dragging) drag.end()
             rearrange.release(dragged = dragging)?.let(onMenu)

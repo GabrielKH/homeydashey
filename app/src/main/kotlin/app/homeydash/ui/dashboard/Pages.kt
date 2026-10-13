@@ -2,6 +2,8 @@ package app.homeydash.ui.dashboard
 
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -98,8 +100,11 @@ fun OverviewScreen(
     onMoveRoom: (String, String) -> Unit,
     /** A drag ended: save the new order. */
     onDropped: () -> Unit,
-    /** Weather and calendar cards for the right-hand column. */
-    widgets: @Composable ColumnScope.() -> Unit,
+    /** The side cards' saved order, by key ("weather", "calendar", "player"). */
+    widgetOrder: List<String>,
+    onWidgetOrder: (List<String>) -> Unit,
+    /** Draws the weather or calendar card for its key. */
+    widget: @Composable (String) -> Unit,
 ) {
     val g = GlassTheme.colors
     val now = rememberNow()
@@ -190,18 +195,52 @@ fun OverviewScreen(
                     }
                 }
             }
-            Column(
-                Modifier.width(sideWidth).fillMaxHeight().verticalScroll(rememberScrollState()),
+            // The side cards are a one-column grid of their own, so they can be dragged too.
+            var widgetDraft by remember { mutableStateOf<List<String>?>(null) }
+            LaunchedEffect(widgetOrder) { widgetDraft = null }
+            val sideKeys = (widgetDraft ?: widgetOrder).let { saved -> saved.filter { it in SIDE_CARDS } + SIDE_CARDS.filter { it !in saved } }
+                .filter { it != "player" || player != null }
+            val sideGrid = rememberLazyGridState()
+            val sideDrag = rememberGridDrag(sideGrid)
+            val haptics = LocalHapticFeedback.current
+            SideEffect {
+                sideDrag.draggable = ::isSideCard
+                sideDrag.holdable = ::isSideCard
+                sideDrag.canMove = { a, b -> isSideCard(a) && isSideCard(b) }
+                sideDrag.onMove = { a, b ->
+                    val keys = sideKeys.toMutableList()
+                    val at = keys.indexOf(b as String)
+                    if (at >= 0 && keys.remove(a as String)) {
+                        keys.add(at, a)
+                        widgetDraft = keys
+                    }
+                }
+                sideDrag.onDrop = { widgetDraft?.let(onWidgetOrder) }
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(1),
+                state = sideGrid,
+                modifier = Modifier
+                    .width(sideWidth)
+                    .fillMaxHeight()
+                    .rearrangeable(sideDrag, actions.rearrange, actions::open, onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }),
                 verticalArrangement = Arrangement.spacedBy(GridGap),
+                contentPadding = PaddingValues(bottom = 24.dp),
             ) {
                 // Same label height as "Rooms", so the first cards line up.
-                SectionLabel("Today")
-                widgets()
-                if (player != null) {
-                    SectionLabel("Now playing")
-                    MediaPlayerCard(player, actions, subtitle = player.zone?.let { zones[it]?.name })
+                item(key = "label:today", contentType = "label") { SectionLabel("Today") }
+                items(sideKeys, key = { it }, contentType = { it }) { key ->
+                    RearrangeableItem(key, sideDrag, actions.rearrange, menu = {}) {
+                        if (key == "player" && player != null) {
+                            Column(verticalArrangement = Arrangement.spacedBy(GridGap)) {
+                                SectionLabel("Now playing")
+                                MediaPlayerCard(player, actions, subtitle = player.zone?.let { zones[it]?.name })
+                            }
+                        } else {
+                            Column { widget(key) }
+                        }
+                    }
                 }
-                Spacer(Modifier.height(24.dp))
             }
         }
         }
@@ -500,6 +539,11 @@ internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () ->
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) { chips() }
     }
 }
+
+/** The overview's side cards, in their default order. */
+private val SIDE_CARDS = listOf("weather", "calendar", "player")
+
+private fun isSideCard(key: Any): Boolean = key is String && key in SIDE_CARDS
 
 /** Overview grid keys for pinned devices, apart from the room keys. */
 private const val FAV = "fav:"
