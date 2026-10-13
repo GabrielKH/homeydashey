@@ -42,29 +42,74 @@ class SpeechInput(private val context: Context) {
     }
 
     private var recognizer: SpeechRecognizer? = null
+    /** The first way of listening that worked, per language and on-device choice, so failures aren't repeated. */
+    private val working = mutableMapOf<Pair<Language, Boolean>, Int>()
 
     val available: Boolean get() = SpeechRecognizer.isRecognitionAvailable(context)
 
-    /** Must be called on the main thread. Stops by itself after a pause in speech. */
+    /** One way of asking the recogniser to listen; later ones need less installed on the tablet. */
+    private data class Attempt(val onDevice: Boolean, val locale: String?, val detect: Boolean)
+
+    /**
+     * Must be called on the main thread. Stops by itself after a pause in speech. If the
+     * tablet lacks a language pack for one way of listening, it quietly tries simpler ones:
+     * no language detection, the online recogniser, the other language, the tablet's own.
+     */
     fun start(language: Language, preferOnDevice: Boolean, listener: Listener) {
-        stop()
+        val attempts = attempts(language, preferOnDevice)
+        val key = language to preferOnDevice
+        listenWith(attempts, (working[key] ?: 0).coerceAtMost(attempts.size - 1), key, listener)
+    }
+
+    private fun attempts(language: Language, preferOnDevice: Boolean): List<Attempt> {
         val onDevice = preferOnDevice && Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
-        val r = if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
+        val primary = if (language == Language.English) "en-US" else "sv-SE"
+        val other = if (language == Language.English) "sv-SE" else "en-US"
+        val detect = language == Language.Auto && Build.VERSION.SDK_INT >= 34
+        return buildList {
+            if (onDevice) {
+                if (detect) add(Attempt(true, primary, true))
+                add(Attempt(true, primary, false))
+            }
+            if (detect) add(Attempt(false, primary, true))
+            add(Attempt(false, primary, false))
+            // Auto hears either language, so the other one is a fair stand-in.
+            if (language == Language.Auto) add(Attempt(false, other, false))
+            add(Attempt(false, null, false))
+        }
+    }
+
+    private fun listenWith(attempts: List<Attempt>, index: Int, key: Pair<Language, Boolean>, listener: Listener) {
+        stop()
+        val a = attempts[index]
+        val r = if (a.onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onReadyForSpeech(params: Bundle?) {
+                working[key] = index
+            }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) = listener.onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() = listener.onLevel(0f)
             override fun onError(error: Int) {
+                val missingLanguage = error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
+                if (missingLanguage && recognizer === r) {
+                    // Ask Android to fetch the pack for next time, where it can.
+                    if (a.onDevice && Build.VERSION.SDK_INT >= 33) runCatching { r.triggerModelDownload(intent(a)) }
+                    if (index + 1 < attempts.size) {
+                        working[key] = index + 1
+                        listenWith(attempts, index + 1, key, listener)
+                        return
+                    }
+                }
                 listener.onError(
                     when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> ""
                         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The assistant needs the microphone permission."
                         SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the network."
                         SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
-                            "This language isn't installed for speech recognition. Add Swedish and English under Android Settings, then Speech."
+                            "Speech recognition on this tablet has no Swedish or English. Install \"Speech Recognition & Synthesis from Google\" from the Play Store, then add the languages under Android Settings, then Speech."
                         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy."
                         else -> "Speech recognition failed ($error)."
                     },
@@ -74,7 +119,7 @@ class SpeechInput(private val context: Context) {
             override fun onPartialResults(partialResults: Bundle?) = listener.onPartial(best(partialResults))
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
-        r.startListening(intent(language))
+        r.startListening(intent(a))
     }
 
     fun stop() {
@@ -85,18 +130,16 @@ class SpeechInput(private val context: Context) {
     private fun best(bundle: Bundle?): String =
         bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
 
-    private fun intent(language: Language) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    private fun intent(a: Attempt) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (language == Language.English) "en-US" else "sv-SE")
-        if (language == Language.Auto) {
-            // Android 14+: hear Swedish and English in the same session.
-            if (Build.VERSION.SDK_INT >= 34) {
-                putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
-                putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES, arrayListOf("sv-SE", "en-US"))
-                putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH, RecognizerIntent.LANGUAGE_SWITCH_BALANCED)
-                putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_SWITCH_ALLOWED_LANGUAGES, arrayListOf("sv-SE", "en-US"))
-            }
+        if (a.locale != null) putExtra(RecognizerIntent.EXTRA_LANGUAGE, a.locale)
+        // Android 14+: hear Swedish and English in the same session.
+        if (a.detect && Build.VERSION.SDK_INT >= 34) {
+            putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
+            putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES, arrayListOf("sv-SE", "en-US"))
+            putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH, RecognizerIntent.LANGUAGE_SWITCH_BALANCED)
+            putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_SWITCH_ALLOWED_LANGUAGES, arrayListOf("sv-SE", "en-US"))
         }
     }
 }
