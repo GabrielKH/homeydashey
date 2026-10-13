@@ -39,6 +39,8 @@ class SpeechInput(private val context: Context) {
         fun onPartial(text: String)
         fun onResult(text: String)
         fun onError(message: String)
+        /** Google's speech service couldn't be reached; the listener may listen another way. */
+        fun onUnavailable(message: String) = onError(message)
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -115,19 +117,18 @@ class SpeechInput(private val context: Context) {
                         return
                     }
                 }
-                listener.onError(
-                    when (error) {
-                        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> ""
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The assistant needs the microphone permission."
-                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the network."
-                        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> MISSING_LANGUAGE
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy; another app may be using it."
-                        SpeechRecognizer.ERROR_AUDIO -> "The microphone didn't record (error 3)."
-                        SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
-                            "Google's speech service didn't answer (error $error). Check the tablet's internet."
-                        else -> "Speech recognition failed (error $error)."
-                    },
-                )
+                val message = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> ""
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The assistant needs the microphone permission."
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the network."
+                    SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> MISSING_LANGUAGE
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy; another app may be using it."
+                    SpeechRecognizer.ERROR_AUDIO -> "The microphone didn't record (error 3)."
+                    SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
+                        "Google's speech service didn't answer (error $error). Check the tablet's internet."
+                    else -> "Speech recognition failed (error $error)."
+                }
+                if (error in UNREACHABLE) listener.onUnavailable(message) else listener.onError(message)
             }
             override fun onResults(results: Bundle?) {
                 if (current()) listener.onResult(best(results))
@@ -150,6 +151,13 @@ class SpeechInput(private val context: Context) {
     companion object {
         private const val MAX_RETRIES = 2
         private const val RETRY_DELAY_MS = 350L
+        private val UNREACHABLE = setOf(
+            SpeechRecognizer.ERROR_NETWORK,
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+            SpeechRecognizer.ERROR_SERVER,
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
+            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS,
+        )
         private val TRANSIENT = setOf(
             SpeechRecognizer.ERROR_CLIENT,
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY,

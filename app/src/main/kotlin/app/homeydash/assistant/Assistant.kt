@@ -125,6 +125,11 @@ class Assistant(
     private var job: Job? = null
     /** Who said the wake name last, and when; a known voice outranks the camera for a minute. */
     private var voice: Seen? = null
+    /** Until when questions are heard offline because Google's speech service didn't answer. */
+    private var offlineUntil = 0L
+    private var toldOffline = false
+    /** The offline model is hearing a question (it holds the microphone). */
+    private var dictating = false
     /** When the conversation stops listening for a next question (elapsed realtime). */
     private var conversationUntil = 0L
     private val settings: AgentSettings get() = services.settings.value
@@ -153,32 +158,57 @@ class Assistant(
         partial = ""
         state = AssistantState.Listening
         val local = settings.mode == BrainMode.Local
+        if (SystemClock.elapsedRealtime() < offlineUntil && listenOffline()) return
         services.input.start(settings.language, preferOnDevice = local, listener = object : SpeechInput.Listener {
             override fun onLevel(level: Float) = meter(floatArrayOf(level, level, level * 0.8f, level * 0.6f))
             override fun onPartial(text: String) { partial = text }
-            override fun onResult(text: String) {
-                meter(FloatArray(4))
-                partial = ""
-                when {
-                    text.isBlank() -> listenAgainOrRest()
-                    // Just the name ("Hey Nova") during a conversation: still here, keep listening.
-                    WakeName.heard(text, settings.wakeName) -> { keepConversation(); listenAgainOrRest() }
-                    FollowUp.ends(text, settings.wakeName) -> endConversation()
-                    else -> send(text, byVoice = true)
-                }
-            }
-            override fun onError(message: String) {
-                meter(FloatArray(4))
-                partial = ""
-                if (message.isNotBlank()) {
-                    lines += Line(false, message, error = true, speechSettings = message == SpeechInput.MISSING_LANGUAGE)
-                    endConversation()
-                } else {
-                    // Nothing was said: keep listening while the conversation lasts.
-                    listenAgainOrRest()
-                }
+            override fun onResult(text: String) = heard(text)
+            override fun onError(message: String) = failed(message)
+            override fun onUnavailable(message: String) {
+                // Google's speech service is down or unreachable: hear this (and the next few) offline.
+                offlineUntil = SystemClock.elapsedRealtime() + OFFLINE_FOR_MS
+                if (!listenOffline()) failed(message)
             }
         })
+    }
+
+    /** Listens with the offline model (English only) when it's downloaded; false when it isn't. */
+    private fun listenOffline(): Boolean {
+        if (services.voiceModels.state.value != VoiceModels.State.Ready) return false
+        if (!toldOffline) {
+            toldOffline = true
+            lines += Line(false, "Google's speech service isn't answering, so I'm listening offline for now, in English only.")
+        }
+        dictating = true
+        services.wake.dictate(
+            onText = { text -> dictating = false; heard(text) },
+            onError = { message -> dictating = false; failed(message) },
+        )
+        return true
+    }
+
+    private fun heard(text: String) {
+        meter(FloatArray(4))
+        partial = ""
+        when {
+            text.isBlank() -> listenAgainOrRest()
+            // Just the name ("Hey Nova") during a conversation: still here, keep listening.
+            WakeName.heard(text, settings.wakeName) -> { keepConversation(); listenAgainOrRest() }
+            FollowUp.ends(text, settings.wakeName) -> endConversation()
+            else -> send(text, byVoice = true)
+        }
+    }
+
+    private fun failed(message: String) {
+        meter(FloatArray(4))
+        partial = ""
+        if (message.isNotBlank()) {
+            lines += Line(false, message, error = true, speechSettings = message == SpeechInput.MISSING_LANGUAGE)
+            endConversation()
+        } else {
+            // Nothing was said: keep listening while the conversation lasts.
+            listenAgainOrRest()
+        }
     }
 
     /** Loads a local model while the question is still being said, so the answer starts sooner. */
@@ -218,6 +248,10 @@ class Assistant(
         conversing = false
         conversationUntil = 0L
         if (state == AssistantState.Listening) services.input.stop()
+        if (dictating) {
+            dictating = false
+            services.wake.stop()
+        }
         state = AssistantState.Idle
     }
 
@@ -234,6 +268,10 @@ class Assistant(
 
     fun stopListening() {
         services.input.stop()
+        if (dictating) {
+            dictating = false
+            services.wake.stop()
+        }
         meter(FloatArray(4))
         conversing = false
         conversationUntil = 0L
@@ -451,5 +489,6 @@ class Assistant(
     private companion object {
         const val SPEAKER_DELAY_MS = 800L
         const val RELISTEN_GAP_MS = 300L
+        const val OFFLINE_FOR_MS = 2 * 60 * 1000L
     }
 }

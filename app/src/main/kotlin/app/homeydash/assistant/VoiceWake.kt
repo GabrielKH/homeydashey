@@ -205,6 +205,48 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
     }
 
     /**
+     * Hears one question offline with the wake model, in English only: the fallback when
+     * Google's speech service can't be reached. [onText] gets what was said, or "" when
+     * nothing was said in time. Returns a token for [stop].
+     */
+    fun dictate(onText: (String) -> Unit, onError: (String) -> Unit): Int {
+        stop()
+        val gen = generation
+        scope.launch(Dispatchers.Main) {
+            val loaded = withContext(Dispatchers.IO) { runCatching { load() } }
+            if (gen != generation) return@launch
+            loaded.exceptionOrNull()?.let { onError("Couldn't load the offline speech model: ${it.message}"); return@launch }
+            val rec = try {
+                Recognizer(model, RATE.toFloat())
+            } catch (e: Exception) {
+                onError("Couldn't listen offline: ${e.message}")
+                return@launch
+            }
+            val main = Handler(Looper.getMainLooper())
+            main.postDelayed({ if (gen == generation) { stop(); onText("") } }, DICTATION_MS)
+            reader = thread(name = "dictation-mic") {
+                read(rec, 1f, isLive = { gen == generation }) { result, failure ->
+                    main.post {
+                        if (gen != generation) return@post
+                        if (failure != null) {
+                            stop()
+                            onError(failure)
+                            return@post
+                        }
+                        val text = runCatching { Json.parseToJsonElement(result.orEmpty()).jsonObject["text"]?.jsonPrimitive?.contentOrNull }
+                            .getOrNull().orEmpty().trim()
+                        if (text.isNotEmpty()) {
+                            stop()
+                            onText(text)
+                        }
+                    }
+                }
+            }
+        }
+        return gen
+    }
+
+    /**
      * Reads the microphone into [rec] until [isLive] turns false. Uses the voice recognition
      * input, which on tablets with several microphones is the tuned (beam-formed) mix, asks
      * for a wide pickup so the whole kitchen is heard, and applies [gain].
@@ -287,5 +329,6 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
 
     private companion object {
         const val RATE = 16000
+        const val DICTATION_MS = 9_000L
     }
 }

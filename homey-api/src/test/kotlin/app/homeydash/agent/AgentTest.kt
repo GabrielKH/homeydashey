@@ -449,4 +449,27 @@ class AgentTest {
         assertTrue(server.takeRequest().body.readUtf8().contains("reply with exactly [ignore]"))
         server.shutdown()
     }
+
+    @Test fun `tool calls written as text are still run`() {
+        val (calls, rest) = ChatClient.callsInText("""Okej. <tool_call>{"name":"set_device","arguments":{"device":"light_1","capability":"onoff","value":"true"}}</tool_call>""")
+        assertEquals("set_device", calls.single().name)
+        assertEquals("light_1", (calls.single().arguments["device"] as JsonPrimitive).content)
+        assertEquals("Okej.", rest)
+        assertEquals("set_room", ChatClient.callsInText("""{"name":"set_room","arguments":"{\"room\":\"kök\"}"}""").first.single().name)
+        assertTrue(ChatClient.callsInText("Lampan är tänd.").first.isEmpty())
+    }
+
+    @Test fun `a promise without a tool call gets one nudge`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"I'm going to turn on the kitchen lamp."}}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"a","type":"function","function":{"name":"set_device","arguments":"{\"device\":\"light_1\",\"capability\":\"onoff\",\"value\":\"true\"}"}}]}}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Done."}}]}"""))
+        server.start()
+        val home = FakeHome()
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val reply = Agent(ChatClient(OkHttpClient())).ask("turn on the kitchen lamp", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) })
+        assertEquals("Done.", reply.text)
+        assertEquals(Triple("d-lamp", "onoff", JsonPrimitive(true)), home.sets.single())
+        server.shutdown()
+    }
 }

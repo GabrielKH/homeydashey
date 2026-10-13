@@ -87,6 +87,7 @@ class Agent(
             val turn = mutableListOf(ChatMessage.user(text))
             var localOnly = false
             var acted = false
+            var nudged = false
             val actions = mutableListOf<String>()
             try {
                 repeat(MAX_ROUNDS) {
@@ -95,6 +96,12 @@ class Agent(
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
                         if (!acted && answer.content.orEmpty().contains(IGNORE)) return AgentReply("", brain, ignored = true)
+                        // "I'll turn on the light" without doing it: small models sometimes stop at the promise.
+                        if (!acted && !nudged && PROMISE.containsMatchIn(answer.content.orEmpty())) {
+                            nudged = true
+                            turn += ChatMessage.user(NUDGE)
+                            return@repeat
+                        }
                         remember(turn, localOnly)
                         return AgentReply(answer.content.orEmpty().ifBlank { "Okay." }, brain, pending, actions = actions)
                     }
@@ -187,6 +194,13 @@ class Agent(
     private companion object {
         const val MAX_ROUNDS = 6
         const val IGNORE = "[ignore]"
+        const val NUDGE = "(From the app, not the user: you said you would do something but called no tool, so nothing happened. " +
+            "Call the tool now, or say plainly why you can't.)"
+        val PROMISE = Regex(
+            """\b(i'?ll|i will|i'?m going to|let me|turning|switching|setting|dimming|starting|playing|""" +
+                """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar)|tänder|släcker|slår (på|av)|sätter (på|igång))\b""",
+            RegexOption.IGNORE_CASE,
+        )
         const val MAX_TURNS = 12
         const val FORGET_AFTER_MS = 5 * 60 * 1000L
     }
