@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -68,9 +69,11 @@ import app.homeydash.ui.components.Ic
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.glass
+import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.components.zoneIcon
 import app.homeydash.ui.theme.GlassTheme
+import app.homeydash.data.AppUpdater
 import app.homeydash.data.Blur
 import app.homeydash.data.DisplaySettings
 import kotlinx.coroutines.CancellationException
@@ -199,8 +202,10 @@ fun DashboardScreen(
     store: HomeyStore,
     info: HomeyInfo,
     display: DisplaySettings,
+    updater: AppUpdater,
     onForget: () -> Unit,
 ) {
+    val update by updater.state.collectAsStateWithLifecycle()
     val themeMode by display.themeMode.collectAsStateWithLifecycle()
     val hiddenOnTablet by display.hiddenDevices.collectAsStateWithLifecycle()
     val snapshot by store.snapshot.collectAsStateWithLifecycle()
@@ -214,6 +219,7 @@ fun DashboardScreen(
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
+    val compactSidebar by display.compactSidebar.collectAsStateWithLifecycle()
     val roomOrder by display.roomOrder.collectAsStateWithLifecycle()
     val sections = remember(snapshot.zones, snapshot.devices, hidden, hiddenRooms, roomOrder) {
         DashboardLayout.sections(snapshot.zones, snapshot.devices, hidden, hiddenRooms, roomOrder)
@@ -252,6 +258,8 @@ fun DashboardScreen(
             destination = destination,
             onNavigate = { destination = it },
             onSettings = { showSettings = true },
+            compact = compactSidebar,
+            onCompact = display::setCompactSidebar,
         )
         Box(Modifier.weight(1f).fillMaxHeight()) {
             if (!snapshot.loaded) {
@@ -290,6 +298,7 @@ fun DashboardScreen(
                     }
                 }
             }
+            UpdateBanner(update, onInstall = { scope.launch { updater.install() } }, modifier = Modifier.align(Alignment.TopEnd))
             snapshot.error?.let { message ->
                 ErrorBanner(message, onDismiss = store::clearError, modifier = Modifier.align(Alignment.BottomCenter))
             }
@@ -308,6 +317,10 @@ fun DashboardScreen(
             onHomeBackground = { showSettings = false; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
             onChooseDevices = { showSettings = false; showDevices = true },
             onChooseRooms = { showSettings = false; actions.open(Sheet.Rooms) },
+            version = updater.currentVersion,
+            update = update,
+            onCheckUpdate = { scope.launch { updater.check() } },
+            onInstallUpdate = { scope.launch { updater.install() } },
             onForget = { showSettings = false; onForget() },
             onDismiss = { showSettings = false },
         )
@@ -357,57 +370,77 @@ private fun Sidebar(
     destination: String,
     onNavigate: (String) -> Unit,
     onSettings: () -> Unit,
+    compact: Boolean,
+    onCompact: (Boolean) -> Unit,
 ) {
     val g = GlassTheme.colors
+    val width by animateDpAsState(if (compact) 76.dp else 232.dp, label = "sidebar")
     Column(
         Modifier
-            .width(232.dp)
+            .width(width)
             .fillMaxHeight()
             .glass()
-            .padding(horizontal = 12.dp, vertical = 18.dp),
+            .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = 18.dp),
+        horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
     ) {
-        Row(Modifier.padding(start = 10.dp, end = 10.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            SymIcon(Sym.home, filled = true, size = 28.dp)
-            Column(Modifier.padding(start = 10.dp)) {
-                Text(homeName, style = MaterialTheme.typography.titleLarge, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val live = connection == ConnectionState.Connected
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (live) g.ok else g.danger))
-                    Text(
-                        when (connection) {
-                            ConnectionState.Connected -> "Live"
-                            ConnectionState.Connecting -> "Connecting…"
-                            ConnectionState.Disconnected -> "Reconnecting…"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = g.muted,
-                        modifier = Modifier.padding(start = 6.dp),
-                    )
+        if (compact) {
+            // The home icon doubles as the live indicator and the button that opens the menu again.
+            Box(Modifier.padding(bottom = 16.dp).pressable({ onCompact(false) }), contentAlignment = Alignment.TopEnd) {
+                Box(Modifier.size(48.dp).glass(CircleShape), contentAlignment = Alignment.Center) {
+                    SymIcon(Sym.home, filled = true, size = 24.dp)
                 }
+                Box(Modifier.size(10.dp).clip(CircleShape).background(if (connection == ConnectionState.Connected) g.ok else g.danger))
+            }
+        } else {
+            Row(Modifier.padding(start = 10.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                SymIcon(Sym.home, filled = true, size = 28.dp)
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(homeName, style = MaterialTheme.typography.titleLarge, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val live = connection == ConnectionState.Connected
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(if (live) g.ok else g.danger))
+                        Text(
+                            when (connection) {
+                                ConnectionState.Connected -> "Live"
+                                ConnectionState.Connecting -> "Connecting…"
+                                ConnectionState.Disconnected -> "Reconnecting…"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = g.muted,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
+                }
+                RoundButton(Sym.keyboardArrowLeft, { onCompact(true) }, size = 36.dp, filledIcon = false, contentDescription = "Shrink menu")
             }
         }
-        NavItem(Sym.spaceDashboard, "Overview", destination == OVERVIEW) { onNavigate(OVERVIEW) }
-        if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS) { onNavigate(MOODS) }
-        if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA) { onNavigate(MEDIA) }
-        Text(
-            "ROOMS",
-            style = MaterialTheme.typography.labelMedium,
-            color = g.muted,
-            modifier = Modifier.padding(start = 12.dp, top = 18.dp, bottom = 6.dp),
-        )
-        LazyColumn(Modifier.weight(1f)) {
+        NavItem(Sym.spaceDashboard, "Overview", destination == OVERVIEW, compact = compact) { onNavigate(OVERVIEW) }
+        if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS, compact = compact) { onNavigate(MOODS) }
+        if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA, compact = compact) { onNavigate(MEDIA) }
+        if (compact) {
+            Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
+        } else {
+            Text(
+                "ROOMS",
+                style = MaterialTheme.typography.labelMedium,
+                color = g.muted,
+                modifier = Modifier.padding(start = 12.dp, top = 18.dp, bottom = 6.dp),
+            )
+        }
+        LazyColumn(Modifier.weight(1f), horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start) {
             items(rooms, key = { it.zone.id }) { room ->
                 NavItem(
                     icon = zoneIcon(room.zone),
                     label = room.zone.name,
                     selected = destination == ROOM + room.zone.id,
-                    indent = (room.depth - 1).coerceIn(0, 2),
+                    indent = if (compact) 0 else (room.depth - 1).coerceIn(0, 2),
                     badge = room.lightsOn.takeIf { it > 0 }?.toString(),
+                    compact = compact,
                 ) { onNavigate(ROOM + room.zone.id) }
             }
         }
         Spacer(Modifier.size(8.dp))
-        NavItem(Sym.settings, "Settings", selected = false, onClick = onSettings)
+        NavItem(Sym.settings, "Settings", selected = false, compact = compact, onClick = onSettings)
     }
 }
 
@@ -418,9 +451,27 @@ private fun NavItem(
     selected: Boolean,
     indent: Int = 0,
     badge: String? = null,
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     val g = GlassTheme.colors
+    if (compact) {
+        // Icons only; a dot shows a room with lights on.
+        Box(
+            Modifier
+                .padding(bottom = 4.dp)
+                .size(52.dp)
+                .pressable(onClick)
+                .then(if (selected) Modifier.glass(RoundedCornerShape(16.dp)) else Modifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            SymIcon(icon, filled = selected, size = 24.dp, tint = if (selected) g.fg else g.muted)
+            if (badge != null) {
+                Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(8.dp).background(onBrush(), CircleShape))
+            }
+        }
+        return
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -444,6 +495,31 @@ private fun NavItem(
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = g.fg)
             }
         }
+    }
+}
+
+/** A small pill offering a newer build; it shows download progress once tapped. */
+@Composable
+private fun UpdateBanner(state: AppUpdater.State, onInstall: () -> Unit, modifier: Modifier = Modifier) {
+    val g = GlassTheme.colors
+    val text = when (state) {
+        AppUpdater.State.UpToDate -> return
+        is AppUpdater.State.Available -> "New version ready · Install"
+        is AppUpdater.State.Downloading -> "Downloading update… ${(state.progress * 100).toInt()}%"
+        is AppUpdater.State.Failed -> "Update failed · Try again"
+    }
+    Row(
+        modifier
+            .padding(4.dp)
+            .pressable(onInstall.takeIf { state !is AppUpdater.State.Downloading })
+            .background(g.wallBase, PillShape)
+            .glass(PillShape)
+            .padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SymIcon(Sym.check, filled = true, size = 18.dp, tint = if (state is AppUpdater.State.Failed) g.danger else g.ok)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg)
     }
 }
 

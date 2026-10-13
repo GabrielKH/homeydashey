@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import app.homeydash.ui.components.Bubble
 import app.homeydash.ui.theme.Accent
+import app.homeydash.data.AppUpdater
 import app.homeydash.homey.HomeyInfo
 import app.homeydash.ui.components.PanelShape
 import app.homeydash.ui.components.PillShape
@@ -50,6 +51,10 @@ fun SettingsDialog(
     onHomeBackground: () -> Unit,
     onChooseDevices: () -> Unit,
     onChooseRooms: () -> Unit,
+    version: String,
+    update: AppUpdater.State,
+    onCheckUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
     onForget: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -177,6 +182,30 @@ fun SettingsDialog(
                 SymIcon(Sym.sliders, size = 20.dp)
                 Text("Hide and sort rooms", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
                 SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            }
+            Text("App", style = MaterialTheme.typography.labelMedium, color = g.muted)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    when (update) {
+                        is AppUpdater.State.Available -> "Version $version · a newer one is ready"
+                        is AppUpdater.State.Downloading -> "Downloading the update…"
+                        is AppUpdater.State.Failed -> "Update failed: ${update.message}"
+                        AppUpdater.State.UpToDate -> "Version $version"
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = g.fg,
+                    modifier = Modifier.weight(1f),
+                )
+                val canInstall = update is AppUpdater.State.Available || update is AppUpdater.State.Failed
+                Text(
+                    if (canInstall) "Install" else "Check for updates",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = g.fg,
+                    modifier = Modifier
+                        .pressable(if (canInstall) onInstallUpdate else onCheckUpdate)
+                        .glass(PillShape)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(

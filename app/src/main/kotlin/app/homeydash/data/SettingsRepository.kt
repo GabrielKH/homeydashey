@@ -1,6 +1,7 @@
 package app.homeydash.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -65,6 +66,13 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[ACCENT] = accent.name }
     }
 
+    /** The side menu shrunk to icons only. */
+    val compactSidebar: Flow<Boolean> = context.dataStore.data.map { it[COMPACT_SIDEBAR] ?: false }
+
+    suspend fun setCompactSidebar(compact: Boolean) {
+        context.dataStore.edit { it[COMPACT_SIDEBAR] = compact }
+    }
+
     /** Rooms left off the dashboard on this tablet, by zone id. */
     val hiddenRooms: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_ROOMS].orEmpty() }
 
@@ -108,6 +116,7 @@ class SettingsRepository(private val context: Context) {
     private companion object {
         const val BG_PREFIX = "bg_"
         val ACCENT = stringPreferencesKey("accent")
+        val COMPACT_SIDEBAR = booleanPreferencesKey("compact_sidebar")
         val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
         val ROOM_ORDER = stringPreferencesKey("room_order")
         val ACCENT_OPACITY = floatPreferencesKey("accent_opacity")

@@ -39,12 +39,13 @@ fun AppRoot(container: AppContainer) {
         if (session !is SessionState.Ready) Wallpaper()
         when (val state = session) {
             SessionState.Starting -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = GlassTheme.colors.fg)
-            SessionState.NeedsSetup -> SetupScreen(onConnect = container::connect)
+            SessionState.NeedsSetup -> SetupScreen(onConnect = container::connect, discover = container.discovery::discover)
             is SessionState.Unreachable -> Unreachable(state, onRetry = container::retry, onForget = container::forget)
             is SessionState.Ready -> DashboardScreen(
                 store = state.store,
                 info = state.info,
                 display = container.display,
+                updater = container.updater,
                 onForget = container::forget,
             )
         }
