@@ -74,7 +74,7 @@ fun MediaPlayerCard(device: Device, actions: DashboardActions, modifier: Modifie
     val onoff = device.capability("onoff")
     val poweredOff = onoff?.booleanValue == false
     val art = rememberAlbumArt(device, actions, track)
-    val hasRemote = actions.remoteKeys(device.id).isNotEmpty()
+    val hasRemote = actions.hasRemote(device)
     val hasMusic = actions.musicSources(device.id).isNotEmpty()
     val canGroup = actions.grouping(device.id) != null
 

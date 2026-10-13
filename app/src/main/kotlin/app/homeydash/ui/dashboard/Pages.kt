@@ -315,7 +315,7 @@ fun RoomScreen(
     hasMusic: Boolean,
 ) {
     val g = GlassTheme.colors
-    val remote = remember(room.devices, actions.deviceCards) { room.devices.firstOrNull { actions.remoteKeys(it.id).isNotEmpty() } }
+    val remote = remember(room.devices, actions.deviceCards) { room.devices.firstOrNull { actions.hasRemote(it) } }
     val subtree = remember(zones, room.zone.id) { DashboardLayout.subtree(zones, room.zone.id) }
     val roomSections = remember(sections, subtree) { sections.filter { it.zone.id in subtree } }
     val roomMoods = remember(moods, room.zone.id) { DashboardLayout.moods(moods, room.zone.id) }

@@ -53,7 +53,9 @@ import app.homeydash.homey.ConnectionState
 import app.homeydash.homey.FlowCardAction
 import app.homeydash.homey.FlowCards
 import app.homeydash.homey.MusicSource
-import app.homeydash.homey.RemoteKey
+import app.homeydash.homey.Device
+import app.homeydash.homey.RemoteAction
+import app.homeydash.homey.Remotes
 import app.homeydash.homey.SpeakerGrouping
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.HomeyInfo
@@ -85,6 +87,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /** Album art, and a tiny blurred copy that is stretched behind the player. */
 class AlbumArtImages(val sharp: ImageBitmap, val blurred: ImageBitmap)
@@ -121,7 +125,19 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
 
     fun cards(deviceId: String): List<FlowCardAction> = deviceCards[deviceId].orEmpty()
 
-    fun remoteKeys(deviceId: String): Map<RemoteKey, FlowCardAction> = FlowCards.remoteKeys(cards(deviceId))
+    /** TVs and media boxes get a remote; speakers get music and grouping instead. */
+    fun hasRemote(device: Device): Boolean = Remotes.hasRemote(device, cards(device.id))
+
+    /** Sends one remote key, as a Flow card or through the device's capability. */
+    fun press(device: Device, action: RemoteAction) {
+        when (action) {
+            is RemoteAction.Card -> run(action.card, action.args)
+            is RemoteAction.Capability -> {
+                val value = if (action.toggle) device.capability(action.capability)?.value?.let { (it as? JsonPrimitive)?.booleanOrNull } != true else true
+                set(device.id, action.capability, JsonPrimitive(value))
+            }
+        }
+    }
 
     fun musicSources(deviceId: String): List<MusicSource> = FlowCards.musicSources(cards(deviceId))
 

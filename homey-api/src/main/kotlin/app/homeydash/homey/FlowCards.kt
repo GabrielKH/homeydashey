@@ -65,7 +65,7 @@ data class AutocompleteItem(
     val raw: JsonObject,
 )
 
-enum class RemoteKey { Up, Down, Left, Right, Select, Back, Home, PlayPause, VolumeUp, VolumeDown, Mute, Power }
+enum class RemoteKey { Up, Down, Left, Right, Select, Back, Home, PlayPause, VolumeUp, VolumeDown, Mute, Power, ChannelUp, ChannelDown }
 
 /** A speaker app's grouping cards, such as Sonos "Group with" and "Ungroup Sonos speaker". */
 data class SpeakerGrouping(
@@ -101,16 +101,24 @@ object FlowCards {
      * English whatever language the Homey uses.
      */
     fun remoteKeys(cards: List<FlowCardAction>): Map<RemoteKey, FlowCardAction> {
-        val result = mutableMapOf<RemoteKey, FlowCardAction>()
+        val result = cardKeys(cards)
+        // Only TV boxes count as remotes: speakers also have play/pause and volume cards,
+        // but no way to move around a menu.
+        return if (navigation(result.keys) >= 3) result else emptyMap()
+    }
+
+    /** Every argument-free card that sends a remote key, whether or not the device is a TV. */
+    fun cardKeys(cards: List<FlowCardAction>): Map<RemoteKey, FlowCardAction> {
+        val result = linkedMapOf<RemoteKey, FlowCardAction>()
         cards.filter { it.inputArgs.isEmpty() }.forEach { card ->
             val key = remoteKey(card.cardId) ?: return@forEach
             result.putIfAbsent(key, card)
         }
-        // Only TV boxes count as remotes: speakers also have play/pause and volume cards,
-        // but no way to move around a menu.
-        val navigation = listOf(RemoteKey.Up, RemoteKey.Down, RemoteKey.Left, RemoteKey.Right, RemoteKey.Select).count { it in result }
-        return if (navigation >= 3) result else emptyMap()
+        return result
     }
+
+    internal fun navigation(keys: Set<RemoteKey>) =
+        listOf(RemoteKey.Up, RemoteKey.Down, RemoteKey.Left, RemoteKey.Right, RemoteKey.Select).count { it in keys }
 
     /** The words of a card id, from snake_case, kebab-case or camelCase. */
     internal fun tokens(cardId: String): Set<String> =
@@ -120,6 +128,9 @@ object FlowCards {
         val tokens = tokens(cardId)
         fun has(vararg words: String) = words.any { it in tokens }
         return when {
+            has("channel") && has("up", "next", "increase") -> RemoteKey.ChannelUp
+            has("channel") && has("down", "previous", "prev", "decrease") -> RemoteKey.ChannelDown
+            has("channel", "input", "source") -> null
             has("volume") && has("up", "increase") -> RemoteKey.VolumeUp
             has("volume") && has("down", "decrease") -> RemoteKey.VolumeDown
             has("mute") && has("toggle") -> RemoteKey.Mute

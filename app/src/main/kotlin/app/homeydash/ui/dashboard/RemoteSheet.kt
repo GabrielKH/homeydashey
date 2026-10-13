@@ -33,6 +33,7 @@ import app.homeydash.homey.Device
 import app.homeydash.homey.FlowCards
 import app.homeydash.homey.MusicSource
 import app.homeydash.homey.RemoteKey
+import app.homeydash.homey.Remotes
 import app.homeydash.ui.components.DialogHeader
 import app.homeydash.ui.components.GlassDialog
 import app.homeydash.ui.components.Ic
@@ -46,23 +47,28 @@ import kotlinx.serialization.json.JsonObject
 import kotlin.math.abs
 
 /**
- * A Siri Remote for an Apple TV (or any device whose app has remote cards):
- * a click-pad you tap or swipe, Back, Home, play/pause, volume and an app row.
+ * A Siri Remote-style remote for a TV or media box (Apple TV, Samsung and others):
+ * a click-pad you tap or swipe, Back, Home, play/pause, volume, channels and an app row.
  */
 @Composable
 fun RemoteSheet(device: Device, actions: DashboardActions, onDismiss: () -> Unit) {
     val g = GlassTheme.colors
-    val keys = actions.remoteKeys(device.id)
-    val launcher = remember(actions.deviceCards, device.id) { FlowCards.appLauncher(actions.cards(device.id)) }
+    val cards = actions.cards(device.id)
+    val keyCard = remember(cards) { Remotes.keyCard(cards) }
+    val keyList by produceState<List<AutocompleteItem>>(keyCard?.arg?.takeIf { it.type == "dropdown" }?.let(FlowCards::dropdownItems).orEmpty(), keyCard?.card?.id) {
+        if (keyCard != null && keyCard.arg.type == "autocomplete") value = actions.autocomplete(keyCard.card, keyCard.arg.name, "")
+    }
+    val keys = remember(device, cards, keyCard, keyList) { Remotes.actions(device, cards, keyCard, Remotes.keyItems(keyList)) }
+    val launcher = remember(cards) { FlowCards.appLauncher(cards) }
     fun press(key: RemoteKey) {
-        keys[key]?.let { actions.run(it) }
+        keys[key]?.let { actions.press(device, it) }
     }
 
     GlassDialog(onDismiss = onDismiss, width = 460.dp) {
         DialogHeader(title = device.name, subtitle = "Remote", onClose = onDismiss)
         if (keys.isEmpty()) {
             Text(
-                "Homey doesn't offer remote buttons for this device. They come from the Apple TV app's Flow cards, so the API key needs the Flow permission.",
+                "Homey doesn't offer remote buttons for this device yet. They come from the TV app's Flow cards, so the API key needs the Flow permission.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = g.muted,
             )
@@ -74,21 +80,38 @@ fun RemoteSheet(device: Device, actions: DashboardActions, onDismiss: () -> Unit
                     KeyButton(Sym.power, RemoteKey.Power, keys.keys, size = 52.dp) { press(it) }
                 }
             }
-            ClickPad(keys.keys, ::press)
-            Row(horizontalArrangement = Arrangement.spacedBy(26.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (keys.keys.any { it in PadKeys }) ClickPad(keys.keys, ::press)
+            if (keys.keys.any { it == RemoteKey.Back || it == RemoteKey.Home || it == RemoteKey.PlayPause }) Row(horizontalArrangement = Arrangement.spacedBy(26.dp), verticalAlignment = Alignment.CenterVertically) {
                 KeyButton(Sym.backKey, RemoteKey.Back, keys.keys, label = "Back") { press(it) }
                 KeyButton(Sym.tv, RemoteKey.Home, keys.keys, label = "Home") { press(it) }
                 KeyButton(Sym.playPause, RemoteKey.PlayPause, keys.keys, label = "Play") { press(it) }
             }
-            if (keys.keys.any { it == RemoteKey.VolumeUp || it == RemoteKey.VolumeDown || it == RemoteKey.Mute }) {
-                Row(
-                    Modifier.glass(PillShape).padding(6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    KeyButton(Sym.remove, RemoteKey.VolumeDown, keys.keys, size = 56.dp, glass = false) { press(it) }
-                    KeyButton(Sym.volumeOff, RemoteKey.Mute, keys.keys, size = 56.dp, glass = false) { press(it) }
-                    KeyButton(Sym.add, RemoteKey.VolumeUp, keys.keys, size = 56.dp, glass = false) { press(it) }
+            val hasVolume = keys.keys.any { it == RemoteKey.VolumeUp || it == RemoteKey.VolumeDown || it == RemoteKey.Mute }
+            val hasChannels = keys.keys.any { it == RemoteKey.ChannelUp || it == RemoteKey.ChannelDown }
+            if (hasVolume || hasChannels) {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (hasVolume) {
+                        Row(
+                            Modifier.glass(PillShape).padding(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            KeyButton(Sym.remove, RemoteKey.VolumeDown, keys.keys, size = 56.dp, glass = false) { press(it) }
+                            KeyButton(Sym.volumeOff, RemoteKey.Mute, keys.keys, size = 56.dp, glass = false) { press(it) }
+                            KeyButton(Sym.add, RemoteKey.VolumeUp, keys.keys, size = 56.dp, glass = false) { press(it) }
+                        }
+                    }
+                    if (hasChannels) {
+                        Row(
+                            Modifier.glass(PillShape).padding(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            KeyButton(Sym.keyboardArrowDown, RemoteKey.ChannelDown, keys.keys, size = 56.dp, glass = false) { press(it) }
+                            Text("CH", style = MaterialTheme.typography.labelLarge, color = g.muted)
+                            KeyButton(Sym.keyboardArrowUp, RemoteKey.ChannelUp, keys.keys, size = 56.dp, glass = false) { press(it) }
+                        }
+                    }
                 }
             }
         }
@@ -219,3 +242,5 @@ private fun AppRow(source: MusicSource, actions: DashboardActions) {
 }
 
 private val IntrinsicAppWidth = 150.dp
+
+private val PadKeys = setOf(RemoteKey.Up, RemoteKey.Down, RemoteKey.Left, RemoteKey.Right, RemoteKey.Select)
