@@ -100,6 +100,8 @@ class Agent(
             val turn = mutableListOf(ChatMessage.user(text))
             var localOnly = false
             var acted = false
+            // A tool actually changed something; a failed or wrong call doesn't count.
+            var changed = false
             var nudged = false
             val actions = mutableListOf<String>()
             try {
@@ -114,15 +116,16 @@ class Agent(
                         val said = answer.content.orEmpty()
                         val command = COMMAND.containsMatchIn(text) && !STATUS_QUESTION.containsMatchIn(text)
                         val claims = PROMISE.containsMatchIn(said) || (command && CLAIM.containsMatchIn(said))
-                        if (!acted && !nudged && claims) {
+                        if (!changed && !nudged && claims) {
                             nudged = true
-                            turn += ChatMessage.user(NUDGE)
+                            turn += ChatMessage.user(if (acted) NUDGE_FAILED else NUDGE)
                             return@repeat
                         }
                         // Still nothing done after the nudge: never let it say it did something.
-                        if (!acted && nudged && command && CLAIM.containsMatchIn(said)) {
+                        if (!changed && nudged && command && CLAIM.containsMatchIn(said)) {
                             remember(turn.take(1) + ChatMessage("assistant", nothingDone(text)), localOnly)
-                            return AgentReply(nothingDone(text), brain, actions = listOf("The AI said it changed something but used no tool; nothing in the home was changed."), error = true)
+                            actions += "The AI said it changed something, but no tool changed anything."
+                            return AgentReply(nothingDone(text), brain, actions = actions, error = true)
                         }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
@@ -131,6 +134,11 @@ class Agent(
                     for (call in answer.toolCalls) {
                         acted = true
                         val result = toolbox.run(call)
+                        changed = changed || when (call.name) {
+                            in LOOKS -> false
+                            in SETS -> CHANGED.any { result.text.startsWith(it) } && !result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
+                            else -> true // Timers, pages, recipes and the fridge answer in their own words.
+                        }
                         actions += homeView.named("${call.name} ${call.arguments} → ${result.text.take(140)}")
                         localOnly = localOnly || result.localOnly
                         result.pending?.let { pending = it }
@@ -155,10 +163,11 @@ class Agent(
         val action = QuickCommand.parse(text, view) ?: return null
         val call = QuickCommand.call(action)
         val result = tools(view).run(call)
-        val ok = result.text.startsWith("Done") || result.text.startsWith("Changed")
+        val stuck = result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
+        val ok = (result.text.startsWith("Done") || result.text.startsWith("Changed")) && !stuck
         val reply = when {
             ok -> QuickCommand.done(action, view)
-            result.text.startsWith(QuickCommand.NOT_CHANGED_PREFIX) || result.text.startsWith(QuickCommand.UNREACHABLE_PREFIX) ->
+            stuck || result.text.startsWith(QuickCommand.UNREACHABLE_PREFIX) ->
                 QuickCommand.notChanged(action, view)
             else -> result.text
         }
@@ -302,6 +311,14 @@ class Agent(
         // regex engine refuses it, and the app crashed on start.
         private const val W = """(?<![\p{L}\d_])"""
         private const val E = """(?![\p{L}\d_])"""
+        /** Tools that only look. */
+        val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet")
+        /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
+        val SETS = setOf("set_device", "set_room", "run_flow", "play_music", "run_device_action")
+        /** How tool results that changed something begin. */
+        val CHANGED = listOf("Done", "Changed", "Started", "Playing")
+        const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
+            "Call the right tool now, or tell the user plainly what went wrong.)"
         const val NUDGE = "(From the app, not the user: you said you would do something but called no tool, so nothing happened. " +
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(

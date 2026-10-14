@@ -626,6 +626,10 @@ class AgentTest {
         val r2 = AgentTools(v, home, FakeDashboard()).run(call("set_device", "device" to "light_1", "capability" to "onoff", "value" to "false"))
         assertTrue(r2.text.startsWith(QuickCommand.UNREACHABLE_PREFIX))
         assertTrue(home.sets.isEmpty())
+        // A whole room: the lamps that didn't change are named.
+        home.after = mapOf("d-spot" to JsonPrimitive(true))
+        val room = AgentTools(view(), home, FakeDashboard()).run(call("set_room", "room" to "kitchen", "capability" to "onoff", "value" to "false", "device_class" to "light"))
+        assertTrue(room.text, room.text.startsWith("Changed 1: Kitchen lamp.") && room.text.contains("Spots still report"))
         assertTrue(AgentTools.same(JsonPrimitive(0.31), JsonPrimitive(0.3)))
         assertFalse(AgentTools.same(JsonPrimitive(0.0), JsonPrimitive(0.3)))
     }
@@ -644,6 +648,21 @@ class AgentTest {
         // Asking how things are is answered as is, without a nudge.
         assertEquals("Ja, den är tänd.", agent.ask("är taklampan tänd?", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) }).text)
         assertEquals(3, server.requestCount)
+        server.shutdown()
+    }
+
+    @Test fun `a failed tool call followed by "done" is never passed on`() = runTest {
+        val server = MockWebServer()
+        val bad = """{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"a","type":"function","function":{"name":"set_device","arguments":"{\"device\":\"light_1\",\"capability\":\"colour_of_sky\",\"value\":\"true\"}"}}]}}]}"""
+        server.enqueue(MockResponse().setBody(bad))
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Jag har tänt taklampan."}}]}""")) }
+        server.start()
+        val home = FakeHome()
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val reply = Agent(ChatClient(OkHttpClient())).ask("kan du tända lite mysbelysning tack", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) })
+        assertTrue(reply.text, reply.text.startsWith("Förlåt") && reply.error)
+        assertTrue(home.sets.isEmpty())
+        assertEquals(JsonPrimitive(true), AgentTools.coerce(view().device("light_1")!!.capability("onoff")!!, JsonPrimitive("tänd")))
         server.shutdown()
     }
 

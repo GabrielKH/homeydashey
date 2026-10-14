@@ -13,6 +13,8 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import java.time.LocalDate
 
 /**
@@ -218,12 +220,22 @@ class AgentTools(
         if (targets.isEmpty()) return ok("Nothing in ${view.rooms[roomId]} has $capabilityId.")
         val (unreachable, reachable) = targets.partition { it.first.unreachable }
         val missed = if (unreachable.isEmpty()) "" else " Homey can't reach ${unreachable.joinToString { it.first.name }}, so they weren't changed."
-        val changed = reachable.mapNotNull { (d, c) ->
+        val sent = reachable.mapNotNull { (d, c) ->
             val value = coerce(c, raw) ?: return@mapNotNull null
             home.setCapability(d.id, c.id, value)
-            d.name
+            Triple(d, c, value)
         }
-        return ok("Changed ${changed.size}: ${changed.joinToString()}.$missed")
+        // Homey sometimes accepts a change a lamp never makes; ask again before saying it's done.
+        val stuck = kotlinx.coroutines.coroutineScope {
+            sent.map { (d, c, value) ->
+                async { home.readBack(d.id, c.id)?.takeIf { !same(it, value) }?.let { d.name } }
+            }.awaitAll().filterNotNull()
+        }
+        val changed = sent.map { it.first.name } - stuck.toSet()
+        val notChanged = if (stuck.isEmpty()) "" else
+            " Homey accepted it, but ${stuck.joinToString()} still report the old value, so they didn't change; tell the user plainly."
+        if (changed.isEmpty() && stuck.isNotEmpty()) return ok("${QuickCommand.NOT_CHANGED_PREFIX} ${stuck.joinToString()} still report the old value, so nothing changed.$missed")
+        return ok("Changed ${changed.size}: ${changed.joinToString()}.$notChanged$missed")
     }
 
     private fun getDevice(alias: String): ToolResult {
@@ -455,8 +467,8 @@ class AgentTools(
             val s = p.contentOrNull?.trim() ?: return null
             return when (c.type) {
                 "boolean" -> (p.booleanOrNull ?: when (s.lowercase()) {
-                    "on", "1", "yes", "ja", "på" -> true
-                    "off", "0", "no", "nej", "av" -> false
+                    "on", "1", "yes", "ja", "på", "tänd", "tänt", "tända", "turn_on" -> true
+                    "off", "0", "no", "nej", "av", "släck", "släckt", "släckta", "turn_off" -> false
                     else -> null
                 })?.let(::JsonPrimitive)
                 "number" -> {
