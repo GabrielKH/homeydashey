@@ -38,6 +38,35 @@ object NameMatch {
     }
 
     /**
+     * Words people use for the same kind of thing, so "växtlampan" finds "Växt spotlight"
+     * and "uttaget" finds "Plugg". Accents are already gone (växt → vaxt).
+     */
+    private val FAMILIES = listOf(
+        listOf("lampa", "lamp", "light", "ljus", "spot", "spotlight", "spotlights", "belysning", "slinga", "ledslinga",
+            "led", "strip", "lightstrip", "plafond", "armatur", "glodlampa", "pendel", "bulb"),
+        listOf("uttag", "plugg", "kontakt", "plug", "socket", "outlet", "smartplug"),
+        listOf("hogtalare", "speaker", "sonos"),
+        listOf("tv", "teve", "television", "tvn"),
+        listOf("flakt", "fan"),
+        listOf("element", "radiator", "heater", "varmare", "golvvarme"),
+        listOf("gardin", "persienn", "rullgardin", "blinds", "screen", "markis"),
+        listOf("vaxt", "vaxter", "plant", "plants", "blomma", "blommor"),
+    )
+
+    /** Whether two words name the same kind of thing ([FAMILIES]), though they aren't the same word. */
+    fun related(a: String, b: String): Boolean =
+        FAMILIES.any { family -> family.any { sameWord(it, a) } && family.any { sameWord(it, b) } }
+
+    /** Two compounds with the same start and related ends: "vaxtlampan" and "vaxtljus". */
+    private fun sameStemOtherFamily(a: String, b: String): Boolean {
+        val common = a.zip(b).takeWhile { (x, y) -> x == y }.size
+        // The ends may start alike too ("vaxt|lampan", "vaxt|ljus"), so try each split.
+        return (3..common).any { stem -> a.length - stem >= 3 && b.length - stem >= 3 && related(a.substring(stem), b.substring(stem)) }
+    }
+
+    private fun alike(a: String, b: String) = sameWord(a, b) || related(a, b)
+
+    /**
      * How well [query] names something called [name] in [room]: 0 for not at all, about 1
      * for the whole name, a little more when the room is named too.
      */
@@ -49,16 +78,30 @@ object NameMatch {
         if (nameWords.isEmpty()) return 0.0
         val qJoined = q.joinToString("")
         val nameJoined = nameWords.joinToString("")
-        var nameHits = nameWords.count { n -> q.any { sameWord(it, n) } || (n.length >= 3 && qJoined.contains(n)) }
+        // What's left of a compound word once the name's own words are taken out:
+        // "vaxtlampan" without "vaxt" leaves "lampan".
+        val rest = q.flatMap { w ->
+            val parts = nameWords.filter { it.length >= 3 && it != w && w.contains(it) }
+            if (parts.isEmpty()) emptyList() else parts.fold(w) { acc, p -> acc.replace(p, " ") }.split(' ').filter { it.length >= 3 }
+        }
+        // A word of the same family counts for less than the word itself, so "lamp" still prefers
+        // "Kitchen lamp" over "Spots".
+        fun hit(n: String): Double = when {
+            q.any { sameWord(it, n) } || (n.length >= 3 && qJoined.contains(n)) || rest.any { sameWord(it, n) } -> 1.0
+            q.any { sameStemOtherFamily(it, n) } -> STEM_RELATED
+            (q + rest).any { related(it, n) } -> RELATED
+            else -> 0.0
+        }
+        var nameHits = nameWords.sumOf(::hit)
         // Compound words: "kökslampan" holds "kök" and "lampa".
         if (nameHits < nameWords.size && nameJoined.length >= 4 && (qJoined.contains(nameJoined) || sameWord(qJoined, nameJoined))) {
-            nameHits = nameWords.size
+            nameHits = nameWords.size.toDouble()
         }
-        if (nameHits == 0) return 0.0
+        if (nameHits == 0.0) return 0.0
         val roomHit = roomWords.isNotEmpty() && roomWords.any { r -> q.any { sameWord(it, r) } || (r.length >= 3 && qJoined.contains(r)) }
-        val used = q.count { w -> (nameWords + roomWords).any { sameWord(w, it) || (it.length >= 3 && w.contains(it)) } }
+        val used = q.count { w -> (nameWords + roomWords).any { alike(w, it) || (it.length >= 3 && w.contains(it)) } }
         val extra = q.size - used
-        return nameHits.toDouble() / nameWords.size + (if (roomHit) 0.3 else 0.0) - 0.1 * extra.coerceAtMost(3)
+        return nameHits / nameWords.size + (if (roomHit) 0.3 else 0.0) - 0.1 * extra.coerceAtMost(3)
     }
 
     /** The best of [items] for [query] when it clearly wins, else null. */
@@ -76,6 +119,8 @@ object NameMatch {
         items.map { it to scoreOf(it) }.filter { it.second > 0.0 }.sortedByDescending { it.second }
 
     private const val MIN_SCORE = 0.5
+    private const val RELATED = 0.6
+    private const val STEM_RELATED = 0.8
     private const val CLEAR_LEAD = 0.15
 
     private fun edits(a: String, b: String): Int {

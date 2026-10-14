@@ -828,4 +828,30 @@ class AgentTest {
         assertEquals("replace", args["mode"]!!.jsonPrimitive.content)
         assertEquals("a1", args["album"]!!.jsonObject["id"]!!.jsonPrimitive.content)
     }
+
+    @Test fun `a plant light is found by what it is, not only its exact name`() = runTest {
+        val z: Map<String, Zone> = HomeyJson.decodeFromString(
+            """{"z-home":{"id":"z-home","name":"Hem"},"z-office":{"id":"z-office","name":"Kontor","parent":"z-home"},"z-kok":{"id":"z-kok","name":"Kök","parent":"z-home"}}""",
+        )
+        fun light(id: String, name: String, zone: String) =
+            """"$id":{"id":"$id","name":"$name","zone":"$zone","class":"light","capabilities":["onoff"],"capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}}"""
+        val raw: Map<String, Device> = HomeyJson.decodeFromString(
+            "{" + listOf(
+                light("d-plant", "Växt spotlight", "z-office"),
+                light("d-roof", "Taklampa", "z-office"),
+                light("d-desk", "Skrivbordslampa", "z-office"),
+                light("d-kplant", "Växtljus", "z-kok"),
+            ).joinToString(",") + "}",
+        )
+        val v = HomeView.build(z, raw, emptyMap(), emptySet(), AgentSettings(), true)
+        assertEquals("Växt spotlight", v.device("växt lampan i kontoret")?.name)
+        assertEquals("Växt spotlight", v.device("växtlampan i kontoret")?.name)
+        assertEquals("Växtljus", v.device("växtlampan i köket")?.name)
+        assertEquals("Taklampa", v.device("taklampan i kontoret")?.name)
+        assertTrue(NameMatch.related("lampan", "spotlight"))
+        assertFalse(NameMatch.related("lampan", "uttag"))
+        val home = FakeHome()
+        AgentTools(v, home, FakeDashboard()).run(call("set_device", "device" to "växt lampan i kontoret", "capability" to "onoff", "value" to "on"))
+        assertEquals("d-plant", home.sets.single().first)
+    }
 }
