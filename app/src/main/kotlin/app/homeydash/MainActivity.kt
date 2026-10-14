@@ -1,5 +1,6 @@
 package app.homeydash
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -45,6 +46,7 @@ class MainActivity : ComponentActivity() {
         container.assistant.faces.onFace = { screen.wake() }
         // So does the assistant starting to listen (the wake name) or a timer ringing.
         container.assistant.onActive = { screen.wake() }
+        handleShare(intent)
         setContent {
             val themeMode by container.display.themeMode.collectAsStateWithLifecycle()
             val accent by container.display.accent.collectAsStateWithLifecycle()
@@ -62,6 +64,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var screen: ScreenControl
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShare(intent)
+    }
+
+    /** A recipe page shared from the browser goes to Recipes to be imported. */
+    private fun handleShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        if (!text.contains("http")) return
+        (application as HomeyDashApp).container.kitchen.sharedLink.value = text
+    }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         // A touch on the dark screen only wakes it.

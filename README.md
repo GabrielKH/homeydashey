@@ -54,6 +54,17 @@ The look is iOS-style glass in light and dark (Settings → Appearance: Auto, Li
 - Overview: a weather card (Open-Meteo, no account) for the Homey's location, the tablet's GPS, the internet address or a city you search for; tap it to change. Tap the weather for the full forecast and location. Below it, a Today, Week or Month view of the calendars synced on the tablet (for example a Google family calendar), read through Android's calendar provider; the sliders icon picks which calendars show.
 - Settings: hide rooms and change their order (per tablet); highlight colour (gradients) and its opacity, and a background for the home; each room's header has a picture button for its own background (preset or photo).
 
+### Recipes
+
+The Recipes page (side menu) is the kitchen's recipe book, kept on the tablet (`files/recipes`: one JSON file and a folder of photos shrunk to 1600 px).
+
+- **Add from a link**, like Recipe Keeper: paste the address of any recipe page (or share it from the browser to the dashboard) and it reads the name, photo, ingredients, steps, times and servings. It reads schema.org `Recipe` data in JSON-LD, which nearly every recipe site publishes for Google (ICA, Arla, Köket, Coop, Matprat, BBC Good Food, WordPress recipe plugins…), then schema.org microdata, then the lists under headings like "Ingredienser" and "Gör så här" on plain blogs. Sites that turn away apps or build the page with JavaScript are loaded in a hidden browser instead. Before saving, pick its categories; the ones you already use that the site also names are picked for you.
+- **Import from Recipe Keeper**: in Recipe Keeper, Settings → Export, then pick the .zip (or `recipes.html`) on the Recipes page. Courses, categories, collections, favourites, ratings, notes, nutrition and photos come along. Importing a newer export updates the recipes already imported instead of adding copies.
+- Recipes can be written or changed by hand: one ingredient or step per line, and a line like `# Sauce` starts a section.
+- Filter by course, category or favourites, and search by name or ingredient.
+- A recipe's page has the photo, ingredients to tick off and the steps; tap a step to mark where you are. **Start cooking** shows one step at a time in big type, with Back and Next (or swipe), a timer button for times in the step ("bake 25–30 minutes" starts a 30 minute timer), and the ingredients alongside.
+- The voice assistant knows which recipe is open and which step you are on, so "what's next?", "nästa steg", "go back", "step 4" or "how much flour?" just work. Step commands are answered at once without the AI and move the screen along; it can also find and open a saved recipe ("open the lasagne").
+
 Type is Inter (OFL), the closest open typeface to Apple's SF Pro. Icons are [Phosphor](https://phosphoricons.com) (MIT): each icon's Regular and Fill SVGs from `@phosphor-icons/core` are converted to vector drawables `res/drawable/ph_<name>.xml` and `ph_<name>_fill.xml`, and listed in `Sym` in `ui/components/Icons.kt`.
 
 ## How it talks to Homey

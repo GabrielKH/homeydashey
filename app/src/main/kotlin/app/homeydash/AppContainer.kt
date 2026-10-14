@@ -8,6 +8,7 @@ import app.homeydash.data.CalendarRepository
 import app.homeydash.data.WeatherRepository
 import app.homeydash.data.DisplaySettings
 import app.homeydash.data.HomeyDiscovery
+import app.homeydash.data.Kitchen
 import app.homeydash.data.SavedHomey
 import app.homeydash.data.SettingsRepository
 import app.homeydash.homey.HomeyConnectException
@@ -53,6 +54,9 @@ class AppContainer(context: Context) {
     val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
 
     val assistant = AssistantServices(context, http, scope)
+
+    /** Recipes, and the one being cooked; the voice assistant reads it too. */
+    val kitchen = Kitchen(context, http, scope).also { assistant.kitchen = it }
 
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()

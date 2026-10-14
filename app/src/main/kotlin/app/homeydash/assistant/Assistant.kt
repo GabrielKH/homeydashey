@@ -62,6 +62,8 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val transcriber = app.homeydash.agent.Transcriber(http)
     /** Called when the assistant starts listening or ringing, so a dimmed screen lights up. */
     var onActive: (() -> Unit)? = null
+    /** The recipes and the one being cooked, so the assistant can follow along. */
+    var kitchen: app.homeydash.data.Kitchen? = null
 }
 
 /** One line in the assistant's conversation. */
@@ -391,7 +393,7 @@ class Assistant(
                     text.trim(), s,
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
-                    context = AskContext(speaker = speakerName(s), person = person, followUp = followUp),
+                    context = AskContext(speaker = speakerName(s), person = person, followUp = followUp, kitchen = services.kitchen?.cooking?.describe()),
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -423,7 +425,11 @@ class Assistant(
         return v to tools(v)
     }
 
-    private fun tools(v: HomeView) = AgentTools(v, home, bridge, web = services.web.lookup(v.settings.webSearch()))
+    private fun tools(v: HomeView) = AgentTools(
+        v, home, bridge,
+        web = services.web.lookup(v.settings.webSearch()),
+        recipes = services.kitchen?.let { k -> app.homeydash.agent.RecipeTools(k.book, k.cooking) { bridge.openPage("recipes") } },
+    )
 
     private fun view(s: AgentSettings, local: Boolean): HomeView {
         val snap = store.snapshot.value

@@ -255,6 +255,7 @@ private const val OVERVIEW = "overview"
 private const val MOODS = "moods"
 private const val MEDIA = "media"
 private const val CALENDAR = "calendar"
+private const val RECIPES = "recipes"
 private const val ROOM = "room:"
 
 @Composable
@@ -266,6 +267,7 @@ fun DashboardScreen(
     weather: WeatherRepository,
     calendar: CalendarRepository,
     assistantServices: AssistantServices,
+    kitchen: app.homeydash.data.Kitchen,
     onForget: () -> Unit,
 ) {
     val update by updater.state.collectAsStateWithLifecycle()
@@ -346,6 +348,9 @@ fun DashboardScreen(
     remember(assistant) {
         AssistantBridge(assistant, store, actions, display, weather, calendar, hiddenDevices = { currentHidden }, navigate = { destination = it })
     }.also { assistant.bridge = it }
+    // A recipe link shared from the browser opens the recipe page to import it.
+    val sharedLink by kitchen.sharedLink.collectAsStateWithLifecycle()
+    LaunchedEffect(sharedLink) { if (sharedLink != null) destination = RECIPES }
     FaceWatch(assistantServices, assistantSettings)
     WakeWatch(assistant, assistantServices, assistantSettings)
 
@@ -390,6 +395,7 @@ fun DashboardScreen(
                     when {
                         target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
                         target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
+                        target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label) })
                         target == CALENDAR -> CalendarScreen(
                             hasPermission = hasCalendar,
                             events = events,
@@ -661,6 +667,7 @@ private fun Sidebar(
         if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS, compact = compact) { onNavigate(MOODS) }
         if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA, compact = compact) { onNavigate(MEDIA) }
         if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
+        NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {

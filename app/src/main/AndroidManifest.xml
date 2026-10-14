@@ -46,6 +46,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Share a recipe page from the browser to save it in Recipes. -->
+            <intent-filter android:label="Save recipe">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <!-- Kiosk mode turns this on so the dashboard can be chosen as the tablet's home app. -->

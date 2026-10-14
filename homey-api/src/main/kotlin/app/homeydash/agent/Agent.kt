@@ -25,6 +25,8 @@ data class AskContext(
     val person: String? = null,
     /** Heard while the microphone stayed open after an answer, so it may not be meant for the assistant. */
     val followUp: Boolean = false,
+    /** The recipe open on the tablet and the step the cook is on, in words; null when none is open. */
+    val kitchen: String? = null,
 )
 
 /**
@@ -71,6 +73,12 @@ class Agent(
                 false -> return confirm(false)
                 null -> pending = null
             }
+        }
+
+        // "Next step" while cooking is answered straight away, without the AI.
+        if (context.kitchen != null) tools(view(true)).cookingQuick(text)?.let { reply ->
+            remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
+            return AgentReply(reply, actions = listOf("recipe step (without the AI)"))
         }
 
         // Plain on, off and dim commands are done straight away, without the AI.
@@ -201,6 +209,12 @@ class Agent(
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
         append("Never reveal or guess codes, passwords or keys. ")
         append("For general questions you can't answer for sure, use ask_internet if you have it instead of guessing.\n")
+        context.kitchen?.let { kitchen ->
+            append("\nCooking: ").append(kitchen)
+            append("When the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
+            append("and tell them the step in plain words. Answer questions about amounts and times from this recipe. ")
+            append("If the step has a cooking time, offer to start a timer for it.\n")
+        }
         append("\nThe home now (alias \"name\" class: capability=value [set range]):\n")
         append(view.describe())
     }

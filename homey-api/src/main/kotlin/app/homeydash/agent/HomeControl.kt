@@ -37,7 +37,7 @@ data class AgentEvent(val title: String, val start: String, val end: String?, va
 
 /** What the assistant may do to the dashboard on the tablet. */
 interface DashboardControl {
-    /** Opens `overview`, `moods`, `media`, `calendar`, or a room by id. */
+    /** Opens `overview`, `moods`, `media`, `calendar`, `recipes`, or a room by id. */
     fun openPage(page: String, roomId: String? = null): Boolean
     fun openDevice(deviceId: String): Boolean
     /** What Goodnight would switch off now, in words. */

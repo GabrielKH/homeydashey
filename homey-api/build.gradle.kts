@@ -21,6 +21,8 @@ dependencies {
     api(libs.kotlinx.serialization.json)
     api(libs.okhttp)
     implementation(libs.socketio.client)
+    // Reads recipes from web pages and Recipe Keeper exports.
+    implementation(libs.jsoup)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

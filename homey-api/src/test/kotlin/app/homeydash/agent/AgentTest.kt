@@ -569,4 +569,28 @@ class AgentTest {
         assertEquals("Spots är släckt.", reply.text)
         assertEquals(Triple("d-spot", "onoff", JsonPrimitive(false)), home.sets.single())
     }
+
+    @Test fun `next step while cooking is answered without the AI, and the open recipe is in the instructions`() = runTest {
+        val book = app.homeydash.recipes.RecipeBook(java.nio.file.Files.createTempDirectory("book").toFile(), OkHttpClient())
+        book.load()
+        val cooking = app.homeydash.recipes.Cooking(book)
+        val r = book.save(
+            app.homeydash.recipes.Recipe(
+                id = "", title = "Pannkakor",
+                ingredients = listOf(app.homeydash.recipes.Ingredient("3 dl mjöl")),
+                steps = listOf(app.homeydash.recipes.Step("Vispa smeten."), app.homeydash.recipes.Step("Stek i smör.")),
+            ),
+        )
+        cooking.open(r.id)
+        val recipes = RecipeTools(book, cooking) {}
+        val settings = AgentSettings() // No brain is set up, so only the quick path can answer.
+        val context = AskContext(kitchen = cooking.describe())
+        val reply = Agent(ChatClient(OkHttpClient())).ask("nästa steg", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard(), recipes = recipes) }, context)
+        assertEquals("Steg 2 av 2: Stek i smör. Det är sista steget.", reply.text)
+        assertEquals(1, cooking.state.value!!.step)
+        val prompt = Agent(ChatClient(OkHttpClient())).systemPrompt(settings, view(settings), AskContext(kitchen = cooking.describe()))
+        assertTrue(prompt.contains("A recipe is open on the tablet: \"Pannkakor\""))
+        assertTrue(prompt.contains("2. Stek i smör.   <-- CURRENT STEP"))
+        assertTrue(AgentTools(view(), FakeHome(), FakeDashboard(), recipes = recipes).specs().any { it.name == "recipe_step" })
+    }
 }
