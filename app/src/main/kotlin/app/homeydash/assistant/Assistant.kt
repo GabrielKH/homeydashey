@@ -289,10 +289,20 @@ class Assistant(
         }
     }
 
-    /** Loads a local model while the question is still being said, so the answer starts sooner. */
+    /**
+     * Loads a local model and has it read the rules and the home while the question is still
+     * being said, so only the question itself is left to read when it arrives.
+     */
     private fun warmUp() {
         val local = settings.local?.takeIf { it.usable && settings.mode != BrainMode.Internet } ?: return
-        scope.launch { services.chat.warm(local) }
+        val followUp = conversing
+        scope.launch {
+            services.chat.warm(local)
+            runCatching {
+                val (s, person) = forWhoIsHere(settings)
+                services.agent.warm(s, view = { l -> view(s, l) }, tools = { v -> tools(v) }, context = askContext(s, person, followUp))
+            }
+        }
     }
 
     /** Listens again if the conversation is still open, otherwise goes quiet. */
@@ -393,7 +403,7 @@ class Assistant(
                     text.trim(), s,
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
-                    context = AskContext(speaker = speakerName(s), person = person, followUp = followUp, kitchen = services.kitchen?.cooking?.describe(), fridge = services.kitchen?.fridge?.describe()),
+                    context = askContext(s, person, followUp),
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -436,6 +446,11 @@ class Assistant(
         val snap = store.snapshot.value
         return HomeView.build(snap.zones, snap.devices, snap.moods, bridge.hidden(), s, local)
     }
+
+    private fun askContext(s: AgentSettings, person: String?, followUp: Boolean) = AskContext(
+        speaker = speakerName(s), person = person, followUp = followUp,
+        kitchen = services.kitchen?.cooking?.describe(), fridge = services.kitchen?.fridge?.describe(),
+    )
 
     private fun speakerName(s: AgentSettings): String? = s.speakerId?.let { store.snapshot.value.devices[it]?.name }
 

@@ -7,6 +7,7 @@ import app.homeydash.homey.HomeyJson
 import app.homeydash.homey.Mood
 import app.homeydash.homey.Zone
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -26,6 +27,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import kotlin.math.sin
 
 class AgentTest {
@@ -571,6 +574,35 @@ class AgentTest {
         val reply = agent.ask("ja men jag ringer dig sen", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(followUp = true))
         assertTrue(reply.ignored)
         assertTrue(server.takeRequest().body.readUtf8().contains("reply with exactly [ignore]"))
+        server.shutdown()
+    }
+
+    @Test fun `the rules stay the same and the warm-up reads ahead of the question`() = runTest {
+        val server = MockWebServer()
+        repeat(3) { server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Okej."}}]}""")) }
+        server.start()
+        var minute = 0L
+        val agent = Agent(ChatClient(OkHttpClient())) { ZonedDateTime.of(2026, 10, 14, 12, 0, 0, 0, ZoneId.of("UTC")).plusMinutes(minute) }
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        fun sent(): List<JsonObject> = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject["messages"]!!.jsonArray.map { it.jsonObject }
+        fun JsonObject.text() = this["content"]!!.jsonPrimitive.content
+
+        agent.warm(settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(person = "Gabriel"))
+        val warm = sent()
+        agent.ask("vad är klockan", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(person = "Gabriel"))
+        val first = sent()
+        // The warm-up is the start of the question, word for word.
+        assertEquals(warm[0], first[0])
+        assertTrue(first[1].text().startsWith(warm[1].text()))
+        assertTrue(first[1].text().endsWith("The user said: vad är klockan"))
+        minute = 7
+        agent.ask("tack", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
+        val second = sent()
+        // The clock and the person live with the question, so the rules don't change.
+        assertEquals(first[0], second[0])
+        assertFalse(second[0].text().contains("12:0") || second[0].text().contains("Gabriel"))
+        assertEquals("vad är klockan", second[1].text())
+        assertTrue(second.last().text().contains("12:07"))
         server.shutdown()
     }
 

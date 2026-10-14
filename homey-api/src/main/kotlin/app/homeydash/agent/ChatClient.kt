@@ -83,6 +83,22 @@ class ChatClient(http: OkHttpClient) {
         runCatching { localHttp.newCall(request).execute().close() }.onFailure { warmed = 0L }
     }
 
+    /**
+     * Sends [messages] for a one-token answer that is thrown away, so a local model works
+     * through them now and only has to read what comes after them when the real question
+     * arrives (Ollama keeps the start of the last conversation it read). Failures don't matter.
+     */
+    suspend fun prefill(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>) = withContext(Dispatchers.IO) {
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+        val body = JsonObject(full + ("max_tokens" to JsonPrimitive(1))).toString()
+        val request = Request.Builder()
+            .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
+            .apply { if (connection.apiKey.isNotBlank()) header("Authorization", "Bearer ${connection.apiKey}") }
+            .post(body.toRequestBody(JSON))
+            .build()
+        runCatching { localHttp.newCall(request).execute().close() }
+    }
+
     /** Checks a connection with a tiny question; returns null when it works, else what went wrong. */
     suspend fun test(connection: Connection): String? = try {
         complete(connection, listOf(ChatMessage.user("Reply with the word OK.")), emptyList())

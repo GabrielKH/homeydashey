@@ -104,7 +104,7 @@ class Agent(
             val actions = mutableListOf<String>()
             try {
                 repeat(MAX_ROUNDS) {
-                    val messages = listOf(ChatMessage.system(systemPrompt(settings, homeView, context))) + earlier + turn
+                    val messages = conversation(settings, homeView, context, earlier, turn)
                     val answer = chat.complete(brain, messages, specs)
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
@@ -181,11 +181,53 @@ class Agent(
     private fun failure(brain: Connection, message: String?): String =
         "${brain.provider.label} didn't answer: ${message ?: "unknown error"}"
 
-    fun systemPrompt(settings: AgentSettings, view: HomeView, context: AskContext): String = buildString {
-        val time = now()
+    /**
+     * What is sent: the rules first, then the earlier turns, then the home as it is now
+     * together with the question. The rules never change between questions, so a local model
+     * keeps them worked through from last time and only reads what is new (see [warm]).
+     */
+    private fun conversation(
+        settings: AgentSettings,
+        view: HomeView,
+        context: AskContext,
+        earlier: List<ChatMessage>,
+        turn: List<ChatMessage>,
+    ): List<ChatMessage> {
+        val question = turn.first()
+        val now = ChatMessage.user(situation(settings, view, context) + QUESTION + question.content.orEmpty())
+        return listOf(ChatMessage.system(rules(settings))) + earlier + now + turn.drop(1)
+    }
+
+    /**
+     * Works through the rules and the home ahead of the question, while it is still being
+     * said, so a local model only has the question itself left to read when it arrives.
+     */
+    suspend fun warm(
+        settings: AgentSettings,
+        view: (local: Boolean) -> HomeView,
+        tools: (HomeView) -> AgentTools,
+        context: AskContext = AskContext(),
+    ) {
+        val brain = settings.brains().firstOrNull() ?: return
+        if (brain.provider != Provider.Ollama) return
+        val homeView = view(brain.local)
+        val toolbox = tools(homeView)
+        val fresh = System.currentTimeMillis() - lastActivity <= FORGET_AFTER_MS
+        toolbox.privateContext = brain.local && fresh && history.any { it.localOnly }
+        val earlier = if (fresh) history.filter { brain.local || !it.localOnly }.flatMap { it.messages } else emptyList()
+        val messages = listOf(ChatMessage.system(rules(settings))) + earlier +
+            ChatMessage.user(situation(settings, homeView, context) + QUESTION)
+        chat.prefill(brain, messages, toolbox.specs())
+    }
+
+    /** Everything the assistant is told for a question, as one text (for tests and the settings preview). */
+    fun systemPrompt(settings: AgentSettings, view: HomeView, context: AskContext): String =
+        rules(settings) + "\n\n" + situation(settings, view, context)
+
+    /** How to behave: the same for every question, so it can be kept worked through. */
+    fun rules(settings: AgentSettings): String = buildString {
         append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
         append("You can see and control the home only through your tools; everything goes through the Homey smart home hub.\n")
-        append("Now: ").append(time.format(DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd HH:mm", Locale.ENGLISH))).append(".\n")
         append(
             when (settings.language) {
                 Language.Auto -> "Answer in the language the user spoke: Swedish or English.\n"
@@ -193,45 +235,51 @@ class Agent(
                 Language.English -> "Always answer in English.\n"
             },
         )
-        append("Your answers are spoken aloud")
-        context.speaker?.let { append(" on the speaker \"").append(it).append('"') }
-        append(", so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
-        // Who is at the tablet is itself a secret ("Face recognition" switch).
-        context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("The person at the tablet is ").append(it).append(".\n") }
+        append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
-        if (context.followUp) {
-            append("This was heard while the microphone stayed open after your last answer. If it clearly isn't said to you ")
-            append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
-        }
+        append("Each question comes after a note from the app with the home as it is now; only the part after \"$QUESTION_LABEL\" is what the user said. ")
+        append("If the note says it was heard while the microphone stayed open after your last answer and it clearly isn't said to you ")
+        append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
         append("Rules: use device aliases (like light_3) in tool calls, but in answers call things by their names, never the alias. People name things loosely, in Swedish or English ")
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
+        append("use one of the devices it suggests or ask which one. ")
         append("A device may be named by its room or app rather than what it is: the app is shown in brackets, e.g. a TV called \"Vardagsrum\" (apple tv) is the Apple TV. ")
         append("For TV channels, opening an app, Sonos favourites, playlists, radio and remote buttons, call device_actions and then run_device_action; play_music is a shortcut for music. ")
-        append("use one of the devices it suggests or ask which one. Only use devices, rooms and moods listed below; ")
+        append("Only use devices, rooms and moods listed in the note; ")
         append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
         append("Never reveal or guess codes, passwords or keys. ")
         append("For general questions you can't answer for sure, use ask_internet if you have it instead of guessing.\n")
-        context.kitchen?.let { kitchen ->
-            append("\nCooking: ").append(kitchen)
-            append("When the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
-            append("and tell them the step in plain words. Answer questions about amounts and times from this recipe. ")
-            append("If the step has a cooking time, offer to start a timer for it.\n")
-        }
-        context.fridge?.let { fridge ->
-            append("\nFridge: ").append(fridge)
-            append("Answer what's in the fridge, freezer or pantry and what goes off soon from fridge_contents. ")
-            append("When the user says they bought, ate, finished, opened or froze something, update the fridge with your tools. ")
-            append("When asked what to cook, suggest using what goes off first, and look in find_recipes if you have it.\n")
-        }
-        append("\nThe home now (alias \"name\" class: capability=value [set range]):\n")
+        append("When a recipe is open and the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
+        append("and tell them the step in plain words. Answer questions about amounts and times from that recipe. ")
+        append("If the step has a cooking time, offer to start a timer for it.\n")
+        append("Answer what's in the fridge, freezer or pantry and what goes off soon from fridge_contents. ")
+        append("When the user says they bought, ate, finished, opened or froze something, update the fridge with your tools. ")
+        append("When asked what to cook, suggest using what goes off first, and look in find_recipes if you have it.\n")
+    }
+
+    /**
+     * The home and the moment, for one question. The home comes first and the clock last,
+     * so the part that stays the same from one question to the next is as long as it can be.
+     */
+    fun situation(settings: AgentSettings, view: HomeView, context: AskContext): String = buildString {
+        append("(From the app, not the user.)\nThe home now (alias \"name\" class: capability=value [set range]):\n")
         append(view.describe())
+        context.kitchen?.let { append("\nCooking: ").append(it) }
+        context.fridge?.let { append("\nFridge: ").append(it) }
+        append("\nNow: ").append(now().format(DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd HH:mm", Locale.ENGLISH))).append(".")
+        context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
+        // Who is at the tablet is itself a secret ("Face recognition" switch).
+        context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it).append(".") }
+        if (context.followUp) append("\nHeard while the microphone stayed open after your last answer, so it may not be meant for you.")
     }
 
     private companion object {
         const val MAX_ROUNDS = 6
         const val IGNORE = "[ignore]"
+        const val QUESTION_LABEL = "The user said:"
+        const val QUESTION = "\n\n$QUESTION_LABEL "
         const val NUDGE = "(From the app, not the user: you said you would do something but called no tool, so nothing happened. " +
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(
