@@ -330,7 +330,7 @@ class Agent(
         val CLAIM = Regex(
             """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|switched (on|off)|done|""" +
                 """har (tänt|släckt|satt|slagit|startat|stängt|dimmat|ändrat)|är (nu )?(tänd|tända|släckt|släckta|avstängd|avstängda|igång)|""" +
-                """tänt|släckt|klart|fixat)$E""",
+                """tänt|släckt|tände|släckte|slog (på|av)|satte på|startade|stängde av|dimmade|klart|fixat)$E""",
             RegexOption.IGNORE_CASE,
         )
         /** The user asked for a change, rather than how things are. */

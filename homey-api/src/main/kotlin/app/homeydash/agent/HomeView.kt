@@ -1,6 +1,7 @@
 package app.homeydash.agent
 
 import app.homeydash.homey.Capability
+import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.Device
 import app.homeydash.homey.Mood
 import app.homeydash.homey.Zone
@@ -57,8 +58,21 @@ class HomeView(
     val moods: List<AgentMood>,
     val local: Boolean,
     val settings: AgentSettings,
+    /** Each room's parent room, so a room includes the rooms inside it. */
+    private val parents: Map<String, String?> = emptyMap(),
 ) {
     private val byAlias = devices.associateBy { it.alias }
+
+    /** Whether [d] is in [roomId] or in a room inside it ("Soffhörnan" in "Vardagsrum"). */
+    fun inRoom(d: AgentDevice, roomId: String): Boolean {
+        var zone = d.roomId
+        var steps = 0
+        while (zone != null && steps++ < 10) {
+            if (zone == roomId) return true
+            zone = parents[zone]
+        }
+        return false
+    }
 
     /**
      * [text] with device and mood aliases ("light_3", or "light 3" as a model may write it)
@@ -163,7 +177,8 @@ class HomeView(
                         name = device.name,
                         roomId = device.zone,
                         room = device.zone?.let { roomNames[it] },
-                        deviceClass = device.effectiveClass,
+                        // A lamp on a smart plug is a light, as on the dashboard.
+                        deviceClass = if (DashboardLayout.isSwitchableLight(device)) "light" else device.effectiveClass,
                         capabilities = device.capabilities.mapNotNull { id -> device.capability(id)?.let(::visibleCapability) },
                         secret = secret,
                         hiddenOnDashboard = device.hidden || device.id in hidden,
@@ -174,8 +189,11 @@ class HomeView(
                 .sortedWith(compareBy({ it.room ?: "" }, { it.name.lowercase() }))
             val agentMoods = moods.values.sortedBy { it.id }.mapIndexed { i, mood -> AgentMood("mood_${i + 1}", mood, mood.zone?.let { roomNames[it] }) }
                 .sortedBy { it.mood.name.lowercase() }
-            val usedRooms = shown.mapNotNull { it.roomId }.toSet() + moods.values.mapNotNull { it.zone }
-            return HomeView(shown, roomNames.filterKeys { it in usedRooms }, agentMoods, local, settings)
+            val parents = zones.mapValues { it.value.parent }
+            val direct = shown.mapNotNull { it.roomId }.toSet() + moods.values.mapNotNull { it.zone }
+            // A room with lamps only in the rooms inside it is still a room people name.
+            val usedRooms = direct.flatMap { generateSequence(it) { z -> parents[z] }.take(10).toList() }.toSet()
+            return HomeView(shown, roomNames.filterKeys { it in usedRooms }, agentMoods, local, settings, parents)
         }
 
         private const val KIND_WEIGHT = 0.9

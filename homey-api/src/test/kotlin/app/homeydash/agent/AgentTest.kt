@@ -98,7 +98,7 @@ class AgentTest {
         val v = view()
         assertEquals(setOf("Kitchen lamp", "Spots", "Secret plug"), v.devices.map { it.name }.toSet())
         assertFalse(v.describe().contains("Front door"))
-        assertEquals(setOf("z-kitchen"), v.rooms.keys)
+        assertEquals(setOf("z-home", "z-kitchen"), v.rooms.keys)
         val strict = view(AgentSettings(seeHiddenDevices = false), hidden = setOf("d-spot"))
         assertEquals(setOf("Kitchen lamp"), strict.devices.map { it.name }.toSet())
     }
@@ -664,6 +664,23 @@ class AgentTest {
         assertTrue(home.sets.isEmpty())
         assertEquals(JsonPrimitive(true), AgentTools.coerce(view().device("light_1")!!.capability("onoff")!!, JsonPrimitive("tänd")))
         server.shutdown()
+    }
+
+    @Test fun `a whole room includes dimmers and the rooms inside it`() = runTest {
+        val z: Map<String, Zone> = HomeyJson.decodeFromString(
+            """{"z-home":{"id":"z-home","name":"Hem"},"z-living":{"id":"z-living","name":"Vardagsrum","parent":"z-home"},"z-sofa":{"id":"z-sofa","name":"Soffhörna","parent":"z-living"}}""",
+        )
+        val d: Map<String, Device> = HomeyJson.decodeFromString(
+            """{"d-dim":{"id":"d-dim","name":"Golvlampa","zone":"z-sofa","class":"other","capabilities":["onoff","dim"],
+                "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true},"dim":{"id":"dim","type":"number","value":0.5,"min":0,"max":1,"setable":true}}}}""",
+        )
+        val v = HomeView.build(z, d, emptyMap(), emptySet(), AgentSettings(), true)
+        val a = QuickCommand.parse("Slå på alla lampor i vardagsrummet", v)!!
+        assertEquals("z-living", a.roomId)
+        val home = FakeHome()
+        val r = AgentTools(v, home, FakeDashboard()).run(QuickCommand.call(a))
+        assertTrue(r.text, r.text.startsWith("Changed 1"))
+        assertEquals(Triple("d-dim", "onoff", JsonPrimitive(true)), home.sets.single())
     }
 
     @Test fun `tool calls written as text are still run`() {

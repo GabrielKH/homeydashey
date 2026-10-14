@@ -60,7 +60,7 @@ object QuickCommand {
         val roomId = view.room(roomPart) ?: return null
         if (NameMatch.score(roomPart, view.rooms[roomId].orEmpty()) < 0.95) return null
         val lights = view.devices.filter {
-            it.roomId == roomId && it.deviceClass == "light" && it.secret == null && !it.hiddenOnDashboard && it.capability(cap)?.setable == true
+            view.inRoom(it, roomId) && it.deviceClass == "light" && it.secret == null && !it.hiddenOnDashboard && it.capability(cap)?.setable == true
         }
         return if (lights.isEmpty()) null else Action(null, roomId, on, dim, swedish)
     }

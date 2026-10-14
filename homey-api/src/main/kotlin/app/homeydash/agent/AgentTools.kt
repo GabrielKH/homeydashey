@@ -212,7 +212,7 @@ class AgentTools(
         val roomId = view.room(room) ?: return ok("There's no room called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
         val wantedClass = classOf(cls)
         val targets = view.devices.mapNotNull { d ->
-            if (d.roomId != roomId || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
+            if (!view.inRoom(d, roomId) || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
             // "Everything off in the kitchen" shouldn't reach a hidden fridge plug; name the class to include them.
             if (d.hiddenOnDashboard && wantedClass == null) return@mapNotNull null
             capabilityOf(d, capabilityId)?.takeIf { it.setable }?.let { d to it }
