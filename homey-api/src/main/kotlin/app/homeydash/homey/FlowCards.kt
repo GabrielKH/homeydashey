@@ -183,8 +183,10 @@ object FlowCards {
     /** Cards that play something picked from a list: favourites, playlists, albums, radio. */
     fun musicSources(cards: List<FlowCardAction>): List<MusicSource> = cards.mapNotNull { card ->
         val id = card.cardId.lowercase()
-        val arg = card.inputArgs.firstOrNull { it.type == "autocomplete" || it.type == "dropdown" } ?: return@mapNotNull null
-        if (card.inputArgs.size > 1) return@mapNotNull null
+        val arg = card.inputArgs.firstOrNull { it.type == "autocomplete" }
+            ?: card.inputArgs.firstOrNull { it.type == "dropdown" } ?: return@mapNotNull null
+        // Other arguments must have a safe default (a play mode, a "shuffle" box), never a volume.
+        if (card.inputArgs.any { it !== arg && it.type != "dropdown" && it.type != "checkbox" }) return@mapNotNull null
         val kind = MUSIC_WORDS.firstOrNull { it in id } ?: return@mapNotNull null
         MusicSource(MUSIC_TITLES.getValue(kind), card, arg)
     }.sortedBy { MUSIC_WORDS.indexOfFirst { w -> w in it.card.cardId.lowercase() } }
@@ -215,4 +217,16 @@ object FlowCards {
     /** The value to send for [item]: dropdowns take the bare id, autocompletes the whole entry. */
     fun argValue(arg: FlowCardArg, item: AutocompleteItem): JsonElement =
         if (arg.type == "dropdown") item.raw.getValue("id").jsonPrimitive else item.raw
+
+    /** The arguments to run a music source with: the picked item, and the defaults of the rest. */
+    fun musicArgs(source: MusicSource, item: AutocompleteItem): JsonObject = JsonObject(
+        source.card.inputArgs.mapNotNull { arg ->
+            when {
+                arg === source.arg -> arg.name to argValue(arg, item)
+                arg.type == "dropdown" -> arg.values?.firstOrNull()?.let { arg.name to JsonPrimitive(it.id) }
+                arg.type == "checkbox" -> arg.name to JsonPrimitive(false)
+                else -> null
+            }
+        }.toMap()
+    )
 }

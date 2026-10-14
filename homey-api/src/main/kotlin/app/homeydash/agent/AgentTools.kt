@@ -75,9 +75,9 @@ class AgentTools(
             string("name", "Flow name")
             required("name")
         })
-        add(tool("play_music", "Play a favourite, playlist or radio station on a player (e.g. a Sonos).") {
+        add(tool("play_music", "Play a favourite, album, playlist or radio station on a player (e.g. a Sonos).") {
             string("player", "Player alias")
-            string("query", "What to play, e.g. a playlist or station name")
+            string("query", "What to play: just the album, playlist or station name, e.g. \"Abbey Road\"")
             required("player", "query")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
@@ -335,7 +335,14 @@ class AgentTools(
         var picked: String? = null
         val args = buildMap<String, JsonElement> {
             card.inputArgs.forEachIndexed { i, arg ->
-                val v = values.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: return ok("\"$title\" needs ${arg.title ?: arg.name}.")
+                val v = values.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: run {
+                    // A play mode or a "shuffle" box left out takes its default, as in a Flow.
+                    when (arg.type) {
+                        "dropdown" -> arg.values?.firstOrNull()?.let { put(arg.name, JsonPrimitive(it.id)); return@forEachIndexed }
+                        "checkbox" -> { put(arg.name, JsonPrimitive(false)); return@forEachIndexed }
+                    }
+                    return ok("\"$title\" needs ${arg.title ?: arg.name}.")
+                }
                 val element: JsonElement = when (arg.type) {
                     "autocomplete", "dropdown" -> {
                         val items = home.choices(card, arg, v)
