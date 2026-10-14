@@ -38,6 +38,8 @@ data class AgentDevice(
     val hiddenOnDashboard: Boolean = false,
     /** The app it comes from, in words ("apple tv", "sonos"), so "the Apple TV" finds a TV named "Vardagsrum". */
     val kind: String? = null,
+    /** Homey can't reach it right now (unplugged, out of range); changing it does nothing. */
+    val unreachable: Boolean = false,
 ) {
     fun capability(id: String): AgentCapability? = capabilities.firstOrNull { it.id == id }
 }
@@ -118,6 +120,7 @@ class HomeView(
             list.forEach { d ->
                 append(d.alias).append(" \"").append(d.name).append("\" ").append(d.deviceClass)
                 d.kind?.let { append(" (").append(it).append(')') }
+                if (d.unreachable) append(" UNREACHABLE")
                 append(':')
                 d.capabilities.forEach { c -> append(' ').append(describe(c)) }
                 append('\n')
@@ -165,6 +168,7 @@ class HomeView(
                         secret = secret,
                         hiddenOnDashboard = device.hidden || device.id in hidden,
                         kind = kindOf(device),
+                        unreachable = !device.available,
                     )
                 }
                 .sortedWith(compareBy({ it.room ?: "" }, { it.name.lowercase() }))

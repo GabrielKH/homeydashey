@@ -109,11 +109,20 @@ class Agent(
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
                         if (!acted && answer.content.orEmpty().contains(IGNORE)) return AgentReply("", brain, ignored = true)
-                        // "I'll turn on the light" without doing it: small models sometimes stop at the promise.
-                        if (!acted && !nudged && PROMISE.containsMatchIn(answer.content.orEmpty())) {
+                        // "I'll turn on the light", or "the light is on" without doing it: small models
+                        // sometimes stop at the promise, or claim it's done.
+                        val said = answer.content.orEmpty()
+                        val command = COMMAND.containsMatchIn(text) && !STATUS_QUESTION.containsMatchIn(text)
+                        val claims = PROMISE.containsMatchIn(said) || (command && CLAIM.containsMatchIn(said))
+                        if (!acted && !nudged && claims) {
                             nudged = true
                             turn += ChatMessage.user(NUDGE)
                             return@repeat
+                        }
+                        // Still nothing done after the nudge: never let it say it did something.
+                        if (!acted && nudged && command && CLAIM.containsMatchIn(said)) {
+                            remember(turn.take(1) + ChatMessage("assistant", nothingDone(text)), localOnly)
+                            return AgentReply(nothingDone(text), brain, actions = listOf("The AI said it changed something but used no tool; nothing in the home was changed."), error = true)
                         }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
@@ -147,7 +156,12 @@ class Agent(
         val call = QuickCommand.call(action)
         val result = tools(view).run(call)
         val ok = result.text.startsWith("Done") || result.text.startsWith("Changed")
-        val reply = if (ok) QuickCommand.done(action, view) else result.text
+        val reply = when {
+            ok -> QuickCommand.done(action, view)
+            result.text.startsWith(QuickCommand.NOT_CHANGED_PREFIX) || result.text.startsWith(QuickCommand.UNREACHABLE_PREFIX) ->
+                QuickCommand.notChanged(action, view)
+            else -> result.text
+        }
         remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
         return AgentReply(reply, error = !ok, actions = listOf("${call.name} ${call.arguments} → ${result.text.take(140)} (without the AI)"))
     }
@@ -169,6 +183,10 @@ class Agent(
         }
         return AgentReply(text, actions = if (yes) listOf("confirmed: ${p.question}") else emptyList())
     }
+
+    private fun nothingDone(text: String): String =
+        if (Confirmation.looksSwedish(text)) "Förlåt, jag fick inte till det, så inget ändrades. Säg gärna vilken lampa eller enhet du menar."
+        else "Sorry, I didn't manage that, so nothing was changed. Tell me which light or device you mean."
 
     private fun tapToConfirm(text: String): String =
         if (Confirmation.looksSwedish(text)) "Tryck på Ja på surfplattan för att bekräfta." else "Tap Yes on the tablet to confirm."
@@ -283,10 +301,26 @@ class Agent(
         const val NUDGE = "(From the app, not the user: you said you would do something but called no tool, so nothing happened. " +
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(
-            """\b(i'?ll|i will|i'?m going to|let me|turning|switching|setting|dimming|starting|playing|""" +
+            // (?U): \b must count å, ä and ö as letters.
+            """(?U)\b(i'?ll|i will|i'?m going to|let me|turning|switching|setting|dimming|starting|playing|""" +
                 """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar)|tänder|släcker|slår (på|av)|sätter (på|igång))\b""",
             RegexOption.IGNORE_CASE,
         )
+        /** Saying something was changed: "Taklampan är tänd", "I've turned it off", "Done". */
+        val CLAIM = Regex(
+            // (?U): \b must count å, ä and ö as letters.
+            """(?U)\b(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|switched (on|off)|done|""" +
+                """har (tänt|släckt|satt|slagit|startat|stängt|dimmat|ändrat)|är (nu )?(tänd|tända|släckt|släckta|avstängd|avstängda|igång)|""" +
+                """tänt|släckt|klart|fixat)\b""",
+            RegexOption.IGNORE_CASE,
+        )
+        /** The user asked for a change, rather than how things are. */
+        val COMMAND = Regex(
+            // (?U): \b must count å, ä and ö as letters.
+            """(?U)\b(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|turn|switch|put|set|start|dim|raise|lower|open)\b""",
+            RegexOption.IGNORE_CASE,
+        )
+        val STATUS_QUESTION = Regex("""(?U)^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)\b""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val FORGET_AFTER_MS = 5 * 60 * 1000L
     }

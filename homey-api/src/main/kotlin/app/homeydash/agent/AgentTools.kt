@@ -190,7 +190,19 @@ class AgentTools(
         if (capabilityId.startsWith("homealarm_state") && text(value) == "disarmed") {
             return ToolResult("The assistant may never disarm the alarm. Use the Homey app or the alarm's own keypad.", lo)
         }
+        if (device.unreachable) {
+            return ToolResult("Homey can't reach ${device.name} right now, so it can't be changed. Tell the user it may be unplugged, switched off at the wall or out of range.", lo)
+        }
         home.setCapability(device.id, capabilityId, value)
+        // Homey sometimes accepts a change the device never makes; check before saying it's done.
+        val now = home.readBack(device.id, capabilityId)
+        if (now != null && !same(now, value)) {
+            return ToolResult(
+                "Homey accepted it, but ${device.name} still reports $capabilityId = ${text(now)}, so it didn't change. " +
+                    "Tell the user plainly; it may be out of range or switched off at the wall.",
+                lo,
+            )
+        }
         return ToolResult("Done: ${device.name} $capabilityId = ${text(value)}.", lo)
     }
 
@@ -204,12 +216,14 @@ class AgentTools(
             capabilityOf(d, capabilityId)?.takeIf { it.setable }?.let { d to it }
         }
         if (targets.isEmpty()) return ok("Nothing in ${view.rooms[roomId]} has $capabilityId.")
-        val changed = targets.mapNotNull { (d, c) ->
+        val (unreachable, reachable) = targets.partition { it.first.unreachable }
+        val missed = if (unreachable.isEmpty()) "" else " Homey can't reach ${unreachable.joinToString { it.first.name }}, so they weren't changed."
+        val changed = reachable.mapNotNull { (d, c) ->
             val value = coerce(c, raw) ?: return@mapNotNull null
             home.setCapability(d.id, c.id, value)
             d.name
         }
-        return ok("Changed ${changed.size}: ${changed.joinToString()}.")
+        return ok("Changed ${changed.size}: ${changed.joinToString()}.$missed")
     }
 
     private fun getDevice(alias: String): ToolResult {
@@ -486,6 +500,17 @@ class AgentTools(
                 c == "lamp" || c == "lampa" || c == "lampor" || c == "ljus" -> "light"
                 else -> c
             }
+        }
+
+        /** Whether Homey's [now] is the [wanted] value, allowing for a lamp rounding 30 % to 31 %. */
+        internal fun same(now: JsonElement, wanted: JsonElement): Boolean {
+            val a = now as? JsonPrimitive ?: return now == wanted
+            val b = wanted as? JsonPrimitive ?: return false
+            a.booleanOrNull?.let { return it == b.booleanOrNull }
+            val x = a.doubleOrNull
+            val y = b.doubleOrNull
+            if (x != null && y != null) return kotlin.math.abs(x - y) <= 0.03 * maxOf(1.0, kotlin.math.abs(y))
+            return a.contentOrNull == b.contentOrNull
         }
 
         private fun text(v: JsonElement): String = (v as? JsonPrimitive)?.contentOrNull ?: v.toString()

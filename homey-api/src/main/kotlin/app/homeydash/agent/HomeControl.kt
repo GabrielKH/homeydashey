@@ -42,6 +42,12 @@ interface HomeControl {
     /** What an autocomplete argument offers for [query], such as channels or playlists. */
     suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String): List<AutocompleteItem> = emptyList()
 
+    /**
+     * What Homey itself now says [capability] is, asked fresh rather than from what the
+     * dashboard last heard; null when it can't tell.
+     */
+    suspend fun readBack(deviceId: String, capability: String): JsonElement? = null
+
     /** Runs a Flow card; throws when Homey refuses. */
     suspend fun runAction(card: FlowCardAction, args: JsonObject) {}
 }
@@ -72,6 +78,12 @@ class StoreHomeControl(
 ) : HomeControl {
     override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) =
         store.setCapability(deviceId, capability, value, rethrow = true)
+
+    override suspend fun readBack(deviceId: String, capability: String): JsonElement? {
+        // Gives the device a moment to answer Homey before asking.
+        kotlinx.coroutines.delay(READ_BACK_MS)
+        return store.readBack(deviceId, capability)
+    }
 
     override suspend fun setMood(mood: Mood) = store.setMood(mood)
 
@@ -125,3 +137,5 @@ class StoreHomeControl(
         }
     }
 }
+
+private const val READ_BACK_MS = 1200L

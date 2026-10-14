@@ -70,6 +70,9 @@ class AgentTest {
         override suspend fun people() = listOf(HomeyPerson("Gabriel", true, false))
         override suspend fun variables() = listOf(LogicVariable("Alarm code", "string", JsonPrimitive("1234")))
         override suspend fun playMusic(deviceId: String, query: String): String? = null
+        /** What Homey says afterwards, per device; a device not listed changed as asked. */
+        var after = mapOf<String, JsonElement>()
+        override suspend fun readBack(deviceId: String, capability: String): JsonElement? = after[deviceId]
     }
 
     private class FakeDashboard : DashboardControl {
@@ -603,6 +606,44 @@ class AgentTest {
         assertFalse(second[0].text().contains("12:0") || second[0].text().contains("Gabriel"))
         assertEquals("vad är klockan", second[1].text())
         assertTrue(second.last().text().contains("12:07"))
+        server.shutdown()
+    }
+
+    @Test fun `a change that didn't happen isn't called done`() = runTest {
+        val home = FakeHome()
+        home.after = mapOf("d-lamp" to JsonPrimitive(true))
+        val tools = AgentTools(view(), home, FakeDashboard())
+        val r = tools.run(call("set_device", "device" to "light_1", "capability" to "onoff", "value" to "false"))
+        assertTrue(r.text, r.text.startsWith(QuickCommand.NOT_CHANGED_PREFIX))
+        // Without the AI too, and in Swedish.
+        val reply = Agent(ChatClient(OkHttpClient())).ask("släck kitchen lamp", AgentSettings(), { view() }, { AgentTools(it, home, FakeDashboard()) })
+        assertTrue(reply.text, reply.text.contains("svarar inte") && reply.error)
+        // A lamp Homey can't reach isn't even tried.
+        val offline = devices + ("d-lamp" to devices.getValue("d-lamp").copy(available = false))
+        val v = HomeView.build(zones, offline, moods, emptySet(), AgentSettings(), true)
+        assertTrue(v.describe().contains("UNREACHABLE"))
+        home.sets.clear()
+        val r2 = AgentTools(v, home, FakeDashboard()).run(call("set_device", "device" to "light_1", "capability" to "onoff", "value" to "false"))
+        assertTrue(r2.text.startsWith(QuickCommand.UNREACHABLE_PREFIX))
+        assertTrue(home.sets.isEmpty())
+        assertTrue(AgentTools.same(JsonPrimitive(0.31), JsonPrimitive(0.3)))
+        assertFalse(AgentTools.same(JsonPrimitive(0.0), JsonPrimitive(0.3)))
+    }
+
+    @Test fun `saying it's done without a tool is never passed on`() = runTest {
+        val server = MockWebServer()
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Taklampan är tänd."}}]}""")) }
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Ja, den är tänd."}}]}"""))
+        server.start()
+        val home = FakeHome()
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val reply = agent.ask("kan du göra så att det blir ljust i taket tack, tänd", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) })
+        assertTrue(reply.text, reply.text.startsWith("Förlåt") && reply.error)
+        assertEquals(2, server.requestCount)
+        // Asking how things are is answered as is, without a nudge.
+        assertEquals("Ja, den är tänd.", agent.ask("är taklampan tänd?", settings, { view(settings, it) }, { AgentTools(it, home, FakeDashboard()) }).text)
+        assertEquals(3, server.requestCount)
         server.shutdown()
     }
 

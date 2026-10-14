@@ -89,5 +89,16 @@ object QuickCommand {
         }
     }
 
+    /** What to say when Homey couldn't reach the device, or the device didn't change. */
+    fun notChanged(a: Action, view: HomeView): String {
+        val what = a.device?.name ?: view.rooms[a.roomId].orEmpty()
+        return if (a.swedish) "${cap(what)} svarar inte i Homey, så den ändrades inte. Den kan vara strömlös eller utom räckhåll."
+        else "${cap(what)} isn't responding in Homey, so it didn't change. It may be switched off at the wall or out of range."
+    }
+
+    /** How the tools begin a message about a change that didn't happen. */
+    const val NOT_CHANGED_PREFIX = "Homey accepted it, but"
+    const val UNREACHABLE_PREFIX = "Homey can't reach"
+
     private fun cap(s: String) = s.replaceFirstChar { it.uppercase() }
 }
