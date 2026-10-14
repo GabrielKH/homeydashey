@@ -298,29 +298,30 @@ class Agent(
         const val IGNORE = "[ignore]"
         const val QUESTION_LABEL = "The user said:"
         const val QUESTION = "\n\n$QUESTION_LABEL "
+        // Word edges that count å, ä and ö as letters, which \b doesn't. Not (?U): Android's
+        // regex engine refuses it, and the app crashed on start.
+        private const val W = """(?<![\p{L}\d_])"""
+        private const val E = """(?![\p{L}\d_])"""
         const val NUDGE = "(From the app, not the user: you said you would do something but called no tool, so nothing happened. " +
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(
-            // (?U): \b must count å, ä and ö as letters.
-            """(?U)\b(i'?ll|i will|i'?m going to|let me|turning|switching|setting|dimming|starting|playing|""" +
-                """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar)|tänder|släcker|slår (på|av)|sätter (på|igång))\b""",
+            """$W(i'?ll|i will|i'?m going to|let me|turning|switching|setting|dimming|starting|playing|""" +
+                """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar)|tänder|släcker|slår (på|av)|sätter (på|igång))$E""",
             RegexOption.IGNORE_CASE,
         )
         /** Saying something was changed: "Taklampan är tänd", "I've turned it off", "Done". */
         val CLAIM = Regex(
-            // (?U): \b must count å, ä and ö as letters.
-            """(?U)\b(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|switched (on|off)|done|""" +
+            """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|switched (on|off)|done|""" +
                 """har (tänt|släckt|satt|slagit|startat|stängt|dimmat|ändrat)|är (nu )?(tänd|tända|släckt|släckta|avstängd|avstängda|igång)|""" +
-                """tänt|släckt|klart|fixat)\b""",
+                """tänt|släckt|klart|fixat)$E""",
             RegexOption.IGNORE_CASE,
         )
         /** The user asked for a change, rather than how things are. */
         val COMMAND = Regex(
-            // (?U): \b must count å, ä and ö as letters.
-            """(?U)\b(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|turn|switch|put|set|start|dim|raise|lower|open)\b""",
+            """$W(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|turn|switch|put|set|start|dim|raise|lower|open)$E""",
             RegexOption.IGNORE_CASE,
         )
-        val STATUS_QUESTION = Regex("""(?U)^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)\b""", RegexOption.IGNORE_CASE)
+        val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val FORGET_AFTER_MS = 5 * 60 * 1000L
     }
