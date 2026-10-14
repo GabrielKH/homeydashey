@@ -216,4 +216,10 @@ object Sym {
     val tag = Ic(R.drawable.ph_tag, R.drawable.ph_tag_fill)
     val download = Ic(R.drawable.ph_download_simple, R.drawable.ph_download_simple_fill)
     val steps = Ic(R.drawable.ph_list_numbers, R.drawable.ph_list_numbers_fill)
+
+    // Fridge
+    val fridge = Ic(R.drawable.ph_fridge, R.drawable.ph_fridge_fill)
+    val barcode = Ic(R.drawable.ph_barcode, R.drawable.ph_barcode_fill)
+    val pantry = Ic(R.drawable.ph_package, R.drawable.ph_package_fill)
+    val hourglass = Ic(R.drawable.ph_hourglass_medium, R.drawable.ph_hourglass_medium_fill)
 }

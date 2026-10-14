@@ -35,6 +35,8 @@ class AgentTools(
     private val web: WebLookup? = null,
     /** The recipes on the tablet and the one being cooked; null when the dashboard has none. */
     private val recipes: RecipeTools? = null,
+    /** What is in the fridge, freezer and pantry; null when the dashboard has none. */
+    private val fridge: FridgeTools? = null,
 ) {
     /**
      * Set once this conversation has seen something kept to the local AI; from then on
@@ -74,8 +76,8 @@ class AgentTools(
             string("query", "What to play, e.g. a playlist or station name")
             required("player", "query")
         })
-        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, or a room name.") {
-            string("page", "overview, moods, media, calendar, recipes, or a room name")
+        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, or a room name.") {
+            string("page", "overview, moods, media, calendar, recipes, fridge, or a room name")
             required("page")
         })
         add(tool("open_device", "Open a device's controls on the dashboard, e.g. a lamp's colour or a TV remote.") {
@@ -109,6 +111,7 @@ class AgentTools(
             required("question")
         })
         recipes?.let { addAll(it.specs()) }
+        fridge?.let { addAll(it.specs()) }
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
@@ -140,7 +143,7 @@ class AgentTools(
             "who_is_home" -> whoIsHome()
             "variables" -> variables()
             "ask_internet" -> askInternet(a.str("question"))
-            else -> recipes?.run(call) ?: ok("There is no tool called ${call.name}.")
+            else -> recipes?.run(call) ?: fridge?.run(call) ?: ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
@@ -259,6 +262,7 @@ class AgentTools(
             "moods" to "moods", "media" to "media", "music" to "media", "musik" to "media",
             "calendar" to "calendar", "kalender" to "calendar",
             "recipes" to "recipes", "recipe" to "recipes", "recept" to "recipes",
+            "fridge" to "fridge", "kylen" to "fridge", "kylskåp" to "fridge", "kylskåpet" to "fridge", "freezer" to "fridge", "frysen" to "fridge",
         )
         fixed[p]?.let { return ok(if (dashboard.openPage(it)) "Showing $it." else "Can't show $it.") }
         val roomId = view.room(page) ?: return ok("There's no page or room called $page.")

@@ -10,6 +10,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import app.homeydash.fridge.Fridge
+import app.homeydash.fridge.OpenFoodFacts
 import app.homeydash.recipes.Cooking
 import app.homeydash.recipes.ImportResult
 import app.homeydash.recipes.ParsedRecipe
@@ -34,7 +36,8 @@ import kotlin.coroutines.resume
 
 /**
  * The recipes on the tablet: the book, the recipe being cooked, importing from links and
- * Recipe Keeper exports, and the photos. One instance lives as long as the app.
+ * Recipe Keeper exports, and the photos; and what is in the fridge. One instance lives as
+ * long as the app.
  */
 class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
     private val appContext = context.applicationContext
@@ -45,8 +48,15 @@ class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
     /** A link shared to the app from a browser ("Share → Homey Dashboard"), waiting to be imported. */
     val sharedLink = MutableStateFlow<String?>(null)
 
+    /** What is in the fridge, freezer and pantry; names for barcodes come from Open Food Facts. */
+    val fridge = Fridge(File(appContext.filesDir, "fridge"), OpenFoodFacts(http))
+
+    /** Set by the overview's fridge card to open the scanner as soon as the fridge page shows. */
+    val scanRequest = MutableStateFlow(false)
+
     init {
         scope.launch { book.load() }
+        scope.launch { fridge.load() }
     }
 
     /**

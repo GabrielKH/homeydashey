@@ -84,6 +84,9 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.mlkit.face.detection)
     implementation(libs.tensorflow.lite)
+    // Fridge: barcode and QR scanning on the camera, offline (the model is in the app).
+    implementation(libs.androidx.camera.view)
+    implementation(libs.mlkit.barcode.scanning)
     // Wake name and voice recognition, offline. Vosk calls its native library through JNA,
     // which must be the Android (aar) build.
     implementation(libs.vosk.android) { exclude(group = "net.java.dev.jna") }

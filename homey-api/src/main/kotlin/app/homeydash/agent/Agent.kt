@@ -27,6 +27,8 @@ data class AskContext(
     val followUp: Boolean = false,
     /** The recipe open on the tablet and the step the cook is on, in words; null when none is open. */
     val kitchen: String? = null,
+    /** What is in the fridge and what to eat first, in words; null when nothing is tracked. */
+    val fridge: String? = null,
 )
 
 /**
@@ -214,6 +216,12 @@ class Agent(
             append("When the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
             append("and tell them the step in plain words. Answer questions about amounts and times from this recipe. ")
             append("If the step has a cooking time, offer to start a timer for it.\n")
+        }
+        context.fridge?.let { fridge ->
+            append("\nFridge: ").append(fridge)
+            append("Answer what's in the fridge, freezer or pantry and what goes off soon from fridge_contents. ")
+            append("When the user says they bought, ate, finished, opened or froze something, update the fridge with your tools. ")
+            append("When asked what to cook, suggest using what goes off first, and look in find_recipes if you have it.\n")
         }
         append("\nThe home now (alias \"name\" class: capability=value [set range]):\n")
         append(view.describe())

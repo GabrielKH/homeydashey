@@ -101,7 +101,7 @@ fun OverviewScreen(
     /** The saved order of every card on the overview, by key (lanes, see [OverviewLanes]). */
     order: List<String>,
     onOrder: (List<String>) -> Unit,
-    /** Draws the weather or calendar card for its key. */
+    /** Draws the weather, calendar or fridge card for its key. */
     widget: @Composable (String) -> Unit,
 ) {
     val g = GlassTheme.colors
@@ -121,6 +121,7 @@ fun OverviewScreen(
     val laneCards = buildList {
         add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
         add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
+        add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
         if (player != null) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
         favouritesById.forEach { (key, device) ->
             val wide = tileSpan(device) > 1
@@ -509,7 +510,7 @@ internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () ->
 }
 
 /** The overview's cards that aren't devices or rooms. */
-private val WIDGETS = setOf("weather", "calendar", "player")
+private val WIDGETS = setOf("weather", "calendar", "player", "fridge")
 
 private fun isWidgetKey(key: Any): Boolean = key is String && key in WIDGETS
 

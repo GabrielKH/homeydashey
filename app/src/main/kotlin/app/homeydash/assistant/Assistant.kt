@@ -393,7 +393,7 @@ class Assistant(
                     text.trim(), s,
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
-                    context = AskContext(speaker = speakerName(s), person = person, followUp = followUp, kitchen = services.kitchen?.cooking?.describe()),
+                    context = AskContext(speaker = speakerName(s), person = person, followUp = followUp, kitchen = services.kitchen?.cooking?.describe(), fridge = services.kitchen?.fridge?.describe()),
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -429,6 +429,7 @@ class Assistant(
         v, home, bridge,
         web = services.web.lookup(v.settings.webSearch()),
         recipes = services.kitchen?.let { k -> app.homeydash.agent.RecipeTools(k.book, k.cooking) { bridge.openPage("recipes") } },
+        fridge = services.kitchen?.let { k -> app.homeydash.agent.FridgeTools(k.fridge) { bridge.openPage("fridge") } },
     )
 
     private fun view(s: AgentSettings, local: Boolean): HomeView {

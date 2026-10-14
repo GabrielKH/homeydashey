@@ -256,6 +256,7 @@ private const val MOODS = "moods"
 private const val MEDIA = "media"
 private const val CALENDAR = "calendar"
 private const val RECIPES = "recipes"
+private const val FRIDGE = "fridge"
 private const val ROOM = "room:"
 
 @Composable
@@ -396,6 +397,7 @@ fun DashboardScreen(
                         target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
                         target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
                         target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label) })
+                        target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
                         target == CALENDAR -> CalendarScreen(
                             hasPermission = hasCalendar,
                             events = events,
@@ -431,6 +433,11 @@ fun DashboardScreen(
                             order = overviewOrder,
                             onOrder = display::setOverviewOrder,
                             widget = { key ->
+                                if (key == "fridge") FridgeCard(
+                                    kitchen,
+                                    onOpen = { destination = FRIDGE },
+                                    onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
+                                )
                                 if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                 if (key == "calendar") CalendarCard(
                                     hasPermission = hasCalendar,
@@ -668,6 +675,7 @@ private fun Sidebar(
         if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA, compact = compact) { onNavigate(MEDIA) }
         if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
         NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
+        NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {
