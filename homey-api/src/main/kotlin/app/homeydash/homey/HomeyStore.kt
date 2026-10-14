@@ -2,7 +2,9 @@ package app.homeydash.homey
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,7 +71,19 @@ class HomeyStore(
 
     fun start() {
         if (eventsJob != null) return
-        eventsJob = scope.launch { realtime.events.collect(::apply) }
+        eventsJob = scope.launch {
+            // Homey sends a burst of events at once (energy meters, a room switching), and each
+            // new snapshot redraws the dashboard. Events arriving close together become one update.
+            val queue = Channel<HomeyEvent>(Channel.UNLIMITED)
+            launch { realtime.events.collect { queue.send(it) } }
+            while (true) {
+                val first = queue.receive()
+                delay(BATCH_MS)
+                val batch = mutableListOf(first)
+                while (true) batch += queue.tryReceive().getOrNull() ?: break
+                applyAll(batch)
+            }
+        }
         realtime.subscribe(HomeyRealtime.DEVICES_URI)
         realtime.subscribe(HomeyRealtime.ZONES_URI)
         realtime.subscribe(HomeyRealtime.MOODS_URI)
@@ -191,6 +205,32 @@ class HomeyStore(
     /** Shows a message from the app itself in the error banner. */
     fun reportError(message: String) = _snapshot.update { it.copy(error = message) }
 
+    /** Applies [events] in order; runs of capability changes become a single new snapshot. */
+    internal fun applyAll(events: List<HomeyEvent>) {
+        var i = 0
+        while (i < events.size) {
+            val event = events[i]
+            if (event !is HomeyEvent.CapabilityChanged) {
+                apply(event)
+                i++
+                continue
+            }
+            var end = i
+            while (end < events.size && events[end] is HomeyEvent.CapabilityChanged) end++
+            val run = events.subList(i, end).map { it as HomeyEvent.CapabilityChanged }
+            _snapshot.update { snap ->
+                var devices: MutableMap<String, Device>? = null
+                for (change in run) {
+                    val device = (devices ?: snap.devices)[change.deviceId] ?: continue
+                    val updated = device.withCapabilityValue(change.capabilityId, change.value)
+                    if (updated != device) (devices ?: snap.devices.toMutableMap().also { devices = it })[device.id] = updated
+                }
+                devices?.let { snap.copy(devices = it) } ?: snap
+            }
+            i = end
+        }
+    }
+
     internal fun apply(event: HomeyEvent) {
         when (event) {
             is HomeyEvent.CapabilityChanged -> _snapshot.update { snap ->
@@ -209,5 +249,10 @@ class HomeyStore(
             is HomeyEvent.MoodDeleted -> _snapshot.update { it.copy(moods = it.moods - event.moodId) }
             HomeyEvent.Reconnected -> scope.launch { reload() }
         }
+    }
+
+    private companion object {
+        /** How long to gather realtime events before showing them; short enough to feel instant. */
+        const val BATCH_MS = 120L
     }
 }

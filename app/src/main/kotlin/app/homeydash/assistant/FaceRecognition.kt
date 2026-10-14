@@ -202,11 +202,26 @@ class FaceService(private val context: Context) {
     private fun analyze(image: ImageProxy) {
         image.use { proxy ->
             val now = SystemClock.elapsedRealtime()
-            val interval = if (enrolling != null) 250L else 500L
+            // Twice a second while nobody is there, so a face is noticed at once; once someone
+            // has been recognised, every 1.5 s is enough to know they're still there.
+            val known = _seen.value?.let { it.person != null && now - it.at < RECOGNISED_FOR_MS } == true
+            val interval = when {
+                enrolling != null -> 250L
+                known -> 1_500L
+                else -> 500L
+            }
             if (now - lastFrame < interval) return
             lastFrame = now
-            val frame = runCatching { rotate(proxy.toBitmap(), proxy.imageInfo.rotationDegrees) }.getOrNull() ?: return
-            val sample = runCatching { engine.sample(frame) }.getOrNull()
+            val raw = runCatching { proxy.toBitmap() }.getOrNull() ?: return
+            val frame = runCatching { rotate(raw, proxy.imageInfo.rotationDegrees) }.getOrNull()
+            if (frame !== raw) raw.recycle()
+            frame ?: return
+            val sample = try {
+                runCatching { engine.sample(frame) }.getOrNull()
+            } finally {
+                // Each frame is over a megabyte; freeing it at once spares the tablet garbage-collection pauses.
+                frame.recycle()
+            }
             enrolling?.let { it(sample); return }
             if (sample == null) return
             val person = FaceMatcher.match(sample.embedding, _people.value.filter { it.samples.isNotEmpty() })
@@ -293,3 +308,6 @@ class FaceService(private val context: Context) {
         }
     }
 }
+
+/** How long after recognising someone face recognition looks less often. */
+private const val RECOGNISED_FOR_MS = 10_000L
