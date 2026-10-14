@@ -33,6 +33,8 @@ class HomeyStore(
     private val client: HomeyClient,
     private val realtime: HomeyRealtime,
     private val scope: CoroutineScope,
+    /** Cards the app runs itself, e.g. Sonos favourites played straight on the speakers. */
+    private val extraCards: List<CardSource> = emptyList(),
 ) {
     private val _snapshot = MutableStateFlow(HomeySnapshot())
     val snapshot: StateFlow<HomeySnapshot> = _snapshot.asStateFlow()
@@ -91,9 +93,24 @@ class HomeyStore(
             val deviceCards = runCatching { FlowCards.byDevice(client.flowCardActions()) }.getOrDefault(emptyMap())
             devices.keys.forEach { realtime.subscribe(HomeyRealtime.deviceUri(it)) }
             _snapshot.value = HomeySnapshot(zones = zones, devices = devices.mapValues { noted(it.value) }, moods = moods, hiddenByUser = hiddenByUser, deviceCards = deviceCards, loaded = true)
+            if (extraCards.isNotEmpty()) scope.launch { addExtraCards(deviceCards) }
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = e.message ?: e.toString()) }
         }
+    }
+
+    /** Adds each [CardSource]'s cards to Homey's own, skipping any a device already has from Homey. */
+    private suspend fun addExtraCards(homeyCards: Map<String, List<FlowCardAction>>) {
+        val snapshot = _snapshot.value
+        val extra = extraCards.map { source -> runCatching { source.cards(snapshot) }.getOrDefault(emptyMap()) }
+        val merged = homeyCards.toMutableMap()
+        extra.forEach { cards ->
+            cards.forEach { (deviceId, list) ->
+                val own = merged[deviceId].orEmpty()
+                merged[deviceId] = own + list.filter { c -> own.none { it.cardId == c.cardId } }
+            }
+        }
+        _snapshot.update { it.copy(deviceCards = merged) }
     }
 
     /**
@@ -143,7 +160,8 @@ class HomeyStore(
     /** Runs a Flow card; failures show in the error banner, and with [rethrow] are thrown too. */
     suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap()), rethrow: Boolean = false) {
         try {
-            client.runAction(card, args)
+            val source = extraCards.firstOrNull { it.owns(card) }
+            if (source != null) source.run(card, args) else client.runAction(card, args)
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = "Couldn't run ${card.title ?: card.cardId}: ${e.message}") }
             if (rethrow) throw e
@@ -166,7 +184,7 @@ class HomeyStore(
     }
 
     suspend fun autocomplete(card: FlowCardAction, arg: String, query: String = ""): List<AutocompleteItem> =
-        client.autocomplete(card, arg, query)
+        extraCards.firstOrNull { it.owns(card) }?.autocomplete(card, arg, query) ?: client.autocomplete(card, arg, query)
 
     fun clearError() = _snapshot.update { it.copy(error = null) }
 

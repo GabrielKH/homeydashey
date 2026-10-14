@@ -94,7 +94,7 @@ fun MusicSheet(
         )
         if (target == null) {
             Text(
-                "No speaker here can play favourites or playlists yet. Install the Sonos (local) app on your Homey and give the API key the Flow permission.",
+                "No speaker here can play favourites or playlists yet. Sonos speakers on the same Wi-Fi as the tablet show up here by themselves.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = g.muted,
             )

@@ -8,6 +8,7 @@ import app.homeydash.data.CalendarRepository
 import app.homeydash.data.WeatherRepository
 import app.homeydash.data.DisplaySettings
 import app.homeydash.data.HomeyDiscovery
+import app.homeydash.data.SonosFinder
 import app.homeydash.data.Kitchen
 import app.homeydash.data.SavedHomey
 import app.homeydash.data.SettingsRepository
@@ -25,6 +26,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import app.homeydash.sonos.SonosCards
+import app.homeydash.sonos.SonosClient
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -48,6 +51,7 @@ class AppContainer(context: Context) {
     private val connector = HomeyConnector(http)
 
     val discovery = HomeyDiscovery(context, http)
+    private val sonos = SonosCards(SonosClient(http), SonosFinder(context, http)::find)
     val updater = AppUpdater(context, http)
     val calendar = CalendarRepository(context, settings, scope)
 
@@ -114,7 +118,7 @@ class AppContainer(context: Context) {
     }
 
     private fun HomeySession.newStore(saved: SavedHomey) = SessionState.Ready(
-        store = HomeyStore(client, newRealtime(saved.apiKey, http), scope),
+        store = HomeyStore(client, newRealtime(saved.apiKey, http), scope, extraCards = listOf(sonos)),
         info = info,
     )
 }
