@@ -388,7 +388,10 @@ fun DashboardScreen(
     FaceWatch(assistantServices, assistantSettings)
     WakeWatch(assistant, assistantServices, assistantSettings)
 
-    LaunchedEffect(destination) { actions.rearrange.done() }
+    LaunchedEffect(destination) {
+        actions.rearrange.done()
+        if (destination == OVERVIEW) assistant.compact = false
+    }
     val roomId = destination.takeIf { it.startsWith(ROOM) }?.removePrefix(ROOM)
     val (backgroundKey, backgroundSpec) = backgroundFor(backgrounds, roomId)
     Crossfade(targetState = backgroundKey to backgroundSpec, animationSpec = tween(400), label = "backdrop") { (key, spec) ->

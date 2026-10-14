@@ -3,6 +3,8 @@ package app.homeydash.ui.dashboard
 import app.homeydash.agent.AgentEvent
 import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.DashboardBridge
+import app.homeydash.assistant.Scene
+import app.homeydash.assistant.SceneKind
 import app.homeydash.data.CalendarRepository
 import app.homeydash.data.DisplaySettings
 import app.homeydash.data.WeatherRepository
@@ -10,6 +12,7 @@ import app.homeydash.homey.CardKind
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.Goodnight
 import app.homeydash.homey.HomeyStore
+import app.homeydash.homey.WeatherKind
 import app.homeydash.ui.theme.ThemeMode
 import java.time.Instant
 import java.time.LocalDate
@@ -33,11 +36,14 @@ class AssistantBridge(
 
     override fun openPage(page: String, roomId: String?): Boolean {
         navigate(if (page == "room" && roomId != null) "room:$roomId" else page)
+        // The page is what was asked for: the face makes room for it.
+        assistant.compact = true
         return true
     }
 
     override fun openDevice(deviceId: String): Boolean {
         val device = store.snapshot.value.devices[deviceId] ?: return false
+        assistant.compact = true
         when {
             actions.hasRemote(device) -> actions.open(Sheet.Remote(device.id))
             DashboardLayout.cardKind(device) == CardKind.Light -> actions.open(Sheet.Light(device.id))
@@ -68,6 +74,10 @@ class AssistantBridge(
     override suspend fun weather(): String? {
         val f = weather.state.value.forecast ?: return null
         val c = f.current
+        // Rain on screen while it says it rains: today's sky now, or tomorrow's when that was asked.
+        val asked = assistant.lines.lastOrNull { it.fromUser }?.text.orEmpty()
+        val tomorrow = Regex("(?i)tomorrow|imorgon|i morgon").containsMatchIn(asked)
+        assistant.scene = Scene(sceneOf(if (tomorrow) f.days.getOrNull(1)?.kind ?: c.kind else c.kind, tomorrow || c.isDay))
         val now = "${weather.state.value.placeName ?: "Here"}: ${c.kind.label}, ${c.temperature.toInt()} °C" +
             (c.feelsLike?.let { ", feels like ${it.toInt()} °C" } ?: "") + (c.wind?.let { ", wind ${it.toInt()} m/s" } ?: "")
         val days = f.days.take(4).joinToString("\n") { d ->
@@ -110,4 +120,13 @@ class AssistantBridge(
         )
         return true
     }
+}
+
+private fun sceneOf(kind: WeatherKind, day: Boolean): SceneKind = when (kind) {
+    WeatherKind.Clear -> if (day) SceneKind.Sun else SceneKind.Night
+    WeatherKind.PartlyCloudy, WeatherKind.Cloudy -> SceneKind.Clouds
+    WeatherKind.Fog -> SceneKind.Fog
+    WeatherKind.Drizzle, WeatherKind.Rain -> SceneKind.Rain
+    WeatherKind.Snow -> SceneKind.Snow
+    WeatherKind.Storm -> SceneKind.Storm
 }

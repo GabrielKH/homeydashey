@@ -85,6 +85,11 @@ data class Line(
     val actions: List<String> = emptyList(),
 )
 
+/** What [Scene] the assistant shows with an answer. */
+enum class SceneKind { Sun, Night, Clouds, Rain, Snow, Storm, Fog }
+
+data class Scene(val kind: SceneKind)
+
 /** A kitchen timer started by voice or by hand. */
 data class KitchenTimer(val id: Long, val label: String?, val endsAt: Long, val seconds: Int)
 
@@ -130,6 +135,14 @@ class Assistant(
     /** Talking by voice right now: the face fills the screen. */
     val voiceActive: Boolean
         get() = state == AssistantState.Listening || conversing || (lastByVoice && state != AssistantState.Idle)
+    /**
+     * The face is a small window instead of the whole screen, so the page it opened (a recipe,
+     * a room) can be used while it keeps talking. It stays small, also for the next question
+     * while cooking, until it is tapped open or the dashboard is back on the overview.
+     */
+    var compact by mutableStateOf(false)
+    /** A small moving picture that goes with the answer, like rain while it tells the weather. */
+    var scene by mutableStateOf<Scene?>(null)
     val lines = mutableStateListOf<Line>()
     var pending by mutableStateOf<PendingAction?>(null)
         private set
@@ -175,6 +188,7 @@ class Assistant(
         warmUp()
         open = true
         partial = ""
+        scene = null
         state = AssistantState.Listening
         val local = settings.mode == BrainMode.Local
         // Once someone speaks Swedish, the next questions are heard as Swedish, in this conversation
