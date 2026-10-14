@@ -98,17 +98,22 @@ class StoreHomeControl(
     override suspend fun playMusic(deviceId: String, query: String): String? {
         // Looks through every source (favourites, playlists, radio…) and plays the best match
         // of all, so "P3" finds the radio station even when a favourite also says "P3 Dokumentär".
-        val found = FlowCards.musicSources(cards()[deviceId].orEmpty()).flatMap { source ->
+        val found = FlowCards.musicSources(deviceActions(deviceId)).flatMap { source ->
             runCatching { choices(source.card, source.arg, query) }.getOrDefault(emptyList()).map { source to it }
         }
         val best = NameMatch.best(query, found) { NameMatch.score(query, it.second.name) }
             ?: found.firstOrNull { it.first.arg.type == "autocomplete" && query.isNotBlank() }
             ?: return null
-        runAction(best.first.card, JsonObject(mapOf(best.first.arg.name to FlowCards.argValue(best.first.arg, best.second))))
+        runAction(best.first.card, FlowCards.musicArgs(best.first, best.second))
         return best.second.name
     }
 
-    override fun deviceActions(deviceId: String): List<FlowCardAction> = cards()[deviceId].orEmpty()
+    /**
+     * The device's cards, and those of its twins: the same speaker added by a second app
+     * (Sonos and Sonos LocalAPI), often hidden, whose albums and playlists count too.
+     */
+    override fun deviceActions(deviceId: String): List<FlowCardAction> =
+        FlowCards.withTwins(store.snapshot.value.devices, cards(), deviceId)
 
     override suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String): List<AutocompleteItem> =
         if (arg.type == "dropdown") FlowCards.dropdownItems(arg) else store.autocomplete(card, arg.name, query)

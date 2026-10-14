@@ -1,5 +1,6 @@
 package app.homeydash.homey
 
+import app.homeydash.agent.NameMatch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -90,6 +91,27 @@ object FlowCards {
             else -> emptyList()
         }
         return items.mapNotNull { runCatching { HomeyJson.decodeFromJsonElement(FlowCardAction.serializer(), it) }.getOrNull() }
+    }
+
+    /**
+     * Other devices that are the same thing from another app, of the same kind: the same name anywhere (a hidden
+     * copy often stays in the home's top zone), or a name containing the other one in the same room.
+     */
+    fun twinsOf(devices: Map<String, Device>, deviceId: String): List<String> {
+        val d = devices[deviceId] ?: return emptyList()
+        val name = NameMatch.normalize(d.name)
+        val app = d.driverUri?.substringBeforeLast(':') ?: return emptyList()
+        return devices.values.filter { o ->
+            if (o.id == d.id || o.homeyClass != d.homeyClass || o.driverUri?.substringBeforeLast(':') == app) return@filter false
+            val other = NameMatch.normalize(o.name)
+            other == name || (o.zone == d.zone && other.length >= 3 && name.length >= 3 && (other.contains(name) || name.contains(other)))
+        }.map { it.id }
+    }
+
+    /** A device's cards, and those of its [twinsOf] that it doesn't have itself (albums on a hidden Sonos LocalAPI copy). */
+    fun withTwins(devices: Map<String, Device>, cards: Map<String, List<FlowCardAction>>, deviceId: String): List<FlowCardAction> {
+        val own = cards[deviceId].orEmpty()
+        return own + twinsOf(devices, deviceId).flatMap { twin -> cards[twin].orEmpty().filter { c -> own.none { it.cardId == c.cardId } } }
     }
 
     fun byDevice(cards: List<FlowCardAction>): Map<String, List<FlowCardAction>> =
@@ -183,8 +205,10 @@ object FlowCards {
     /** Cards that play something picked from a list: favourites, playlists, albums, radio. */
     fun musicSources(cards: List<FlowCardAction>): List<MusicSource> = cards.mapNotNull { card ->
         val id = card.cardId.lowercase()
-        val arg = card.inputArgs.firstOrNull { it.type == "autocomplete" || it.type == "dropdown" } ?: return@mapNotNull null
-        if (card.inputArgs.size > 1) return@mapNotNull null
+        val arg = card.inputArgs.firstOrNull { it.type == "autocomplete" }
+            ?: card.inputArgs.firstOrNull { it.type == "dropdown" } ?: return@mapNotNull null
+        // Other arguments must have a safe default (a play mode, a "shuffle" box), never a volume.
+        if (card.inputArgs.any { it !== arg && it.type != "dropdown" && it.type != "checkbox" }) return@mapNotNull null
         val kind = MUSIC_WORDS.firstOrNull { it in id } ?: return@mapNotNull null
         MusicSource(MUSIC_TITLES.getValue(kind), card, arg)
     }.sortedBy { MUSIC_WORDS.indexOfFirst { w -> w in it.card.cardId.lowercase() } }
@@ -215,4 +239,16 @@ object FlowCards {
     /** The value to send for [item]: dropdowns take the bare id, autocompletes the whole entry. */
     fun argValue(arg: FlowCardArg, item: AutocompleteItem): JsonElement =
         if (arg.type == "dropdown") item.raw.getValue("id").jsonPrimitive else item.raw
+
+    /** The arguments to run a music source with: the picked item, and the defaults of the rest. */
+    fun musicArgs(source: MusicSource, item: AutocompleteItem): JsonObject = JsonObject(
+        source.card.inputArgs.mapNotNull { arg ->
+            when {
+                arg === source.arg -> arg.name to argValue(arg, item)
+                arg.type == "dropdown" -> arg.values?.firstOrNull()?.let { arg.name to JsonPrimitive(it.id) }
+                arg.type == "checkbox" -> arg.name to JsonPrimitive(false)
+                else -> null
+            }
+        }.toMap()
+    )
 }

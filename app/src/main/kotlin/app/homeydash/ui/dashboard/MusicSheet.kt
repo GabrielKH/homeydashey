@@ -56,7 +56,6 @@ import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
-import kotlinx.serialization.json.JsonObject
 
 /** Speakers whose apps can play something picked from a list (Sonos favourites, playlists…). */
 fun musicSpeakers(devices: Collection<Device>, actions: DashboardActions): List<Device> =
@@ -95,7 +94,7 @@ fun MusicSheet(
         )
         if (target == null) {
             Text(
-                "No speaker here can play favourites or playlists yet. Install the Sonos (local) app on your Homey and give the API key the Flow permission.",
+                "No speaker here can play favourites or playlists yet. Sonos speakers on the same Wi-Fi as the tablet show up here by themselves.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = g.muted,
             )
@@ -164,7 +163,7 @@ fun MusicSheet(
                 ) {
                     items(list) { item ->
                         MusicItem(item, actions) {
-                            actions.run(source.card, JsonObject(mapOf(source.arg.name to FlowCards.argValue(source.arg, item))))
+                            actions.run(source.card, FlowCards.musicArgs(source, item))
                             onDismiss()
                         }
                     }

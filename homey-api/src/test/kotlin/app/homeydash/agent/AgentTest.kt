@@ -12,6 +12,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -791,5 +793,32 @@ class AgentTest {
         assertTrue(prompt.contains("A recipe is open on the tablet: \"Pannkakor\""))
         assertTrue(prompt.contains("2. Stek i smör.   <-- CURRENT STEP"))
         assertTrue(AgentTools(view(), FakeHome(), FakeDashboard(), recipes = recipes).specs().any { it.name == "recipe_step" })
+    }
+
+    @Test fun `a speaker uses the album cards of its twin from another app`() {
+        val devices = listOf(
+            Device("son", "Kök", zone = "z-kitchen", deviceClass = "speaker", driverUri = "homey:app:com.sonos:speaker"),
+            Device("local", "Kök", zone = "z-home", deviceClass = "speaker", hidden = true, driverUri = "homey:app:nl.xiut.sonoslocal:speaker"),
+            Device("lamp", "Kök", zone = "z-kitchen", deviceClass = "light", driverUri = "homey:app:com.ikea:bulb"),
+            Device("tv", "Vardagsrum", zone = "z-living", deviceClass = "speaker", driverUri = "homey:app:nl.xiut.sonoslocal:speaker"),
+        ).associateBy { it.id }
+        assertEquals(listOf("local"), app.homeydash.homey.FlowCards.twinsOf(devices, "son"))
+        assertEquals(emptyList<String>(), app.homeydash.homey.FlowCards.twinsOf(devices, "tv"))
+
+        val album = FlowCardAction(
+            "homey:device:local:play_album", title = "Play album",
+            args = listOf(
+                FlowCardArg("mode", "dropdown", values = listOf(app.homeydash.homey.FlowDropdownValue("replace"), app.homeydash.homey.FlowDropdownValue("queue"))),
+                FlowCardArg("album", "autocomplete"),
+            ),
+        )
+        val withVolume = FlowCardAction("homey:device:local:play_album_volume", args = listOf(FlowCardArg("album", "autocomplete"), FlowCardArg("volume", "range")))
+        val sources = app.homeydash.homey.FlowCards.musicSources(listOf(album, withVolume))
+        assertEquals(listOf("play_album"), sources.map { it.card.cardId })
+        assertEquals("album", sources.single().arg.name)
+        val item = AutocompleteItem("Abbey Road", null, null, buildJsonObject { put("id", "a1"); put("name", "Abbey Road") })
+        val args = app.homeydash.homey.FlowCards.musicArgs(sources.single(), item)
+        assertEquals("replace", args["mode"]!!.jsonPrimitive.content)
+        assertEquals("a1", args["album"]!!.jsonObject["id"]!!.jsonPrimitive.content)
     }
 }

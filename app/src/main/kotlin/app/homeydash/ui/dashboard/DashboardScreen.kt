@@ -178,7 +178,9 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
         }
     }
 
-    fun musicSources(deviceId: String): List<MusicSource> = FlowCards.musicSources(cards(deviceId))
+    /** Includes the albums and favourites of the same speaker added by another app (Sonos and Sonos LocalAPI). */
+    fun musicSources(deviceId: String): List<MusicSource> =
+        FlowCards.musicSources(FlowCards.withTwins(store.snapshot.value.devices, deviceCards, deviceId))
 
     fun grouping(deviceId: String): SpeakerGrouping? = FlowCards.grouping(cards(deviceId))
 
