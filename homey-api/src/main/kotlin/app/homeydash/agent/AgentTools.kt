@@ -55,8 +55,8 @@ class AgentTools(
             string("value", "New value: true/false, a number within the range shown, or one of the listed choices")
             required("device", "capability", "value")
         })
-        add(tool("set_room", "Change every device in a room that has the capability, e.g. all lights off in the kitchen.") {
-            string("room", "Room name exactly as listed")
+        add(tool("set_room", "Change every device in a room, or in one of the owner's groups (shown as group \"…\"), that has the capability, e.g. all lights off in the kitchen.") {
+            string("room", "Room or group name exactly as listed")
             string("capability", "Capability id, usually onoff or dim")
             string("value", "New value")
             string("device_class", "Optional: only this class, e.g. light")
@@ -209,15 +209,19 @@ class AgentTools(
     }
 
     private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String): ToolResult {
-        val roomId = view.room(room) ?: return ok("There's no room called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
+        // One of the owner's card groups ("Taklampor"), unless a room has exactly that name.
+        val group = view.group(room)?.takeIf { g -> view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) } || g.equals(room.trim(), ignoreCase = true) }
+        val roomId = if (group != null) null else view.room(room) ?: return ok("There's no room or group called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
+        val place = group ?: view.rooms[roomId].orEmpty()
         val wantedClass = classOf(cls)
         val targets = view.devices.mapNotNull { d ->
-            if (!view.inRoom(d, roomId) || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
+            val inside = if (group != null) d.group == group else view.inRoom(d, roomId!!)
+            if (!inside || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
             // "Everything off in the kitchen" shouldn't reach a hidden fridge plug; name the class to include them.
             if (d.hiddenOnDashboard && wantedClass == null) return@mapNotNull null
             capabilityOf(d, capabilityId)?.takeIf { it.setable }?.let { d to it }
         }
-        if (targets.isEmpty()) return ok("Nothing in ${view.rooms[roomId]} has $capabilityId.")
+        if (targets.isEmpty()) return ok("Nothing in $place has $capabilityId.")
         val (unreachable, reachable) = targets.partition { it.first.unreachable }
         val missed = if (unreachable.isEmpty()) "" else " Homey can't reach ${unreachable.joinToString { it.first.name }}, so they weren't changed."
         val sent = reachable.mapNotNull { (d, c) ->

@@ -683,6 +683,41 @@ class AgentTest {
         assertEquals(Triple("d-dim", "onoff", JsonPrimitive(true)), home.sets.single())
     }
 
+    @Test fun `the owner's class, other names and groups reach the assistant`() = runTest {
+        val z: Map<String, Zone> = HomeyJson.decodeFromString("""{"z-living":{"id":"z-living","name":"Vardagsrum"}}""")
+        val raw: Map<String, Device> = HomeyJson.decodeFromString(
+            """{"d-frame":{"id":"d-frame","name":"Samsung QE55","zone":"z-living","class":"tv","capabilities":["onoff","dim"],
+                  "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true},"dim":{"id":"dim","type":"number","value":0.5,"min":0,"max":1,"setable":true}}},
+                "d-ps":{"id":"d-ps","name":"PS5","zone":"z-living","class":"socket","virtualClass":"light","capabilities":["onoff"],
+                  "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}},
+                "d-a":{"id":"d-a","name":"Spot 1","zone":"z-living","class":"light","capabilities":["onoff"],
+                  "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}},
+                "d-b":{"id":"d-b","name":"Spot 2","zone":"z-living","class":"light","capabilities":["onoff"],
+                  "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}}}""",
+        )
+        // A TV with a brightness setting isn't a lamp, even before the owner says anything.
+        assertFalse(app.homeydash.homey.DashboardLayout.isSwitchableLight(raw.getValue("d-frame")))
+        // The owner says the plug Homey calls a light is something else, names the TV and groups the spots.
+        val noted = raw.mapValues { (id, d) ->
+            when (id) {
+                "d-ps" -> d.copy(classOverride = "other")
+                "d-frame" -> d.copy(nicknames = listOf("The Frame"))
+                else -> d.copy(userGroup = "Taklampor")
+            }
+        }
+        val v = HomeView.build(z, noted, emptyMap(), emptySet(), AgentSettings(), true)
+        assertEquals(setOf("Spot 1", "Spot 2"), v.devices.filter { it.deviceClass == "light" }.map { it.name }.toSet())
+        assertEquals("Samsung QE55", v.device("the frame")?.name)
+        assertTrue(v.describe(), v.describe().contains("also called \"The Frame\"") && v.describe().contains("group \"Taklampor\""))
+        val a = QuickCommand.parse("tänd taklamporna", v)!!
+        assertEquals("Taklampor", a.group)
+        val home = FakeHome()
+        val r = AgentTools(v, home, FakeDashboard()).run(QuickCommand.call(a))
+        assertTrue(r.text, r.text.startsWith("Changed 2"))
+        assertEquals(setOf("d-a", "d-b"), home.sets.map { it.first }.toSet())
+        assertEquals("Taklampor är tända.", QuickCommand.done(a, v))
+    }
+
     @Test fun `tool calls written as text are still run`() {
         val (calls, rest) = ChatClient.callsInText("""Okej. <tool_call>{"name":"set_device","arguments":{"device":"light_1","capability":"onoff","value":"true"}}</tool_call>""")
         assertEquals("set_device", calls.single().name)

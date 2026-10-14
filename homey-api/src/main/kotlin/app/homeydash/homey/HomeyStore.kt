@@ -40,6 +40,31 @@ class HomeyStore(
 
     private var eventsJob: Job? = null
 
+    /** What the owner set on this tablet per device: a class, other names, a card group. */
+    data class OwnerNotes(
+        val classes: Map<String, String> = emptyMap(),
+        val nicknames: Map<String, List<String>> = emptyMap(),
+        val groups: Map<String, String> = emptyMap(),
+    )
+
+    @Volatile private var notes = OwnerNotes()
+
+    /** Applies the owner's notes to every device, now and as Homey sends updates. */
+    fun setOwnerNotes(notes: OwnerNotes) {
+        if (notes == this.notes) return
+        this.notes = notes
+        _snapshot.update { s -> s.copy(devices = s.devices.mapValues { noted(it.value) }) }
+    }
+
+    private fun noted(d: Device): Device {
+        val cls = notes.classes[d.id]
+        val names = notes.nicknames[d.id].orEmpty()
+        val group = notes.groups[d.id]
+        // Unchanged devices stay the same object, so cards that didn't change don't redraw.
+        return if (cls == d.classOverride && names == d.nicknames && group == d.userGroup) d
+        else d.copy(classOverride = cls, nicknames = names, userGroup = group)
+    }
+
     fun start() {
         if (eventsJob != null) return
         eventsJob = scope.launch { realtime.events.collect(::apply) }
@@ -65,7 +90,7 @@ class HomeyStore(
             val hiddenByUser = runCatching { hiddenDeviceIds(client.userMe()) }.getOrDefault(emptySet())
             val deviceCards = runCatching { FlowCards.byDevice(client.flowCardActions()) }.getOrDefault(emptyMap())
             devices.keys.forEach { realtime.subscribe(HomeyRealtime.deviceUri(it)) }
-            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, moods = moods, hiddenByUser = hiddenByUser, deviceCards = deviceCards, loaded = true)
+            _snapshot.value = HomeySnapshot(zones = zones, devices = devices.mapValues { noted(it.value) }, moods = moods, hiddenByUser = hiddenByUser, deviceCards = deviceCards, loaded = true)
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = e.message ?: e.toString()) }
         }
@@ -157,7 +182,7 @@ class HomeyStore(
             }
             is HomeyEvent.DeviceChanged -> {
                 realtime.subscribe(HomeyRealtime.deviceUri(event.device.id))
-                _snapshot.update { it.copy(devices = it.devices + (event.device.id to event.device)) }
+                _snapshot.update { it.copy(devices = it.devices + (event.device.id to noted(event.device))) }
             }
             is HomeyEvent.DeviceDeleted -> _snapshot.update { it.copy(devices = it.devices - event.deviceId) }
             is HomeyEvent.ZoneChanged -> _snapshot.update { it.copy(zones = it.zones + (event.zone.id to event.zone)) }

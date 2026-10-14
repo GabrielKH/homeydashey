@@ -41,6 +41,10 @@ data class AgentDevice(
     val kind: String? = null,
     /** Homey can't reach it right now (unplugged, out of range); changing it does nothing. */
     val unreachable: Boolean = false,
+    /** Other names the owner gave it ("Frame", "spelkonsolen"). */
+    val nicknames: List<String> = emptyList(),
+    /** The card group the owner put it in ("Taklampor"). */
+    val group: String? = null,
 ) {
     fun capability(id: String): AgentCapability? = capabilities.firstOrNull { it.id == id }
 }
@@ -91,6 +95,7 @@ class HomeView(
         val q = alias.trim()
         byAlias[q.lowercase()]?.let { return it }
         devices.firstOrNull { it.name.equals(q, ignoreCase = true) }?.let { return it }
+        devices.filter { d -> d.nicknames.any { it.equals(q, ignoreCase = true) } }.singleOrNull()?.let { return it }
         val norm = NameMatch.normalize(q)
         devices.filter { NameMatch.normalize(it.name) == norm }.singleOrNull()?.let { return it }
         return NameMatch.best(q, devices) { score(q, it) }
@@ -106,10 +111,17 @@ class HomeView(
      * called Taklampa and not every lamp.
      */
     private fun score(query: String, d: AgentDevice): Double {
-        val byName = NameMatch.score(query, d.name, d.room)
+        val byName = (listOf(d.name) + d.nicknames).maxOf { NameMatch.score(query, it, d.room) }
         val byKind = d.kind?.let { NameMatch.score(query, it, d.room) * KIND_WEIGHT } ?: 0.0
         val byClass = CLASS_WORDS[d.deviceClass].orEmpty().maxOfOrNull { NameMatch.score(query, it, d.room) * CLASS_WEIGHT } ?: 0.0
         return maxOf(byName, byKind, byClass)
+    }
+
+    /** The owner's card group [name] best names, by its exact title or loosely ("taklamporna"). */
+    fun group(name: String): String? {
+        val titles = devices.mapNotNull { it.group }.distinct()
+        titles.firstOrNull { it.equals(name.trim(), ignoreCase = true) }?.let { return it }
+        return NameMatch.best(name, titles) { NameMatch.score(name, it) }?.takeIf { NameMatch.score(name, it) >= 0.95 }
     }
 
     fun aliasOf(deviceId: String): String? = devices.firstOrNull { it.id == deviceId }?.alias
@@ -134,6 +146,8 @@ class HomeView(
             list.forEach { d ->
                 append(d.alias).append(" \"").append(d.name).append("\" ").append(d.deviceClass)
                 d.kind?.let { append(" (").append(it).append(')') }
+                if (d.nicknames.isNotEmpty()) append(" also called ").append(d.nicknames.joinToString { "\"$it\"" })
+                d.group?.let { append(" group \"").append(it).append('"') }
                 if (d.unreachable) append(" UNREACHABLE")
                 append(':')
                 d.capabilities.forEach { c -> append(' ').append(describe(c)) }
@@ -184,6 +198,8 @@ class HomeView(
                         hiddenOnDashboard = device.hidden || device.id in hidden,
                         kind = kindOf(device),
                         unreachable = !device.available,
+                        nicknames = device.nicknames,
+                        group = device.userGroup,
                     )
                 }
                 .sortedWith(compareBy({ it.room ?: "" }, { it.name.lowercase() }))

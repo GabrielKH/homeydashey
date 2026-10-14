@@ -294,6 +294,12 @@ fun DashboardScreen(
     val backgrounds by display.backgrounds.collectAsStateWithLifecycle()
     val remoteApps by display.remoteApps.collectAsStateWithLifecycle()
     val arrangement by display.cardArrangement.collectAsStateWithLifecycle()
+    val deviceClasses by display.deviceClasses.collectAsStateWithLifecycle()
+    val deviceNicknames by display.deviceNicknames.collectAsStateWithLifecycle()
+    // What the owner set per device on this tablet reaches the cards and the assistant alike.
+    LaunchedEffect(store, deviceClasses, deviceNicknames, arrangement) {
+        store.setOwnerNotes(HomeyStore.OwnerNotes(deviceClasses, deviceNicknames, arrangement.groups))
+    }
     val calendarView by display.calendarView.collectAsStateWithLifecycle()
     val uiScale by display.uiScale.collectAsStateWithLifecycle()
     val weatherDays by display.weatherDays.collectAsStateWithLifecycle()
@@ -571,6 +577,8 @@ fun DashboardScreen(
                 actions = actions,
                 onOrder = display::setCardOrder,
                 onGroup = { display.setCardGroup(device.id, it) },
+                onClass = { display.setDeviceClass(device.id, it) },
+                onNicknames = { display.setDeviceNicknames(device.id, it) },
                 onHide = { display.setHidden(device.id, true) },
                 pinned = device.id in overviewDevices,
                 onPin = { display.pinToOverview(device.id, it) },
