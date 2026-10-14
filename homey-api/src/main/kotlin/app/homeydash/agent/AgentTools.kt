@@ -2,6 +2,8 @@ package app.homeydash.agent
 
 import app.homeydash.homey.FlowCardAction
 import app.homeydash.homey.FlowCards
+import app.homeydash.homey.RemoteAction
+import app.homeydash.homey.Remotes
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -49,6 +51,9 @@ class AgentTools(
      * nothing is looked up on the internet, so it can't slip out inside a question.
      */
     var privateContext = false
+
+    /** Hears each tool call as it starts and ends, to show on screen and keep in the logs. */
+    var listener: AgentListener? = null
 
     fun specs(): List<ToolSpec> = buildList {
         add(tool("set_device", "Change one device: switch, dim, colour, temperature, volume, play/pause, blinds. Use the device alias and a capability marked [set].") {
@@ -100,6 +105,11 @@ class AgentTools(
             string("device", "Device alias")
             required("device")
         })
+        add(tool("press_remote", "Press buttons on a TV or media box remote (Apple TV, Samsung, LG, Android TV…), in order, like the remote on the dashboard.") {
+            string("device", "Device alias of the TV or box")
+            string("keys", "Buttons in order, separated by commas: up, down, left, right, ok, back, home, play, volume up, volume down, mute, power, channel up, channel down. Repeat with x, e.g. \"down x3, ok\"")
+            required("device", "keys")
+        })
         if (!guest) add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})
         add(tool("timer", "Kitchen timers on the tablet: start, cancel or list.") {
             string("action", "start, cancel or list")
@@ -143,9 +153,24 @@ class AgentTools(
 
     private val guest get() = view.settings.guest
 
-    suspend fun run(call: ToolCall): ToolResult =
-        (if (guest && call.name in GUEST_BLOCKED) ok("Guests can't do that.") else runAllowed(call))
-            .also { if (it.localOnly) privateContext = true }
+    suspend fun run(call: ToolCall): ToolResult {
+        val l = listener
+        val id = StepIds.next()
+        val text = StepText.of(call, view)
+        l?.step(AgentStep(id, text, StepState.Running))
+        l?.trace("tool", "${call.name} ${call.arguments}")
+        val result = try {
+            (if (guest && call.name in GUEST_BLOCKED) ok("Guests can't do that.") else runAllowed(call))
+                .also { if (it.localOnly) privateContext = true }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            l?.step(AgentStep(id, text, StepState.Failed, "Stopped"))
+            throw e
+        }
+        val failed = StepText.failed(result.text)
+        l?.step(AgentStep(id, text, if (failed) StepState.Failed else StepState.Done, if (failed) view.named(result.text).take(160) else null))
+        l?.trace("result", result.text, result.localOnly)
+        return result
+    }
 
     private suspend fun runAllowed(call: ToolCall): ToolResult = try {
         val a = call.arguments
@@ -161,6 +186,7 @@ class AgentTools(
             "run_device_action" -> runDeviceAction(a.str("device"), a.str("action"), a.str("value").ifBlank { null })
             "open_page" -> openPage(a.str("page"))
             "open_device" -> view.device(a.str("device"))?.let { d -> ok(if (dashboard.openDevice(d.id)) "Opened ${d.name}." else "Can't open ${d.name}.") } ?: unknown(a.str("device"))
+            "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
             "goodnight" -> goodnight()
             "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"))
             "recipe_timers" -> recipeTimers()
@@ -394,6 +420,39 @@ class AgentTools(
         return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}.")
     }
 
+    /** Presses [keys] ("down x3, ok") on a remote, as the dashboard's remote sheet would. */
+    private suspend fun pressRemote(alias: String, keys: String): ToolResult {
+        val d = view.device(alias) ?: return unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name}'s remote can't be used here.")
+        val presses = RemoteKeys.parse(keys) ?: return ok("Name the buttons: ${RemoteKeys.NAMES}.")
+        val keyCard = Remotes.keyCard(cards)
+        val items = when (keyCard?.arg?.type) {
+            "dropdown" -> FlowCards.dropdownItems(keyCard.arg)
+            "autocomplete" -> home.choices(keyCard.card, keyCard.arg, "")
+            else -> emptyList()
+        }
+        val buttons = Remotes.actions(d.capabilities.map { it.id }, cards, keyCard, Remotes.keyItems(items))
+        val missing = presses.distinct().filter { it !in buttons }
+        if (missing.isNotEmpty()) {
+            return ok("${d.name} has no button for ${missing.joinToString { RemoteKeys.name(it) }}" +
+                (if (buttons.isEmpty()) ". Homey offers no remote buttons for it." else "; it has ${buttons.keys.joinToString { RemoteKeys.name(it) }}."))
+        }
+        for ((i, key) in presses.withIndex()) {
+            if (i > 0) kotlinx.coroutines.delay(REMOTE_GAP_MS)
+            when (val action = buttons.getValue(key)) {
+                is RemoteAction.Card -> home.runAction(action.card, action.args)
+                is RemoteAction.Capability -> {
+                    val value = if (action.toggle) {
+                        val now = home.readBack(d.id, action.capability) ?: d.capability(action.capability)?.value
+                        (now as? JsonPrimitive)?.booleanOrNull != true
+                    } else true
+                    home.setCapability(d.id, action.capability, JsonPrimitive(value))
+                }
+            }
+        }
+        return ok("Done: pressed ${presses.joinToString { RemoteKeys.name(it) }} on ${d.name}.")
+    }
+
     private fun openPage(page: String): ToolResult {
         val p = page.trim().lowercase()
         val fixed = mapOf(
@@ -507,6 +566,7 @@ class AgentTools(
         private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")
         private const val MAX_ACTIONS = 40
 
+        private const val REMOTE_GAP_MS = 350L
         private val GUEST_BLOCKED = setOf("list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */

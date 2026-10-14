@@ -106,6 +106,9 @@ fun VoiceOverlay(assistant: Assistant, settings: AgentSettings) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.widthIn(max = 820.dp),
                     )
+                    if (assistant.state == AssistantState.Thinking || assistant.state == AssistantState.Speaking) {
+                        StepList(assistant.steps(), Modifier.widthIn(max = 620.dp), max = 5, style = MaterialTheme.typography.bodyLarge, icon = 20.dp)
+                    }
                     Confirm(assistant, big = true)
                     Text(
                         if (settings.followUp == FollowUp.Always) "Say \"stop\" or tap anywhere to end" else "Tap anywhere to stop",
@@ -212,6 +215,10 @@ private fun BoxScope.CompactVoice(assistant: Assistant, settings: AgentSettings,
                     )
                     RoundButton(Sym.close, { assistant.stop() }, size = 40.dp, filledIcon = false)
                 }
+            }
+            val working = assistant.state == AssistantState.Thinking || assistant.state == AssistantState.Speaking
+            assistant.steps().lastOrNull()?.takeIf { working }?.let { step ->
+                StepList(listOf(step), Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp).widthIn(max = 340.dp))
             }
             if (assistant.pending != null) {
                 Box(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp)) { Confirm(assistant, big = false) }

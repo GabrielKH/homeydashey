@@ -12,7 +12,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.homeydash.agent.Agent
 import app.homeydash.agent.Access
+import app.homeydash.agent.AgentListener
+import app.homeydash.agent.AgentLog
 import app.homeydash.agent.AgentReply
+import app.homeydash.agent.AgentStep
+import app.homeydash.agent.GitHubLog
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.AgentTools
 import app.homeydash.agent.Announce
@@ -67,8 +71,55 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     /** The recipes and the one being cooked, so the assistant can follow along. */
     var kitchen: app.homeydash.data.Kitchen? = null
 
+    /** What the assistant heard, thought and did, kept until it is sent (Settings → Assistant → Send logs). */
+    val log = AgentLog(File(appContext.filesDir, "assistant/log.jsonl"))
+    private val github = GitHubLog(http)
+    private val logScope = scope
+    private var upload: Job? = null
+    /** When the log was last sent, and what went wrong if it wasn't; for the settings. */
+    var logStatus by mutableStateOf<String?>(null)
+        private set
+
     init {
         scope.launch { routines.load() }
+    }
+
+    fun trace(kind: String, text: String, localOnly: Boolean) {
+        // Kept in order; a line appended to a small file.
+        log.add(kind, text, localOnly)
+        val s = settings.value
+        if (!s.sendLogs || s.logToken.isBlank()) return
+        // Sent a little after the conversation goes quiet, as one comment.
+        upload?.cancel()
+        upload = logScope.launch {
+            delay(LOG_QUIET_MS)
+            sendLog()
+        }
+    }
+
+    /** Sends what hasn't been sent yet; returns what happened, in words. */
+    suspend fun sendLog(): String {
+        val s = settings.value
+        val result = when {
+            s.logToken.isBlank() -> "Add a GitHub token first."
+            else -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val entries = log.unsent()
+                if (entries.isEmpty()) return@withContext "Nothing new to send."
+                try {
+                    github.post(s.logToken, s.logRepo.trim().ifBlank { AgentLog.DEFAULT_REPO }, log.markdown(entries, android.os.Build.MODEL))
+                    log.sent(entries.size)
+                    "Sent ${entries.size} lines at " + java.time.LocalTime.now().withNano(0).toString().take(5) + "."
+                } catch (e: java.io.IOException) {
+                    e.message ?: "Couldn't send the logs."
+                }
+            }
+        }
+        logStatus = result
+        return result
+    }
+
+    private companion object {
+        const val LOG_QUIET_MS = 90_000L
     }
 }
 
@@ -83,6 +134,8 @@ data class Line(
     val speechSettings: Boolean = false,
     /** What the assistant did for this answer and what Homey said, shown small under it. */
     val actions: List<String> = emptyList(),
+    /** The same, as the steps shown while it worked. */
+    val steps: List<AgentStep> = emptyList(),
 )
 
 /** What [Scene] the assistant shows with an answer. */
@@ -150,6 +203,8 @@ class Assistant(
     /** A small moving picture that goes with the answer, like rain while it tells the weather. */
     var scene by mutableStateOf<Scene?>(null)
     val lines = mutableStateListOf<Line>()
+    /** What the assistant is doing for the current question, step by step, as it happens. */
+    val activity = mutableStateListOf<AgentStep>()
     var pending by mutableStateOf<PendingAction?>(null)
         private set
     val timers = mutableStateListOf<KitchenTimer>()
@@ -172,6 +227,20 @@ class Assistant(
     private var conversationUntil = 0L
     private val settings: AgentSettings get() = services.settings.value
     private val home = StoreHomeControl(store) { store.snapshot.value.deviceCards }
+
+    init {
+        services.agent.listener = object : AgentListener {
+            override fun step(step: AgentStep) {
+                val i = activity.indexOfFirst { it.id == step.id }
+                if (i >= 0) activity[i] = step else activity += step
+            }
+
+            override fun trace(kind: String, text: String, localOnly: Boolean) = services.trace(kind, text, localOnly)
+        }
+    }
+
+    /** The steps worth showing: what it does in the home, and the AI only while it thinks. */
+    fun steps(): List<AgentStep> = activity.filter { !it.thinking || it.state == app.homeydash.agent.StepState.Running }
 
     /** Speakers that can say answers: they have a play-URL or say-text Flow card. */
     fun speakers(): List<Pair<Device, AnnounceCard>> {
@@ -420,6 +489,7 @@ class Assistant(
         }
         open = true
         lines += Line(true, text.trim())
+        activity.clear()
         // Rain on screen while it says it rains.
         if (WEATHER_WORDS.containsMatchIn(text)) scene = bridge.weatherScene(TOMORROW.containsMatchIn(text))
         job?.cancel()
@@ -449,6 +519,7 @@ class Assistant(
         conversationUntil = 0L
         open = true
         lines += Line(true, routine.name)
+        activity.clear()
         job?.cancel()
         job = scope.launch {
             state = AssistantState.Thinking
@@ -471,6 +542,7 @@ class Assistant(
 
     fun confirm(yes: Boolean) {
         job?.cancel()
+        activity.clear()
         job = scope.launch {
             state = AssistantState.Thinking
             show(services.agent.confirm(yes))
@@ -537,13 +609,13 @@ class Assistant(
         }
         pending = services.agent.pending
         val brain: Connection? = reply.brain
-        lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions)
+        lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions, steps = steps())
         if (settings.speak && !reply.error) say(reply.text)
         // A routine's last steps, like starting the radio, wait until the answer has been said.
         reply.then?.let { then ->
             val done = try { then() } catch (e: CancellationException) { throw e } catch (e: Exception) { listOf("That failed: ${e.message}") }
             val i = lines.lastIndex
-            if (i >= 0 && !lines[i].fromUser) lines[i] = lines[i].copy(actions = lines[i].actions + done)
+            if (i >= 0 && !lines[i].fromUser) lines[i] = lines[i].copy(actions = lines[i].actions + done, steps = steps())
         }
         state = AssistantState.Idle
         // A spoken question, or a yes/no question, is followed by listening for the next one.

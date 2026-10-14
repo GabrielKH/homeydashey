@@ -256,6 +256,46 @@ private fun Main(
     NavRow(Sym.face, "People: faces and voices", onFaces)
     NavRow(Sym.visibilityOff, "Hide devices from the assistant (${settings.hiddenDevices.size})", onDevices)
     NavRow(Sym.search, "What the assistant sees", onPreview)
+
+    Label("Logs for Claude")
+    Logs(services, settings, update)
+}
+
+/** Sends what the assistant heard, thought and did to a GitHub issue, to find out why it misbehaves. */
+@Composable
+private fun Logs(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    SwitchRow(
+        "Send logs",
+        "Your questions, the AI's answers and every tool it used go to the \"Assistant logs\" issue on GitHub a minute and a half after you stop talking. " +
+            "Anything set to Local AI only, keys and codes are left out.",
+        settings.sendLogs,
+    ) { on -> update { it.copy(sendLogs = on) } }
+    if (settings.sendLogs) {
+        Field("GitHub token", settings.logToken, secret = true) { token -> update { it.copy(logToken = token) } }
+        Field("Repository", settings.logRepo) { repo -> update { it.copy(logRepo = repo) } }
+        Text(
+            "Make a fine-grained token on github.com (Settings, Developer settings, Personal access tokens) for this repository only, with Issues set to Read and write.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
+        val status = services.logStatus
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "Send now",
+                style = MaterialTheme.typography.labelLarge,
+                color = g.fg,
+                modifier = Modifier.pressable({ scope.launch { services.sendLog() } }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+            Text(
+                status ?: "${services.log.unsent().size} lines waiting.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (status?.startsWith("Couldn't") == true) g.danger else g.muted,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
 }
 
 /** Whisper on the computer and/or OpenAI turn questions into text instead of Google. */

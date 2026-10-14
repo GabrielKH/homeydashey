@@ -143,6 +143,11 @@ data class AgentSettings(
     val useOpenAiSpeech: Boolean = false,
     /** OpenAI key for hearing; empty means the internet brain's key when that is OpenAI. */
     val openAiSpeechKey: String = "",
+    /** Sends what the assistant heard, thought and did to a GitHub issue, so it can be looked into. */
+    val sendLogs: Boolean = false,
+    /** A GitHub token that may write issues in [logRepo]. */
+    val logToken: String = "",
+    val logRepo: String = AgentLog.DEFAULT_REPO,
 ) {
     /** Who hears questions, in order; empty means Android's own speech recognition. */
     fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })

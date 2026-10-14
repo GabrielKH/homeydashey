@@ -66,6 +66,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         whisperUrl = p[WHISPER_URL].orEmpty(),
         useOpenAiSpeech = p[USE_OPENAI_SPEECH] == "true",
         openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
+        sendLogs = p[SEND_LOGS] == "true",
+        logToken = p[LOG_TOKEN]?.let(KeystoreCipher::decrypt).orEmpty(),
+        logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
     )
 
     private fun write(p: MutablePreferences, s: AgentSettings) {
@@ -93,6 +96,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[WHISPER_URL] = s.whisperUrl.trim()
         p[USE_OPENAI_SPEECH] = s.useOpenAiSpeech.toString()
         p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
+        p[SEND_LOGS] = s.sendLogs.toString()
+        p[LOG_TOKEN] = KeystoreCipher.encrypt(s.logToken.trim())
+        p[LOG_REPO] = s.logRepo.trim()
     }
 
     private fun connection(p: Preferences, slot: String): Connection? {
@@ -138,6 +144,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WHISPER_URL = stringPreferencesKey("whisper_url")
         val USE_OPENAI_SPEECH = stringPreferencesKey("use_openai_speech")
         val OPENAI_SPEECH_KEY = stringPreferencesKey("openai_speech_key")
+        val SEND_LOGS = stringPreferencesKey("send_logs")
+        val LOG_TOKEN = stringPreferencesKey("log_token")
+        val LOG_REPO = stringPreferencesKey("log_repo")
 
         inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
             name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default

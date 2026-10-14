@@ -58,6 +58,9 @@ class Agent(
     var pending: PendingAction? = null
         private set
 
+    /** Hears each step while it works and everything said and done, for the screen and the logs. */
+    var listener: AgentListener? = null
+
     fun reset() {
         history.clear()
         pending = null
@@ -73,6 +76,28 @@ class Agent(
         view: (local: Boolean) -> HomeView,
         tools: (HomeView) -> AgentTools,
         context: AskContext = AskContext(),
+    ): AgentReply {
+        val heard = Watch(listener)
+        heard.trace("question", text)
+        val reply = answer(text, settings, view, heard.tools(tools), context, heard)
+        heard.trace(
+            when {
+                reply.ignored -> "ignored"
+                reply.error -> "error"
+                else -> "answer"
+            },
+            reply.text, heard.local,
+        )
+        return reply
+    }
+
+    private suspend fun answer(
+        text: String,
+        settings: AgentSettings,
+        view: (local: Boolean) -> HomeView,
+        tools: (HomeView) -> AgentTools,
+        context: AskContext,
+        heard: Watch,
     ): AgentReply {
         val clock = System.currentTimeMillis()
         if (clock - lastActivity > FORGET_AFTER_MS) reset()
@@ -120,10 +145,28 @@ class Agent(
             var changed = false
             var nudged = false
             val actions = mutableListOf<String>()
+            // What each call did this turn, so the same change asked for twice isn't done twice.
+            val done = mutableMapOf<String, ToolResult>()
+            heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
                 repeat(MAX_ROUNDS) {
                     val messages = conversation(settings, homeView, context, earlier, turn)
-                    val answer = chat.complete(brain, messages, specs)
+                    val step = StepIds.next()
+                    val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
+                    heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
+                    val answer = try {
+                        chat.complete(brain, messages, specs)
+                    } catch (e: IOException) {
+                        heard.step(AgentStep(step, thinking, StepState.Failed, e.message, thinking = true))
+                        throw e
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        heard.step(AgentStep(step, thinking, StepState.Failed, "Stopped", thinking = true))
+                        throw e
+                    }
+                    heard.step(AgentStep(step, thinking, StepState.Done, thinking = true))
+                    val keepLocal = localOnly || toolbox.privateContext
+                    answer.content?.takeIf { it.isNotBlank() }?.let { heard.trace("model", it, keepLocal) }
+                    if (answer.toolCalls.isNotEmpty()) heard.trace("model calls", answer.toolCalls.joinToString("; ") { "${it.name} ${it.arguments}" }, keepLocal)
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
                         if (!acted && answer.content.orEmpty().contains(IGNORE)) return AgentReply("", brain, ignored = true)
@@ -134,11 +177,13 @@ class Agent(
                         val claims = PROMISE.containsMatchIn(said) || (command && CLAIM.containsMatchIn(said))
                         if (!changed && !nudged && claims) {
                             nudged = true
+                            heard.trace("guard", if (acted) "It said it did something a tool didn't do; asked it to try again." else "It promised or claimed without calling a tool; asked it to do it.")
                             turn += ChatMessage.user(if (acted) NUDGE_FAILED else NUDGE)
                             return@repeat
                         }
                         // Still nothing done after the nudge: never let it say it did something.
                         if (!changed && nudged && command && CLAIM.containsMatchIn(said)) {
+                            heard.trace("guard", "Still claimed a change after the nudge; told the user nothing was done.", keepLocal)
                             remember(turn.take(1) + ChatMessage("assistant", nothingDone(text)), localOnly)
                             actions += "The AI said it changed something, but no tool changed anything."
                             return AgentReply(nothingDone(text), brain, actions = actions, error = true)
@@ -149,7 +194,14 @@ class Agent(
                     }
                     for (call in answer.toolCalls) {
                         acted = true
-                        val result = toolbox.run(call)
+                        val key = "${call.name} ${call.arguments}"
+                        val before = done[key]?.takeIf { call.name !in LOOKS && !StepText.failed(it.text) }
+                        val result = if (before != null) {
+                            heard.trace("guard", "Asked for $key again; not done twice.")
+                            ToolResult("Already done a moment ago: ${before.text} Don't do it again; answer the user.", before.localOnly)
+                        } else {
+                            toolbox.run(call).also { done[key] = it }
+                        }
                         changed = changed || when (call.name) {
                             in LOOKS -> false
                             in SETS -> CHANGED.any { result.text.startsWith(it) } && !result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
@@ -207,6 +259,9 @@ class Agent(
     ): AgentReply {
         lastActivity = System.currentTimeMillis()
         pending = null
+        val heard = Watch(listener)
+        heard.trace("routine", "${routine.name} (heard: $text)")
+        @Suppress("NAME_SHADOWING") val tools = heard.tools(tools)
         val brain = settings.brains().firstOrNull()
         val homeView = view(brain?.local ?: true)
         val toolbox = tools(homeView)
@@ -226,6 +281,7 @@ class Agent(
         val actions = listOf("routine ${routine.name}") + run.actions
         if (brain == null || (routine.instructions.isBlank() && run.info.isEmpty())) {
             remember(listOf(ChatMessage.user(text), ChatMessage("assistant", plain)), run.localOnly)
+            heard.trace("answer", plain, run.localOnly)
             return AgentReply(plain, actions = actions, then = then)
         }
         val answer = ask(
@@ -345,7 +401,10 @@ class Agent(
         append("For general questions you can't answer for sure, use ask_internet if you have it instead of guessing.\n")
         append("Everything the dashboard shows is yours to use: answer the weather from the weather in the note (or the weather tool), never say you can't see it. ")
         append("When the user lets you choose (\"play something\", \"välj själv\"), choose yourself instead of asking: for music call play_music with an empty query. ")
-        append("Remember what the user already told you in this conversation and never ask the same question twice.\n")
+        append("Remember what the user already told you in this conversation and never ask the same question twice. ")
+        append("Call each tool once per thing to do; when a tool says it's done, don't call it again, just answer.\n")
+        append("For a TV or media box (Apple TV and the like) use press_remote to press its buttons (\"down x3, ok\"), run_device_action for channels and apps, ")
+        append("and open_device to show its remote on the tablet.\n")
         append("When a recipe is open and the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
         append("and tell them the step in plain words. Answer questions about amounts and times from that recipe. ")
         append("If the step has a cooking time, offer to start a timer for it. When the user wants timers for the whole recipe (\"timers for everything\", \"sätt alla timers\"), ")
@@ -393,7 +452,7 @@ class Agent(
         /** Tools that only look. */
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines")
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
-        val SETS = setOf("set_device", "set_room", "run_flow", "play_music", "run_device_action")
+        val SETS = setOf("set_device", "set_room", "run_flow", "play_music", "run_device_action", "press_remote")
         /** How tool results that changed something begin. */
         val CHANGED = listOf("Done", "Changed", "Started", "Playing")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
