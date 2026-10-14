@@ -803,6 +803,8 @@ class AgentTest {
             Device("tv", "Vardagsrum", zone = "z-living", deviceClass = "speaker", driverUri = "homey:app:nl.xiut.sonoslocal:speaker"),
         ).associateBy { it.id }
         assertEquals(listOf("local"), app.homeydash.homey.FlowCards.twinsOf(devices, "son"))
+        val away = devices + ("local" to devices.getValue("local").copy(available = false))
+        assertEquals(emptyList<String>(), app.homeydash.homey.FlowCards.twinsOf(away, "son"))
         assertEquals(emptyList<String>(), app.homeydash.homey.FlowCards.twinsOf(devices, "tv"))
 
         val album = FlowCardAction(
@@ -813,6 +815,11 @@ class AgentTest {
             ),
         )
         val withVolume = FlowCardAction("homey:device:local:play_album_volume", args = listOf(FlowCardArg("album", "autocomplete"), FlowCardArg("volume", "range")))
+        val fav1 = FlowCardAction("homey:device:son:sonos_play_favorite", args = listOf(FlowCardArg("favorite", "autocomplete")))
+        val fav2 = FlowCardAction("homeydash:sonos:son:play_favorite", args = listOf(FlowCardArg("item", "autocomplete")))
+        val tabs = app.homeydash.homey.FlowCards.musicSources(listOf(fav1, album, fav2))
+        assertEquals(listOf("Favourites", "Albums"), tabs.map { it.title })
+        assertEquals(listOf("sonos_play_favorite", "play_favorite"), tabs[0].all.map { it.card.cardId })
         val sources = app.homeydash.homey.FlowCards.musicSources(listOf(album, withVolume))
         assertEquals(listOf("play_album"), sources.map { it.card.cardId })
         assertEquals("album", sources.single().arg.name)

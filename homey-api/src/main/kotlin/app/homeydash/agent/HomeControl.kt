@@ -98,7 +98,7 @@ class StoreHomeControl(
     override suspend fun playMusic(deviceId: String, query: String): String? {
         // Looks through every source (favourites, playlists, radio…) and plays the best match
         // of all, so "P3" finds the radio station even when a favourite also says "P3 Dokumentär".
-        val found = FlowCards.musicSources(deviceActions(deviceId)).flatMap { source ->
+        val found = FlowCards.musicSources(deviceActions(deviceId)).flatMap { it.all }.flatMap { source ->
             runCatching { choices(source.card, source.arg, query) }.getOrDefault(emptyList()).map { source to it }
         }
         val best = NameMatch.best(query, found) { NameMatch.score(query, it.second.name) }

@@ -198,6 +198,31 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
             emptyList()
         }
 
+    /**
+     * What a music tab lists: from its own card, or else from the next card of the same kind
+     * (a speaker's copy in another app may be out of reach). Only says so when none could answer.
+     */
+    suspend fun musicItems(source: MusicSource, query: String): List<Pair<MusicSource, AutocompleteItem>> {
+        var failure: Exception? = null
+        for (s in source.all) {
+            val items = if (s.arg.type == "dropdown") {
+                FlowCards.dropdownItems(s.arg).filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            } else {
+                try {
+                    store.autocomplete(s.card, s.arg.name, query)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failure = e
+                    continue
+                }
+            }
+            if (items.isNotEmpty()) return items.map { s to it }
+        }
+        failure?.let { store.reportError("Couldn't load the list: ${it.message}") }
+        return emptyList()
+    }
+
     fun reportError(message: String) = store.reportError(message)
 
     /** The mood tapped last; Homey doesn't report an active mood, so the dashboard remembers it. */

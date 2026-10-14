@@ -79,7 +79,16 @@ data class SpeakerGrouping(
 )
 
 /** A source of music an app offers on a speaker, e.g. Sonos favourites or playlists. */
-data class MusicSource(val title: String, val card: FlowCardAction, val arg: FlowCardArg)
+data class MusicSource(
+    val title: String,
+    val card: FlowCardAction,
+    val arg: FlowCardArg,
+    /** Other cards of the same kind (a twin's, the app's own), tried in turn when this one can't answer. */
+    val fallbacks: List<MusicSource> = emptyList(),
+) {
+    /** This source and its fallbacks, in the order to try them. */
+    val all: List<MusicSource> get() = listOf(copy(fallbacks = emptyList())) + fallbacks
+}
 
 object FlowCards {
 
@@ -102,7 +111,8 @@ object FlowCards {
         val name = NameMatch.normalize(d.name)
         val app = d.driverUri?.substringBeforeLast(':') ?: return emptyList()
         return devices.values.filter { o ->
-            if (o.id == d.id || o.homeyClass != d.homeyClass || o.driverUri?.substringBeforeLast(':') == app) return@filter false
+            // A copy Homey can't reach right now only fails; the speaker itself still works.
+            if (o.id == d.id || !o.available || o.homeyClass != d.homeyClass || o.driverUri?.substringBeforeLast(':') == app) return@filter false
             val other = NameMatch.normalize(o.name)
             other == name || (o.zone == d.zone && other.length >= 3 && name.length >= 3 && (other.contains(name) || name.contains(other)))
         }.map { it.id }
@@ -212,6 +222,8 @@ object FlowCards {
         val kind = MUSIC_WORDS.firstOrNull { it in id } ?: return@mapNotNull null
         MusicSource(MUSIC_TITLES.getValue(kind), card, arg)
     }.sortedBy { MUSIC_WORDS.indexOfFirst { w -> w in it.card.cardId.lowercase() } }
+        // One tab per kind: the device's own card first, then a twin's, then the app's own.
+        .groupBy { it.title }.values.map { same -> same.first().copy(fallbacks = same.drop(1)) }
 
     private val MUSIC_WORDS = listOf("favorite", "favourite", "album", "playlist", "radio", "station", "artist", "library")
     private val MUSIC_TITLES = mapOf(
