@@ -34,17 +34,38 @@ enum class FollowUp(val label: String, val detail: String, val ms: Long) {
     ;
 
     companion object {
-        private val ENDINGS = setOf(
-            "stop", "stopp", "cancel", "nevermind", "never mind", "thanks", "thank you", "thats all", "that is all",
-            "goodbye", "bye", "tack", "tack så mycket", "det var allt", "det är bra", "hej då", "avbryt", "sluta",
+        /** Words that end a conversation on their own: "avsluta", "stopp", "tack". */
+        private val ENDING_WORDS = setOf(
+            "stop", "stopp", "stoppa", "sluta", "avsluta", "avbryt", "cancel", "quit", "exit", "end", "enough",
+            "tack", "tacka", "tackar", "thanks", "thank", "thx", "bye", "goodbye", "hejda", "adjo", "nevermind",
         )
 
-        /** Whether [text] only ends the conversation ("thanks", "stop", "tack") and needs no answer. */
+        /** Whole phrases that end it: "det var allt", "that's all", "never mind", "hej då". */
+        private val ENDING_PHRASES = listOf(
+            "det var allt", "det ar bra", "det racker", "hej da", "thats all", "that is all", "never mind", "thats it", "that will be all",
+        )
+
+        /** Small words around an ending that don't change it: "okej tack då", "stopp nu", "tack så mycket Nova". */
+        private val FILLERS = setOf(
+            "ok", "okay", "okej", "oke", "ja", "jaha", "nej", "men", "nu", "da", "sa", "bra", "mycket", "hej", "hey",
+            "you", "very", "much", "so", "please", "snalla", "for", "hjalpen", "the", "help", "now", "then", "alright", "fint",
+            "allt", "det", "var", "ar", "that", "thats", "is", "all", "it", "never", "mind", "will", "be", "racker",
+            "jag", "forstar", "i", "see", "great", "perfekt", "perfect", "toppen", "kanon",
+        )
+
+        /**
+         * Whether [text] only ends the conversation and needs no answer: an ending word or
+         * phrase ("avsluta", "stopp", "tack", "det var allt") with nothing else but small words
+         * around it. "Stoppa musiken" or "tack, släck lampan" still go to the assistant.
+         */
         fun ends(text: String, name: String = ""): Boolean {
-            val t = text.lowercase().replace(Regex("[^\\p{L}\\s]"), "").replace(Regex("\\s+"), " ").trim()
-            val n = name.lowercase().trim()
-            val bare = t.removePrefix("okay ").removePrefix("ok ").let { if (n.isNotEmpty()) it.removeSuffix(" $n") else it }.trim()
-            return t in ENDINGS || bare in ENDINGS
+            val t = NameMatch.normalize(text.replace("'", "").replace("’", ""))
+            if (t.isEmpty()) return false
+            val n = NameMatch.normalize(name)
+            var rest = " $t "
+            ENDING_PHRASES.forEach { rest = rest.replace(" $it ", " end ") }
+            val words = rest.split(' ').filter { it.isNotEmpty() && it != n }
+            return words.any { it in ENDING_WORDS } && words.all { it in ENDING_WORDS || it in FILLERS }
         }
     }
 }

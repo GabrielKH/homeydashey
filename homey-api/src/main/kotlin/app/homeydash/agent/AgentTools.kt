@@ -79,8 +79,8 @@ class AgentTools(
         })
         add(tool("play_music", "Play a favourite, album, playlist or radio station on a player (e.g. a Sonos).") {
             string("player", "Player alias")
-            string("query", "What to play: just the album, playlist or station name, e.g. \"Abbey Road\"")
-            required("player", "query")
+            string("query", "What to play: just the album, playlist, artist or station name, e.g. \"Abbey Road\"; leave empty when the user lets you choose")
+            required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
             string("device", "Device alias")
@@ -107,6 +107,7 @@ class AgentTools(
             string("label", "Optional name, e.g. pasta")
             required("action")
         })
+        if (recipes != null) add(tool("recipe_timers", "Start a kitchen timer for every step of the open recipe that names a time, all at once.") {})
         add(tool("weather", "Current weather and the next days' forecast.") {})
         if (!guest) add(tool("set_theme", "Switch the dashboard between light and dark.") {
             string("mode", "light, dark or auto")
@@ -162,6 +163,7 @@ class AgentTools(
             "open_device" -> view.device(a.str("device"))?.let { d -> ok(if (dashboard.openDevice(d.id)) "Opened ${d.name}." else "Can't open ${d.name}.") } ?: unknown(a.str("device"))
             "goodnight" -> goodnight()
             "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"))
+            "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
             "calendar" -> calendar(a.str("start_date"), a.num("days"))
@@ -307,8 +309,20 @@ class AgentTools(
 
     private suspend fun playMusic(alias: String, query: String): ToolResult {
         val d = view.device(alias) ?: return unknown(alias)
-        val played = home.playMusic(d.id, query) ?: return ok("Couldn't find \"$query\" on ${d.name}.")
+        val played = home.playMusic(d.id, query) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         return ok("Playing $played on ${d.name}.")
+    }
+
+    /** Some of what the player has, so a miss can be followed by a pick of the model's own. */
+    private suspend fun musicChoices(deviceId: String): String {
+        val lists = mutableListOf<String>()
+        for (source in FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }) {
+            if (lists.size == 2) break
+            val items = runCatching { home.choices(source.card, source.arg, "") }.getOrDefault(emptyList())
+            if (items.isNotEmpty()) lists += "${source.title}: " + items.take(12).joinToString { it.name } + "."
+        }
+        val names = lists.joinToString(" ")
+        return if (names.isEmpty()) "" else " It has $names Pick one of these if it fits."
     }
 
     /** A device's Flow cards the assistant may use: never on guarded devices, nor anything that unlocks or disarms. */
@@ -424,6 +438,13 @@ class AgentTools(
         }
         "cancel", "stop" -> ok(if (dashboard.cancelTimer(label.ifBlank { null })) "Timer cancelled." else "No timer like that is running.")
         else -> ok(dashboard.timers().joinToString("\n").ifBlank { "No timers are running." })
+    }
+
+    private fun recipeTimers(): ToolResult {
+        val timers = recipes?.stepTimers().orEmpty()
+        if (timers.isEmpty()) return ok("No recipe is open, or its steps name no times.")
+        timers.forEach { (step, t) -> dashboard.startTimer(t.seconds, "Steg $step · ${t.label}") }
+        return ok("Started: " + timers.joinToString { (step, t) -> "step $step ${t.label}" } + ".")
     }
 
     private suspend fun calendar(start: String, days: Double?): ToolResult {

@@ -31,6 +31,8 @@ data class AskContext(
     val kitchen: String? = null,
     /** What is in the fridge and what to eat first, in words; null when nothing is tracked. */
     val fridge: String? = null,
+    /** The dashboard's weather card in a few lines (now and the next days); null before it has loaded. */
+    val weather: String? = null,
     /** A routine the user started, with what its steps did and found, in words; see [RoutineText]. */
     val routine: String? = null,
     /** The routine read something only a local brain may see. */
@@ -341,9 +343,13 @@ class Agent(
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
         append("Never reveal or guess codes, passwords or keys. ")
         append("For general questions you can't answer for sure, use ask_internet if you have it instead of guessing.\n")
+        append("Everything the dashboard shows is yours to use: answer the weather from the weather in the note (or the weather tool), never say you can't see it. ")
+        append("When the user lets you choose (\"play something\", \"välj själv\"), choose yourself instead of asking: for music call play_music with an empty query. ")
+        append("Remember what the user already told you in this conversation and never ask the same question twice.\n")
         append("When a recipe is open and the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
         append("and tell them the step in plain words. Answer questions about amounts and times from that recipe. ")
-        append("If the step has a cooking time, offer to start a timer for it.\n")
+        append("If the step has a cooking time, offer to start a timer for it. When the user wants timers for the whole recipe (\"timers for everything\", \"sätt alla timers\"), ")
+        append("call recipe_timers once instead of going through the steps.\n")
         append("Answer what's in the fridge, freezer or pantry and what goes off soon from fridge_contents. ")
         append("When the user says they bought, ate, finished, opened or froze something, update the fridge with your tools. ")
         append("When asked what to cook, suggest using what goes off first, and look in find_recipes if you have it.\n")
@@ -366,6 +372,7 @@ class Agent(
         append(view.describe())
         context.kitchen?.let { append("\nCooking: ").append(it) }
         context.fridge?.let { append("\nFridge: ").append(it) }
+        context.weather?.let { append("\nWeather (the dashboard's weather card):\n").append(it) }
         append("\nNow: ").append(now().format(DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd HH:mm", Locale.ENGLISH))).append(".")
         context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
         // Who is at the tablet is itself a secret ("Face recognition" switch).
@@ -412,7 +419,8 @@ class Agent(
         )
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
-        const val FORGET_AFTER_MS = 5 * 60 * 1000L
+        // Long enough to remember answers across a stretch of cooking between questions.
+        const val FORGET_AFTER_MS = 20 * 60 * 1000L
     }
 }
 

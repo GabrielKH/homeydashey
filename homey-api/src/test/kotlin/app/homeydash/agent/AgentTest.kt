@@ -528,6 +528,15 @@ class AgentTest {
         assertFalse(FollowUp.ends("stop the music"))
         assertFalse(FollowUp.ends("thanks, turn off the lights"))
         assertFalse(FollowUp.ends(""))
+        assertTrue(FollowUp.ends("Avsluta"))
+        assertTrue(FollowUp.ends("tack då"))
+        assertTrue(FollowUp.ends("okej tack Nova", "Nova"))
+        assertTrue(FollowUp.ends("stopp nu"))
+        assertTrue(FollowUp.ends("tack för hjälpen"))
+        assertTrue(FollowUp.ends("det var allt tack"))
+        assertFalse(FollowUp.ends("stoppa musiken"))
+        assertFalse(FollowUp.ends("tack, släck lampan"))
+        assertFalse(FollowUp.ends("då förstår jag"))
     }
 
     @Test
@@ -853,5 +862,12 @@ class AgentTest {
         val home = FakeHome()
         AgentTools(v, home, FakeDashboard()).run(call("set_device", "device" to "växt lampan i kontoret", "capability" to "onoff", "value" to "on"))
         assertEquals("d-plant", home.sets.single().first)
+    }
+
+    @Test fun `the weather card is in the note, so the weather is always known`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val note = agent.situation(AgentSettings(), view(), AskContext(weather = "Stockholm: Rain, 9 °C"))
+        assertTrue(note.contains("Weather (the dashboard's weather card):\nStockholm: Rain, 9 °C"))
+        assertTrue(agent.rules(AgentSettings()).contains("never ask the same question twice"))
     }
 }

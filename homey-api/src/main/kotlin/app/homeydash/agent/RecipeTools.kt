@@ -61,6 +61,12 @@ class RecipeTools(
         }
     }
 
+    /** Every time named in the open recipe's steps, with its step number (from 1). */
+    fun stepTimers(): List<Pair<Int, app.homeydash.recipes.StepTimer>> {
+        val (r, _) = cooking.current() ?: return emptyList()
+        return r.steps.flatMapIndexed { i, step -> Cooking.timers(step.text).map { (i + 1) to it } }
+    }
+
     /**
      * "Next step", "nästa steg", "what's next", "step 4" and the like while a recipe is open,
      * done straight away without the AI so the kitchen gets an instant answer. Null when

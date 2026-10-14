@@ -99,6 +99,12 @@ enum class AssistantState { Idle, Listening, Thinking, Speaking }
 interface DashboardBridge : DashboardControl {
     /** Visible, non-hidden devices for the assistant (the dashboard's own hidden list applied). */
     fun hidden(): Set<String>
+
+    /** The weather card's forecast in a few lines, for the assistant's note; null before it has loaded. */
+    fun weatherNow(): String? = null
+
+    /** The picture for the weather [tomorrow] or now. */
+    fun weatherScene(tomorrow: Boolean): Scene? = null
 }
 
 /**
@@ -414,6 +420,8 @@ class Assistant(
         }
         open = true
         lines += Line(true, text.trim())
+        // Rain on screen while it says it rains.
+        if (WEATHER_WORDS.containsMatchIn(text)) scene = bridge.weatherScene(TOMORROW.containsMatchIn(text))
         job?.cancel()
         job = scope.launch {
             state = AssistantState.Thinking
@@ -498,6 +506,7 @@ class Assistant(
     private fun askContext(s: AgentSettings, person: String?, followUp: Boolean) = AskContext(
         speaker = speakerName(s), person = person, followUp = followUp,
         kitchen = services.kitchen?.cooking?.describe(), fridge = services.kitchen?.fridge?.describe(),
+        weather = bridge.weatherNow(),
     )
 
     private fun speakerName(s: AgentSettings): String? = s.speakerId?.let { store.snapshot.value.devices[it]?.name }
@@ -652,5 +661,7 @@ class Assistant(
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
         const val HINT_CHARS = 400
+        val WEATHER_WORDS = Regex("väder|vädr|regn|snö|soligt|solen|prognos|temperatur|grader ute|weather|rain|snow|sunny|forecast", RegexOption.IGNORE_CASE)
+        val TOMORROW = Regex("tomorrow|imorgon|i morgon", RegexOption.IGNORE_CASE)
     }
 }

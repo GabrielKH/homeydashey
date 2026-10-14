@@ -98,10 +98,25 @@ class StoreHomeControl(
     override suspend fun playMusic(deviceId: String, query: String): String? {
         // Looks through every source (favourites, playlists, radio…) and plays the best match
         // of all, so "P3" finds the radio station even when a favourite also says "P3 Dokumentär".
-        val found = FlowCards.musicSources(deviceActions(deviceId)).flatMap { it.all }.flatMap { source ->
+        val sources = FlowCards.musicSources(deviceActions(deviceId)).flatMap { it.all }
+        // "Play something", "välj själv": a favourite or playlist picked at random.
+        if (query.isBlank() || ANYTHING.matches(NameMatch.normalize(query))) {
+            for (source in sources) {
+                val items = runCatching { choices(source.card, source.arg, "") }.getOrDefault(emptyList())
+                if (items.isEmpty()) continue
+                val item = items.random()
+                runAction(source.card, FlowCards.musicArgs(source, item))
+                return item.name
+            }
+            return null
+        }
+        val found = sources.flatMap { source ->
             runCatching { choices(source.card, source.arg, query) }.getOrDefault(emptyList()).map { source to it }
         }
-        val best = NameMatch.best(query, found) { NameMatch.score(query, it.second.name) }
+        // The artist is often only in the description ("Abbey Road" · "The Beatles").
+        val best = NameMatch.best(query, found) { (_, item) ->
+            maxOf(NameMatch.score(query, item.name), NameMatch.score(query, listOfNotNull(item.name, item.description).joinToString(" ")))
+        }
             ?: found.firstOrNull { it.first.arg.type == "autocomplete" && query.isNotBlank() }
             ?: return null
         runAction(best.first.card, FlowCards.musicArgs(best.first, best.second))
@@ -121,6 +136,11 @@ class StoreHomeControl(
     override suspend fun runAction(card: FlowCardAction, args: JsonObject) = store.runAction(card, args, rethrow = true)
 
     companion object {
+        private val ANYTHING = Regex(
+            "(anything|something|whatever|surprise me|random|you choose|any music|some music|music|" +
+                "vad som helst|nagot|nat|valj sjalv|du valjer|valfritt|valfri|lite musik|musik|nagon musik|overraska mig)",
+        )
+
         /** Parses `GET /api/manager/users/user`. */
         fun parsePeople(json: JsonElement): List<HomeyPerson> =
             values(json).mapNotNull { u ->

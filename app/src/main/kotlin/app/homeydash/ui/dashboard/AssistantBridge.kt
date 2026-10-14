@@ -72,12 +72,18 @@ class AssistantBridge(
     override fun goodnight() = actions.goodnight(steps(), display.goodnightFlow.value)
 
     override suspend fun weather(): String? {
+        return weatherNow()
+    }
+
+    override fun weatherScene(tomorrow: Boolean): Scene? {
         val f = weather.state.value.forecast ?: return null
         val c = f.current
-        // Rain on screen while it says it rains: today's sky now, or tomorrow's when that was asked.
-        val asked = assistant.lines.lastOrNull { it.fromUser }?.text.orEmpty()
-        val tomorrow = Regex("(?i)tomorrow|imorgon|i morgon").containsMatchIn(asked)
-        assistant.scene = Scene(sceneOf(if (tomorrow) f.days.getOrNull(1)?.kind ?: c.kind else c.kind, tomorrow || c.isDay))
+        return Scene(sceneOf(if (tomorrow) f.days.getOrNull(1)?.kind ?: c.kind else c.kind, tomorrow || c.isDay))
+    }
+
+    override fun weatherNow(): String? {
+        val f = weather.state.value.forecast ?: return null
+        val c = f.current
         val now = "${weather.state.value.placeName ?: "Here"}: ${c.kind.label}, ${c.temperature.toInt()} °C" +
             (c.feelsLike?.let { ", feels like ${it.toInt()} °C" } ?: "") + (c.wind?.let { ", wind ${it.toInt()} m/s" } ?: "")
         val days = f.days.take(4).joinToString("\n") { d ->
