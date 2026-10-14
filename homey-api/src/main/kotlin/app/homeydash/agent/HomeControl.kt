@@ -1,6 +1,8 @@
 package app.homeydash.agent
 
+import app.homeydash.homey.AutocompleteItem
 import app.homeydash.homey.FlowCardAction
+import app.homeydash.homey.FlowCardArg
 import app.homeydash.homey.FlowCards
 import app.homeydash.homey.HomeyFlow
 import app.homeydash.homey.HomeyStore
@@ -28,8 +30,20 @@ interface HomeControl {
     suspend fun triggerFlow(flow: HomeyFlow)
     suspend fun people(): List<HomeyPerson>
     suspend fun variables(): List<LogicVariable>
-    /** Plays the first match for [query] from the player's favourites, playlists or radio; returns its name. */
+    /** Plays the best match for [query] from the player's favourites, playlists or radio; returns its name. */
     suspend fun playMusic(deviceId: String, query: String): String?
+
+    /**
+     * The Flow "Then" cards the device's app offers: TV channels, apps, Sonos favourites,
+     * playlists and radio, remote keys. Everything an app can do that isn't a capability.
+     */
+    fun deviceActions(deviceId: String): List<FlowCardAction> = emptyList()
+
+    /** What an autocomplete argument offers for [query], such as channels or playlists. */
+    suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String): List<AutocompleteItem> = emptyList()
+
+    /** Runs a Flow card; throws when Homey refuses. */
+    suspend fun runAction(card: FlowCardAction, args: JsonObject) {}
 }
 
 /** One calendar event as the assistant sees it. */
@@ -70,19 +84,24 @@ class StoreHomeControl(
     override suspend fun variables(): List<LogicVariable> = parseVariables(store.logicVariables())
 
     override suspend fun playMusic(deviceId: String, query: String): String? {
-        for (source in FlowCards.musicSources(cards()[deviceId].orEmpty())) {
-            val items = runCatching {
-                if (source.arg.type == "dropdown") FlowCards.dropdownItems(source.arg) else store.autocomplete(source.card, source.arg.name, query)
-            }.getOrDefault(emptyList())
-            val match = items.firstOrNull { it.name.equals(query, ignoreCase = true) }
-                ?: items.firstOrNull { it.name.contains(query, ignoreCase = true) }
-                ?: items.takeIf { source.arg.type == "autocomplete" && query.isNotBlank() }?.firstOrNull()
-                ?: continue
-            store.runAction(source.card, JsonObject(mapOf(source.arg.name to FlowCards.argValue(source.arg, match))))
-            return match.name
+        // Looks through every source (favourites, playlists, radio…) and plays the best match
+        // of all, so "P3" finds the radio station even when a favourite also says "P3 Dokumentär".
+        val found = FlowCards.musicSources(cards()[deviceId].orEmpty()).flatMap { source ->
+            runCatching { choices(source.card, source.arg, query) }.getOrDefault(emptyList()).map { source to it }
         }
-        return null
+        val best = NameMatch.best(query, found) { NameMatch.score(query, it.second.name) }
+            ?: found.firstOrNull { it.first.arg.type == "autocomplete" && query.isNotBlank() }
+            ?: return null
+        runAction(best.first.card, JsonObject(mapOf(best.first.arg.name to FlowCards.argValue(best.first.arg, best.second))))
+        return best.second.name
     }
+
+    override fun deviceActions(deviceId: String): List<FlowCardAction> = cards()[deviceId].orEmpty()
+
+    override suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String): List<AutocompleteItem> =
+        if (arg.type == "dropdown") FlowCards.dropdownItems(arg) else store.autocomplete(card, arg.name, query)
+
+    override suspend fun runAction(card: FlowCardAction, args: JsonObject) = store.runAction(card, args, rethrow = true)
 
     companion object {
         /** Parses `GET /api/manager/users/user`. */

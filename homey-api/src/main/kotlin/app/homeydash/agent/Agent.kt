@@ -205,6 +205,8 @@ class Agent(
         }
         append("Rules: use device aliases (like light_3) in tool calls, but in answers call things by their names, never the alias. People name things loosely, in Swedish or English ")
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
+        append("A device may be named by its room or app rather than what it is: the app is shown in brackets, e.g. a TV called \"Vardagsrum\" (apple tv) is the Apple TV. ")
+        append("For TV channels, opening an app, Sonos favourites, playlists, radio and remote buttons, call device_actions and then run_device_action; play_music is a shortcut for music. ")
         append("use one of the devices it suggests or ask which one. Only use devices, rooms and moods listed below; ")
         append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")

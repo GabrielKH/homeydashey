@@ -1,5 +1,7 @@
 package app.homeydash.agent
 
+import app.homeydash.homey.FlowCardAction
+import app.homeydash.homey.FlowCards
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -76,6 +78,16 @@ class AgentTools(
             string("query", "What to play, e.g. a playlist or station name")
             required("player", "query")
         })
+        add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
+            string("device", "Device alias")
+            required("device")
+        })
+        add(tool("run_device_action", "Do one of a device's actions from device_actions, e.g. change channel, launch Netflix, play a Sonos favourite or playlist.") {
+            string("device", "Device alias")
+            string("action", "The action's id or title from device_actions")
+            string("value", "What to pick or enter, e.g. a channel, app, playlist or station name; leave out when the action needs nothing")
+            required("device", "action")
+        })
         add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, or a room name.") {
             string("page", "overview, moods, media, calendar, recipes, fridge, or a room name")
             required("page")
@@ -133,6 +145,8 @@ class AgentTools(
             "list_flows" -> ToolResult(home.flows().joinToString("\n") { it.name }.ifBlank { "No Flows can be started." })
             "run_flow" -> runFlow(a.str("name"))
             "play_music" -> playMusic(a.str("player"), a.str("query"))
+            "device_actions" -> deviceActions(a.str("device"))
+            "run_device_action" -> runDeviceAction(a.str("device"), a.str("action"), a.str("value").ifBlank { null })
             "open_page" -> openPage(a.str("page"))
             "open_device" -> view.device(a.str("device"))?.let { d -> ok(if (dashboard.openDevice(d.id)) "Opened ${d.name}." else "Can't open ${d.name}.") } ?: unknown(a.str("device"))
             "goodnight" -> goodnight()
@@ -255,6 +269,68 @@ class AgentTools(
         return ok("Playing $played on ${d.name}.")
     }
 
+    /** A device's Flow cards the assistant may use: never on guarded devices, nor anything that unlocks or disarms. */
+    private fun actionsOf(d: AgentDevice): List<FlowCardAction>? {
+        if (d.secret != null) return null
+        if (guest && d.deviceClass !in GUEST_MEDIA) return null
+        return home.deviceActions(d.id).filter { card -> !SENSITIVE.containsMatchIn(card.cardId) && !SENSITIVE.containsMatchIn(card.title.orEmpty()) }
+    }
+
+    private fun deviceActions(alias: String): ToolResult {
+        val d = view.device(alias) ?: return unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name}'s actions can't be used here.")
+        if (cards.isEmpty()) return ok("${d.name} has no actions in Homey besides its capabilities.")
+        return ok(cards.take(MAX_ACTIONS).joinToString("\n") { card ->
+            val args = card.inputArgs.joinToString { arg ->
+                when (arg.type) {
+                    "dropdown" -> "${arg.name}: one of " + arg.values.orEmpty().take(12).joinToString("/") { it.label ?: it.id }
+                    "autocomplete" -> "${arg.name}: a name to search for"
+                    "range", "number" -> "${arg.name}: number ${arg.min ?: ""}..${arg.max ?: ""}"
+                    else -> "${arg.name}: ${arg.type}"
+                }
+            }
+            "${card.cardId} \"${card.title ?: card.cardId}\"" + if (args.isEmpty()) "" else " ($args)"
+        })
+    }
+
+    private suspend fun runDeviceAction(alias: String, action: String, value: String?): ToolResult {
+        val d = view.device(alias) ?: return unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name}'s actions can't be used here.")
+        val card = cards.firstOrNull { it.cardId.equals(action.trim(), ignoreCase = true) || it.title.equals(action.trim(), ignoreCase = true) }
+            ?: NameMatch.best(action, cards) { NameMatch.score(action, it.title ?: it.cardId) }
+            ?: return ok("${d.name} has no action \"$action\". Use device_actions to see what it has.")
+        val title = card.title ?: card.cardId
+        // One value per argument, separated by ";" when the card has several.
+        val values = value?.split(';')?.map { it.trim() }.orEmpty()
+        var picked: String? = null
+        val args = buildMap<String, JsonElement> {
+            card.inputArgs.forEachIndexed { i, arg ->
+                val v = values.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: return ok("\"$title\" needs ${arg.title ?: arg.name}.")
+                val element: JsonElement = when (arg.type) {
+                    "autocomplete", "dropdown" -> {
+                        val items = home.choices(card, arg, v)
+                        val item = NameMatch.best(v, items) { NameMatch.score(v, it.name) }
+                            ?: items.takeIf { arg.type == "autocomplete" }?.firstOrNull { NameMatch.score(v, it.name) > 0 }
+                            ?: items.singleOrNull()
+                            ?: return ok("Couldn't find \"$v\" for $title. " + if (items.isEmpty()) "Nothing matched." else "Some choices: " + items.take(10).joinToString { it.name } + ".")
+                        picked = item.name
+                        FlowCards.argValue(arg, item)
+                    }
+                    "range", "number" -> JsonPrimitive(v.replace(',', '.').toDoubleOrNull() ?: return ok("\"$title\" needs a number for ${arg.name}."))
+                    "checkbox" -> JsonPrimitive(v.lowercase() in setOf("true", "yes", "ja", "on", "på", "1"))
+                    "device" -> {
+                        val other = view.device(v) ?: return unknown(v)
+                        buildJsonObject { put("id", other.id); put("name", other.name) }
+                    }
+                    else -> JsonPrimitive(v)
+                }
+                put(arg.name, element)
+            }
+        }
+        home.runAction(card, JsonObject(args))
+        return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}.")
+    }
+
     private fun openPage(page: String): ToolResult {
         val p = page.trim().lowercase()
         val fixed = mapOf(
@@ -349,6 +425,10 @@ class AgentTools(
 
     companion object {
         private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)_\d+\b""")
+        /** Guests may use the actions of TVs and speakers, nothing else's. */
+        private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")
+        private const val MAX_ACTIONS = 40
+
         private val GUEST_BLOCKED = setOf("list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */

@@ -105,12 +105,13 @@ class HomeyStore(
     /** The Homey's own location, for the weather. */
     suspend fun location(): Pair<Double, Double>? = client.location()
 
-    /** Runs a Flow card; failures show in the error banner. */
-    suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
+    /** Runs a Flow card; failures show in the error banner, and with [rethrow] are thrown too. */
+    suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap()), rethrow: Boolean = false) {
         try {
             client.runAction(card, args)
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = "Couldn't run ${card.title ?: card.cardId}: ${e.message}") }
+            if (rethrow) throw e
         }
     }
 

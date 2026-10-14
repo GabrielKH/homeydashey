@@ -17,6 +17,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import app.homeydash.homey.FlowCardArg
+import app.homeydash.homey.AutocompleteItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -203,6 +205,59 @@ class AgentTest {
         assertEquals("{}", messages[0].jsonObject["tool_calls"]!!.jsonArray[0].jsonObject["function"]!!.jsonObject["arguments"]!!.jsonPrimitive.content)
         assertEquals("c1", messages[1].jsonObject["tool_call_id"]!!.jsonPrimitive.content)
         assertTrue((body["tools"] as JsonArray).size > 5)
+    }
+
+    private val media: Map<String, Device> = HomeyJson.decodeFromString(
+        """
+        {
+          "d-atv": {"id":"d-atv","name":"Vardagsrum","zone":"z-kitchen","class":"tv","driverUri":"homey:app:com.apple.tv","capabilities":["onoff"],
+            "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}},
+          "d-sonos": {"id":"d-sonos","name":"Kök","zone":"z-kitchen","class":"speaker","driverUri":"homey:app:com.sonos","capabilities":["speaker_playing"],
+            "capabilitiesObj":{"speaker_playing":{"id":"speaker_playing","type":"boolean","value":false,"setable":true}}},
+          "d-lamp": {"id":"d-lamp","name":"Taklampa","zone":"z-kitchen","class":"light","capabilities":["onoff"],
+            "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}}
+        }
+        """.trimIndent(),
+    )
+
+    private class MediaHome : HomeControl {
+        val ran = mutableListOf<Pair<String, JsonObject>>()
+        private val channel = FlowCardAction(
+            "homey:device:d-atv:change_channel", title = "Change channel",
+            args = listOf(FlowCardArg("device", "device"), FlowCardArg("channel", "autocomplete")),
+        )
+        private val unlock = FlowCardAction("homey:device:d-atv:unlock_parental", title = "Unlock")
+        override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) {}
+        override suspend fun setMood(mood: Mood) {}
+        override suspend fun flows() = emptyList<HomeyFlow>()
+        override suspend fun triggerFlow(flow: HomeyFlow) {}
+        override suspend fun people() = emptyList<HomeyPerson>()
+        override suspend fun variables() = emptyList<LogicVariable>()
+        override suspend fun playMusic(deviceId: String, query: String): String? = null
+        override fun deviceActions(deviceId: String) = if (deviceId == "d-atv") listOf(channel, unlock) else emptyList()
+        override suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String) =
+            listOf("SVT1", "SVT2", "TV4").map { AutocompleteItem(it, null, null, JsonObject(mapOf("name" to JsonPrimitive(it)))) }
+        override suspend fun runAction(card: FlowCardAction, args: JsonObject) { ran += card.cardId to args }
+    }
+
+    @Test fun `devices are found by their app or type, not only their name`() = runTest {
+        val v = HomeView.build(zones, media, emptyMap(), emptySet(), AgentSettings(), true)
+        assertEquals("Vardagsrum", v.device("the Apple TV")?.name)
+        assertEquals("Vardagsrum", v.device("tv:n")?.name)
+        assertEquals("Kök", v.device("sonos")?.name)
+        assertEquals("Taklampa", v.device("taklampan")?.name)
+        assertTrue(v.describe().contains("\"Vardagsrum\" tv (apple tv)"))
+        assertEquals("Vardagsrum", QuickCommand.parse("start the apple tv", v)?.device?.name)
+
+        val home = MediaHome()
+        val tools = AgentTools(v, home, FakeDashboard())
+        val list = tools.run(call("device_actions", "device" to "apple tv")).text
+        assertTrue(list.contains("change_channel"))
+        assertFalse(list.contains("unlock"))
+        val done = tools.run(call("run_device_action", "device" to "Vardagsrum", "action" to "byt kanal change channel", "value" to "tv4")).text
+        assertEquals("Done: Change channel (TV4) on Vardagsrum.", done)
+        assertEquals("TV4", home.ran.single().second["channel"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertTrue(tools.run(call("run_device_action", "device" to "Vardagsrum", "action" to "unlock_parental")).text.contains("no action"))
     }
 
     @Test fun `the endpointer hears a question start and stop`() {

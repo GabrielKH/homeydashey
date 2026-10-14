@@ -36,6 +36,8 @@ data class AgentDevice(
     val secret: Secret?,
     /** Hidden on the dashboard or in the Homey app; room-wide changes leave it alone. */
     val hiddenOnDashboard: Boolean = false,
+    /** The app it comes from, in words ("apple tv", "sonos"), so "the Apple TV" finds a TV named "Vardagsrum". */
+    val kind: String? = null,
 ) {
     fun capability(id: String): AgentCapability? = capabilities.firstOrNull { it.id == id }
 }
@@ -75,12 +77,24 @@ class HomeView(
         devices.firstOrNull { it.name.equals(q, ignoreCase = true) }?.let { return it }
         val norm = NameMatch.normalize(q)
         devices.filter { NameMatch.normalize(it.name) == norm }.singleOrNull()?.let { return it }
-        return NameMatch.best(q, devices) { NameMatch.score(q, it.name, it.room) }
+        return NameMatch.best(q, devices) { score(q, it) }
     }
 
     /** Devices whose names come closest to [query], for suggesting what was meant. */
     fun similarDevices(query: String, limit: Int = 5): List<AgentDevice> =
-        NameMatch.rank(query, devices) { NameMatch.score(query, it.name, it.room) }.take(limit).map { it.first }
+        NameMatch.rank(query, devices) { score(query, it) }.take(limit).map { it.first }
+
+    /**
+     * How well [query] names [d]: by its name, or else by its app ("the Apple TV") or its type
+     * ("the TV", "högtalaren"). The name counts most, so "taklampan" still means the lamp
+     * called Taklampa and not every lamp.
+     */
+    private fun score(query: String, d: AgentDevice): Double {
+        val byName = NameMatch.score(query, d.name, d.room)
+        val byKind = d.kind?.let { NameMatch.score(query, it, d.room) * KIND_WEIGHT } ?: 0.0
+        val byClass = CLASS_WORDS[d.deviceClass].orEmpty().maxOfOrNull { NameMatch.score(query, it, d.room) * CLASS_WEIGHT } ?: 0.0
+        return maxOf(byName, byKind, byClass)
+    }
 
     fun aliasOf(deviceId: String): String? = devices.firstOrNull { it.id == deviceId }?.alias
 
@@ -102,7 +116,9 @@ class HomeView(
         devices.groupBy { it.room ?: "No room" }.toSortedMap().forEach { (room, list) ->
             append("## ").append(room).append('\n')
             list.forEach { d ->
-                append(d.alias).append(" \"").append(d.name).append("\" ").append(d.deviceClass).append(':')
+                append(d.alias).append(" \"").append(d.name).append("\" ").append(d.deviceClass)
+                d.kind?.let { append(" (").append(it).append(')') }
+                append(':')
                 d.capabilities.forEach { c -> append(' ').append(describe(c)) }
                 append('\n')
             }
@@ -148,6 +164,7 @@ class HomeView(
                         capabilities = device.capabilities.mapNotNull { id -> device.capability(id)?.let(::visibleCapability) },
                         secret = secret,
                         hiddenOnDashboard = device.hidden || device.id in hidden,
+                        kind = kindOf(device),
                     )
                 }
                 .sortedWith(compareBy({ it.room ?: "" }, { it.name.lowercase() }))
@@ -155,6 +172,39 @@ class HomeView(
                 .sortedBy { it.mood.name.lowercase() }
             val usedRooms = shown.mapNotNull { it.roomId }.toSet() + moods.values.mapNotNull { it.zone }
             return HomeView(shown, roomNames.filterKeys { it in usedRooms }, agentMoods, local, settings)
+        }
+
+        private const val KIND_WEIGHT = 0.9
+        private const val CLASS_WEIGHT = 0.6
+
+        /** What people call each kind of device, in English and Swedish. */
+        private val CLASS_WORDS = mapOf(
+            "tv" to listOf("tv", "teve", "television", "tvn"),
+            "speaker" to listOf("speaker", "högtalare", "högtalaren", "music", "musik"),
+            "amplifier" to listOf("amplifier", "förstärkare"),
+            "light" to listOf("lamp", "lampa", "light", "ljus"),
+            "socket" to listOf("plug", "uttag", "kontakt"),
+            "thermostat" to listOf("thermostat", "termostat"),
+            "heater" to listOf("heater", "element", "värme"),
+            "heatpump" to listOf("heat pump", "värmepump"),
+            "airconditioning" to listOf("air conditioning", "ac", "luftkonditionering"),
+            "vacuumcleaner" to listOf("vacuum", "robot", "dammsugare", "robotdammsugare"),
+            "windowcoverings" to listOf("blinds", "curtains", "gardin", "persienn", "rullgardin"),
+            "fan" to listOf("fan", "fläkt"),
+            "camera" to listOf("camera", "kamera"),
+            "doorbell" to listOf("doorbell", "ringklocka", "dörrklocka"),
+            "lock" to listOf("lock", "lås"),
+            "kettle" to listOf("kettle", "vattenkokare"),
+            "coffeemachine" to listOf("coffee machine", "kaffebryggare", "kaffemaskin"),
+        )
+
+        private val APP_NOISE = setOf("com", "nl", "be", "org", "io", "net", "se", "de", "no", "dk", "fi", "eu", "uk", "co", "dev", "app", "apps", "homey", "athom", "github")
+
+        /** The app a device comes from, in words: `homey:app:com.apple.tv` is "apple tv". */
+        fun kindOf(device: Device): String? {
+            val app = device.driverUri?.removePrefix("homey:app:")?.substringBefore(':') ?: return null
+            if (app.startsWith("homey:")) return null
+            return app.split('.', '-', '_').filter { it.length > 1 && it !in APP_NOISE }.joinToString(" ").ifBlank { null }
         }
 
         /** The switch that guards a device, or null for an ordinary one. */

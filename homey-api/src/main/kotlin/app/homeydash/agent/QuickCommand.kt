@@ -10,7 +10,7 @@ object QuickCommand {
     /** What to do: [device] or every light in [roomId], set to [on] or to [dim] (0..1). */
     data class Action(val device: AgentDevice?, val roomId: String?, val on: Boolean?, val dim: Double?, val swedish: Boolean)
 
-    private val ON = Regex("""^(?:kan du |snälla |please |can you )?(tänd|tända|sätt på|sätta på|slå på|slå på|starta|turn on|switch on|put on)\s+(.+)$""")
+    private val ON = Regex("""^(?:kan du |snälla |please |can you )?(tänd|tända|sätt på|sätta på|slå på|starta|start|turn on|switch on|put on)\s+(.+)$""")
     private val ON_AFTER = Regex("""^(?:sätt|sätta|slå|turn|switch)\s+(.+?)\s+(på|on)$""")
     private val OFF = Regex("""^(?:kan du |snälla |please |can you )?(släck|släcka|stäng av|stänga av|slå av|turn off|switch off|shut off)\s+(.+)$""")
     private val OFF_AFTER = Regex("""^(?:stäng|stänga|slå|turn|switch)\s+(.+?)\s+(av|off)$""")
