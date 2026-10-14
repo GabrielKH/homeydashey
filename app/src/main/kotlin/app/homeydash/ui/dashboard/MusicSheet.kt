@@ -45,6 +45,7 @@ import app.homeydash.homey.AutocompleteItem
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.Device
 import app.homeydash.homey.FlowCards
+import app.homeydash.homey.MusicSource
 import app.homeydash.homey.Zone
 import app.homeydash.ui.components.DialogHeader
 import app.homeydash.ui.components.GlassDialog
@@ -135,14 +136,11 @@ fun MusicSheet(
             if (source.arg.type == "autocomplete") SearchField(query, { query = it }, Modifier.weight(1f))
         }
 
-        val results by produceState<List<AutocompleteItem>?>(null, target.id, source.card.id, query) {
+        // Each item remembers the card that listed it, since a tab can fall back to a twin's card.
+        val results by produceState<List<Pair<MusicSource, AutocompleteItem>>?>(null, target.id, source.card.id, query) {
             value = null
             if (query.isNotEmpty()) delay(350)
-            value = if (source.arg.type == "dropdown") {
-                FlowCards.dropdownItems(source.arg).filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-            } else {
-                actions.autocomplete(source.card, source.arg.name, query)
-            }
+            value = actions.musicItems(source, query)
         }
         // Read once here: the grid builds its items later, when the list may already be reloading.
         val list = results
@@ -161,9 +159,9 @@ fun MusicSheet(
                     contentPadding = PaddingValues(bottom = 8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(list) { item ->
+                    items(list) { (from, item) ->
                         MusicItem(item, actions) {
-                            actions.run(source.card, FlowCards.musicArgs(source, item))
+                            actions.run(from.card, FlowCards.musicArgs(from, item))
                             onDismiss()
                         }
                     }
