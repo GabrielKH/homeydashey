@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -47,8 +46,6 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -145,26 +142,18 @@ fun FaceWatch(services: app.homeydash.assistant.AssistantServices, settings: Age
 private fun Orb(state: AssistantState, level: () -> Float, onClick: () -> Unit, onLongClick: () -> Unit) {
     val g = GlassTheme.colors
     val active = state != AssistantState.Idle
-    // The animations only run while they show: at rest the orb asks for no frames at all.
-    val breathe = if (state == AssistantState.Thinking || state == AssistantState.Speaking) {
-        rememberInfiniteTransition(label = "orb")
-            .animateFloat(1f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
-    } else null
-    val spin = if (state == AssistantState.Thinking) {
-        rememberInfiniteTransition(label = "spin").animateFloat(0f, 360f, infiniteRepeatable(tween(2400)), label = "spin")
-    } else null
-    val voice = remember { Animatable(0f) }
-    LaunchedEffect(active) {
-        if (!active) voice.snapTo(0f)
-        else snapshotFlow { level() }.collectLatest { voice.animateTo(it, spring(stiffness = 400f)) }
-    }
+    val pulse = rememberInfiniteTransition(label = "orb")
+    val breathe by pulse.animateFloat(1f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
+    val spin by pulse.animateFloat(0f, 360f, infiniteRepeatable(tween(2400)), label = "spin")
+    // The level is read here, so only the orb recomposes as the voice changes.
+    val voice by animateFloatAsState(if (active) level() else 0f, spring(stiffness = 400f), label = "level")
     Box(
         Modifier
             .size(72.dp)
             .graphicsLayer {
                 val scale = when (state) {
-                    AssistantState.Listening -> 1f + voice.value * 0.18f
-                    AssistantState.Thinking, AssistantState.Speaking -> breathe?.value ?: 1f
+                    AssistantState.Listening -> 1f + voice * 0.18f
+                    AssistantState.Thinking, AssistantState.Speaking -> breathe
                     AssistantState.Idle -> 1f
                 }
                 scaleX = scale
@@ -174,8 +163,7 @@ private fun Orb(state: AssistantState, level: () -> Float, onClick: () -> Unit, 
             .drawBehind {
                 if (active) {
                     // A soft halo that follows the voice.
-                    val v = voice.value
-                    drawCircle(g.on.copy(alpha = 0.25f + v * 0.3f), radius = size.minDimension / 2 * (1.12f + v * 0.25f))
+                    drawCircle(g.on.copy(alpha = 0.25f + voice * 0.3f), radius = size.minDimension / 2 * (1.12f + voice * 0.25f))
                 }
             }
             .then(if (active) Modifier.background(onBrush(), CircleShape) else Modifier.glass(CircleShape)),
@@ -192,7 +180,7 @@ private fun Orb(state: AssistantState, level: () -> Float, onClick: () -> Unit, 
             filled = active,
             size = 32.dp,
             tint = if (active) g.onInk else g.fg,
-            modifier = spin?.let { s -> Modifier.graphicsLayer { rotationZ = s.value } } ?: Modifier,
+            modifier = if (state == AssistantState.Thinking) Modifier.graphicsLayer { rotationZ = spin } else Modifier,
         )
     }
 }
