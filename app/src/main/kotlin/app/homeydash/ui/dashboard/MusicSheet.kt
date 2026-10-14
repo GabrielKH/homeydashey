@@ -56,7 +56,6 @@ import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
-import kotlinx.serialization.json.JsonObject
 
 /** Speakers whose apps can play something picked from a list (Sonos favourites, playlists…). */
 fun musicSpeakers(devices: Collection<Device>, actions: DashboardActions): List<Device> =
@@ -164,7 +163,7 @@ fun MusicSheet(
                 ) {
                     items(list) { item ->
                         MusicItem(item, actions) {
-                            actions.run(source.card, JsonObject(mapOf(source.arg.name to FlowCards.argValue(source.arg, item))))
+                            actions.run(source.card, FlowCards.musicArgs(source, item))
                             onDismiss()
                         }
                     }

@@ -802,8 +802,8 @@ class AgentTest {
             Device("lamp", "Kök", zone = "z-kitchen", deviceClass = "light", driverUri = "homey:app:com.ikea:bulb"),
             Device("tv", "Vardagsrum", zone = "z-living", deviceClass = "speaker", driverUri = "homey:app:nl.xiut.sonoslocal:speaker"),
         ).associateBy { it.id }
-        assertEquals(listOf("local"), StoreHomeControl.twinsOf(devices, "son"))
-        assertEquals(emptyList<String>(), StoreHomeControl.twinsOf(devices, "tv"))
+        assertEquals(listOf("local"), app.homeydash.homey.FlowCards.twinsOf(devices, "son"))
+        assertEquals(emptyList<String>(), app.homeydash.homey.FlowCards.twinsOf(devices, "tv"))
 
         val album = FlowCardAction(
             "homey:device:local:play_album", title = "Play album",

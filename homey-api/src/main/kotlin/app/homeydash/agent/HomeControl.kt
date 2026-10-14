@@ -112,12 +112,8 @@ class StoreHomeControl(
      * The device's cards, and those of its twins: the same speaker added by a second app
      * (Sonos and Sonos LocalAPI), often hidden, whose albums and playlists count too.
      */
-    override fun deviceActions(deviceId: String): List<FlowCardAction> {
-        val all = cards()
-        val own = all[deviceId].orEmpty()
-        val twins = twinsOf(store.snapshot.value.devices, deviceId)
-        return own + twins.flatMap { twin -> all[twin].orEmpty().filter { c -> own.none { it.cardId == c.cardId } } }
-    }
+    override fun deviceActions(deviceId: String): List<FlowCardAction> =
+        FlowCards.withTwins(store.snapshot.value.devices, cards(), deviceId)
 
     override suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String): List<AutocompleteItem> =
         if (arg.type == "dropdown") FlowCards.dropdownItems(arg) else store.autocomplete(card, arg.name, query)
@@ -125,21 +121,6 @@ class StoreHomeControl(
     override suspend fun runAction(card: FlowCardAction, args: JsonObject) = store.runAction(card, args, rethrow = true)
 
     companion object {
-        /**
-         * Other devices that are the same thing from another app, of the same kind: the same name anywhere (a hidden
-         * copy often stays in the home's top zone), or a name containing the other one in the same room.
-         */
-        fun twinsOf(devices: Map<String, app.homeydash.homey.Device>, deviceId: String): List<String> {
-            val d = devices[deviceId] ?: return emptyList()
-            val name = NameMatch.normalize(d.name)
-            val app = d.driverUri?.substringBeforeLast(':') ?: return emptyList()
-            return devices.values.filter { o ->
-                if (o.id == d.id || o.homeyClass != d.homeyClass || o.driverUri?.substringBeforeLast(':') == app) return@filter false
-                val other = NameMatch.normalize(o.name)
-                other == name || (o.zone == d.zone && other.length >= 3 && name.length >= 3 && (other.contains(name) || name.contains(other)))
-            }.map { it.id }
-        }
-
         /** Parses `GET /api/manager/users/user`. */
         fun parsePeople(json: JsonElement): List<HomeyPerson> =
             values(json).mapNotNull { u ->

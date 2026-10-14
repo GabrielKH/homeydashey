@@ -1,5 +1,6 @@
 package app.homeydash.homey
 
+import app.homeydash.agent.NameMatch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -90,6 +91,27 @@ object FlowCards {
             else -> emptyList()
         }
         return items.mapNotNull { runCatching { HomeyJson.decodeFromJsonElement(FlowCardAction.serializer(), it) }.getOrNull() }
+    }
+
+    /**
+     * Other devices that are the same thing from another app, of the same kind: the same name anywhere (a hidden
+     * copy often stays in the home's top zone), or a name containing the other one in the same room.
+     */
+    fun twinsOf(devices: Map<String, Device>, deviceId: String): List<String> {
+        val d = devices[deviceId] ?: return emptyList()
+        val name = NameMatch.normalize(d.name)
+        val app = d.driverUri?.substringBeforeLast(':') ?: return emptyList()
+        return devices.values.filter { o ->
+            if (o.id == d.id || o.homeyClass != d.homeyClass || o.driverUri?.substringBeforeLast(':') == app) return@filter false
+            val other = NameMatch.normalize(o.name)
+            other == name || (o.zone == d.zone && other.length >= 3 && name.length >= 3 && (other.contains(name) || name.contains(other)))
+        }.map { it.id }
+    }
+
+    /** A device's cards, and those of its [twinsOf] that it doesn't have itself (albums on a hidden Sonos LocalAPI copy). */
+    fun withTwins(devices: Map<String, Device>, cards: Map<String, List<FlowCardAction>>, deviceId: String): List<FlowCardAction> {
+        val own = cards[deviceId].orEmpty()
+        return own + twinsOf(devices, deviceId).flatMap { twin -> cards[twin].orEmpty().filter { c -> own.none { it.cardId == c.cardId } } }
     }
 
     fun byDevice(cards: List<FlowCardAction>): Map<String, List<FlowCardAction>> =
