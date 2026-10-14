@@ -49,7 +49,9 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val settingsStore = AssistantSettingsStore(appContext, scope)
     val settings: StateFlow<AgentSettings> = settingsStore.settings
     val chat = ChatClient(http)
-    val agent = Agent(chat)
+    /** The owner's routines ("God morgon") and standing instructions for the assistant. */
+    val routines = app.homeydash.agent.RoutineBook(File(appContext.filesDir, "assistant"))
+    val agent = Agent(chat, routines = { routines.data.value })
     val input = SpeechInput(appContext)
     val output = SpeechOutput(appContext)
     val server = AnswerServer(appContext)
@@ -64,6 +66,10 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     var onActive: (() -> Unit)? = null
     /** The recipes and the one being cooked, so the assistant can follow along. */
     var kitchen: app.homeydash.data.Kitchen? = null
+
+    init {
+        scope.launch { routines.load() }
+    }
 }
 
 /** One line in the assistant's conversation. */
@@ -414,6 +420,33 @@ class Assistant(
         }
     }
 
+    /** Runs [routine] now, as if its phrase was said (Settings → Assistant → Routines → Run). */
+    fun runRoutine(routine: app.homeydash.agent.Routine) {
+        lastByVoice = false
+        conversing = false
+        conversationUntil = 0L
+        open = true
+        lines += Line(true, routine.name)
+        job?.cancel()
+        job = scope.launch {
+            state = AssistantState.Thinking
+            val reply = try {
+                val (s, person) = forWhoIsHere(settings)
+                services.agent.runRoutine(
+                    routine, routine.name, s,
+                    view = { local -> view(s, local) },
+                    tools = { v -> tools(v) },
+                    context = askContext(s, person, followUp = false),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AgentReply("Something went wrong: ${e.message}", error = true)
+            }
+            show(reply)
+        }
+    }
+
     fun confirm(yes: Boolean) {
         job?.cancel()
         job = scope.launch {
@@ -440,6 +473,7 @@ class Assistant(
         web = services.web.lookup(v.settings.webSearch()),
         recipes = services.kitchen?.let { k -> app.homeydash.agent.RecipeTools(k.book, k.cooking) { bridge.openPage("recipes") } },
         fridge = services.kitchen?.let { k -> app.homeydash.agent.FridgeTools(k.fridge) { bridge.openPage("fridge") } },
+        routines = app.homeydash.agent.RoutineTools(services.routines),
     )
 
     private fun view(s: AgentSettings, local: Boolean): HomeView {
@@ -482,6 +516,12 @@ class Assistant(
         val brain: Connection? = reply.brain
         lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions)
         if (settings.speak && !reply.error) say(reply.text)
+        // A routine's last steps, like starting the radio, wait until the answer has been said.
+        reply.then?.let { then ->
+            val done = try { then() } catch (e: CancellationException) { throw e } catch (e: Exception) { listOf("That failed: ${e.message}") }
+            val i = lines.lastIndex
+            if (i >= 0 && !lines[i].fromUser) lines[i] = lines[i].copy(actions = lines[i].actions + done)
+        }
         state = AssistantState.Idle
         // A spoken question, or a yes/no question, is followed by listening for the next one.
         val yesNo = pending?.tapOnly == false

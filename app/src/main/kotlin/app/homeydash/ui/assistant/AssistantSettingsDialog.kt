@@ -80,10 +80,14 @@ fun AssistantSettingsDialog(
     preview: (local: Boolean) -> Pair<HomeView, AgentTools>,
     onFaces: () -> Unit,
     onDismiss: () -> Unit,
+    moods: Map<String, app.homeydash.homey.Mood> = emptyMap(),
+    flows: suspend () -> List<String> = { emptyList() },
+    onRunRoutine: (app.homeydash.agent.Routine) -> Unit = {},
 ) {
     val g = GlassTheme.colors
     val update = services.settingsStore::update
     var page by remember { mutableStateOf("main") }
+    var editing by remember { mutableStateOf<app.homeydash.agent.Routine?>(null) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
@@ -94,9 +98,15 @@ fun AssistantSettingsDialog(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (page != "main") RoundButton(Sym.arrowBack, { page = "main" }, size = 44.dp, filledIcon = false)
+                if (page != "main") RoundButton(Sym.arrowBack, { page = if (page == "routine") "routines" else "main" }, size = 44.dp, filledIcon = false)
                 Text(
-                    when (page) { "devices" -> "Hidden from the assistant"; "preview" -> "What the assistant sees"; else -> "Assistant" },
+                    when (page) {
+                        "devices" -> "Hidden from the assistant"
+                        "preview" -> "What the assistant sees"
+                        "routines" -> "Routines"
+                        "routine" -> editing?.name?.ifBlank { null } ?: "New routine"
+                        else -> "Assistant"
+                    },
                     style = MaterialTheme.typography.headlineMedium,
                     color = g.fg,
                     modifier = Modifier.weight(1f),
@@ -114,7 +124,16 @@ fun AssistantSettingsDialog(
                         update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
                     }
                     "preview" -> Preview(services, settings, preview)
-                    else -> Main(services, settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
+                    "routines" -> RoutineList(services, onEdit = { editing = it; page = "routine" }, onRun = onRunRoutine)
+                    "routine" -> editing?.let { r ->
+                        androidx.compose.runtime.key(r.id) {
+                            RoutineEditor(services, r, zones, devices, moods, flows, onRun = onRunRoutine, onDone = { page = "routines" })
+                        }
+                    }
+                    else -> Main(
+                        services, settings, update,
+                        onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces, onRoutines = { page = "routines" },
+                    )
                 }
             }
         }
@@ -129,6 +148,7 @@ private fun Main(
     onDevices: () -> Unit,
     onPreview: () -> Unit,
     onFaces: () -> Unit,
+    onRoutines: () -> Unit,
 ) {
     val g = GlassTheme.colors
     Text(
@@ -159,6 +179,9 @@ private fun Main(
         update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
     }
     ConnectionFields(services, internet, showKey = true) { c -> update { it.copy(internet = c) } }
+
+    Label("Routines and instructions")
+    NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
 
     Label("Language")
     Segmented(Language.entries, settings.language, { it.label }) { l -> update { it.copy(language = l) } }
@@ -392,12 +415,12 @@ private fun Preview(services: AssistantServices, settings: AgentSettings, previe
 }
 
 @Composable
-private fun Label(text: String) {
+internal fun Label(text: String) {
     Text(text, style = MaterialTheme.typography.labelMedium, color = GlassTheme.colors.muted, modifier = Modifier.padding(top = 4.dp))
 }
 
 @Composable
-private fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, enabled: Boolean = true, onPick: (T) -> Unit) {
+internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, enabled: Boolean = true, onPick: (T) -> Unit) {
     val g = GlassTheme.colors
     Row(Modifier.fillMaxWidth().glass(PillShape).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         options.forEach { option ->
@@ -455,7 +478,7 @@ private fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Boo
 }
 
 @Composable
-private fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick: () -> Unit) {
+internal fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick: () -> Unit) {
     val g = GlassTheme.colors
     Row(
         Modifier.fillMaxWidth().pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
@@ -504,7 +527,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
 }
 
 @Composable
-private fun Chip(text: String, on: Boolean, onClick: () -> Unit) {
+internal fun Chip(text: String, on: Boolean, onClick: () -> Unit) {
     val g = GlassTheme.colors
     Text(
         text,

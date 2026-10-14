@@ -519,6 +519,9 @@ fun DashboardScreen(
             preview = assistant::preview,
             onFaces = { showAssistantSettings = false; showFaces = true },
             onDismiss = { showAssistantSettings = false },
+            moods = snapshot.moods,
+            flows = { actions.flows().map { it.name } },
+            onRunRoutine = { showAssistantSettings = false; assistant.runRoutine(it) },
         )
     }
     if (showFaces) {

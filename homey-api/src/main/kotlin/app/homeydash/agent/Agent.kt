@@ -15,6 +15,8 @@ data class AgentReply(
     val actions: List<String> = emptyList(),
     /** The words weren't meant for the assistant (people talking, a phone call); nothing to say. */
     val ignored: Boolean = false,
+    /** Routine steps that wait until the answer has been spoken, like starting the radio; returns what they did. */
+    val then: (suspend () -> List<String>)? = null,
 )
 
 /** Context for one question that isn't about the home itself. */
@@ -29,6 +31,10 @@ data class AskContext(
     val kitchen: String? = null,
     /** What is in the fridge and what to eat first, in words; null when nothing is tracked. */
     val fridge: String? = null,
+    /** A routine the user started, with what its steps did and found, in words; see [RoutineText]. */
+    val routine: String? = null,
+    /** The routine read something only a local brain may see. */
+    val routineLocalOnly: Boolean = false,
 )
 
 /**
@@ -38,6 +44,8 @@ data class AskContext(
  */
 class Agent(
     private val chat: ChatClient,
+    /** The owner's routines and standing instructions. */
+    private val routines: () -> RoutineData = { RoutineData() },
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
     private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean)
@@ -77,16 +85,22 @@ class Agent(
             }
         }
 
+        // "God morgon" and the owner's other phrases run their routine.
+        if (context.routine == null) Routines.match(routines().routines, text, settings.wakeName)?.let { routine ->
+            return runRoutine(routine, text, settings, view, tools, context)
+        }
+
         // "Next step" while cooking is answered straight away, without the AI.
-        if (context.kitchen != null) tools(view(true)).cookingQuick(text)?.let { reply ->
+        if (context.routine == null && context.kitchen != null) tools(view(true)).cookingQuick(text)?.let { reply ->
             remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
             return AgentReply(reply, actions = listOf("recipe step (without the AI)"))
         }
 
         // Plain on, off and dim commands are done straight away, without the AI.
-        quick(text, view(true), tools)?.let { return it }
+        if (context.routine == null) quick(text, view(true), tools)?.let { return it }
 
-        val brains = settings.brains()
+        // What a routine read for a local brain never goes to the internet one.
+        val brains = settings.brains().filter { it.local || !context.routineLocalOnly }
         if (brains.isEmpty()) {
             return AgentReply("Set up the assistant first: Settings, then Assistant.", error = true)
         }
@@ -173,6 +187,55 @@ class Agent(
         }
         remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
         return AgentReply(reply, error = !ok, actions = listOf("${call.name} ${call.arguments} → ${result.text.take(140)} (without the AI)"))
+    }
+
+    /**
+     * Runs [routine] for [text] (what the user said, or its name when started by hand): the steps
+     * up to the answer, then the AI answers following the routine's instructions, and the
+     * remaining steps run once the answer has been spoken ([AgentReply.then]). Without an AI
+     * the Say steps and what was read are spoken as they are.
+     */
+    suspend fun runRoutine(
+        routine: Routine,
+        text: String,
+        settings: AgentSettings,
+        view: (local: Boolean) -> HomeView,
+        tools: (HomeView) -> AgentTools,
+        context: AskContext = AskContext(),
+    ): AgentReply {
+        lastActivity = System.currentTimeMillis()
+        pending = null
+        val brain = settings.brains().firstOrNull()
+        val homeView = view(brain?.local ?: true)
+        val toolbox = tools(homeView)
+        val player = Routines.defaultPlayer(homeView)
+        val date = now().toLocalDate()
+        val run = RoutineRunner(toolbox, homeView, date, player).run(routine.beforeAnswer)
+        val later = routine.afterAnswer
+        val then: (suspend () -> List<String>)? = if (later.isEmpty()) null else {
+            { RoutineRunner(tools(view(brain?.local ?: true)), homeView, date, player).run(later).actions }
+        }
+        val swedish = when (settings.language) {
+            Language.Swedish -> true
+            Language.English -> false
+            Language.Auto -> Confirmation.looksSwedish(text) || Routines.normalize(text) == Routines.normalize(routine.name)
+        }
+        val plain = RoutineText.plain(run, swedish)
+        val actions = listOf("routine ${routine.name}") + run.actions
+        if (brain == null || (routine.instructions.isBlank() && run.info.isEmpty())) {
+            remember(listOf(ChatMessage.user(text), ChatMessage("assistant", plain)), run.localOnly)
+            return AgentReply(plain, actions = actions, then = then)
+        }
+        val answer = ask(
+            text, settings, view, tools,
+            context.copy(routine = RoutineText.forBrain(routine, run, later), routineLocalOnly = run.localOnly, followUp = false),
+        )
+        if (answer.error) {
+            // The steps still ran: say what they found, and show what went wrong with the AI.
+            return AgentReply(plain, answer.brain, actions = actions + answer.actions + "The AI didn't answer: ${answer.text}", then = then)
+        }
+        val spoken = (run.said + answer.text).filter { it.isNotBlank() }.joinToString(" ")
+        return answer.copy(text = spoken, actions = actions + answer.actions, then = then)
     }
 
     /** Runs or drops the action waiting for a yes. */
@@ -284,6 +347,14 @@ class Agent(
         append("Answer what's in the fridge, freezer or pantry and what goes off soon from fridge_contents. ")
         append("When the user says they bought, ate, finished, opened or froze something, update the fridge with your tools. ")
         append("When asked what to cook, suggest using what goes off first, and look in find_recipes if you have it.\n")
+        append("The owner has routines: when the note says a routine was started, the app has already done its steps; ")
+        append("follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found. ")
+        append("When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.\n")
+        val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (standing.isNotEmpty()) {
+            append("The owner's standing instructions; follow them unless a rule above forbids it:\n")
+            standing.forEach { append("- ").append(it).append('\n') }
+        }
     }
 
     /**
@@ -299,6 +370,7 @@ class Agent(
         context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
         // Who is at the tablet is itself a secret ("Face recognition" switch).
         context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it).append(".") }
+        context.routine?.let { append("\n").append(it) }
         if (context.followUp) append("\nHeard while the microphone stayed open after your last answer, so it may not be meant for you.")
     }
 
@@ -312,7 +384,7 @@ class Agent(
         private const val W = """(?<![\p{L}\d_])"""
         private const val E = """(?![\p{L}\d_])"""
         /** Tools that only look. */
-        val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet")
+        val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines")
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
         val SETS = setOf("set_device", "set_room", "run_flow", "play_music", "run_device_action")
         /** How tool results that changed something begin. */

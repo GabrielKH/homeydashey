@@ -41,6 +41,8 @@ class AgentTools(
     private val recipes: RecipeTools? = null,
     /** What is in the fridge, freezer and pantry; null when the dashboard has none. */
     private val fridge: FridgeTools? = null,
+    /** The owner's routines and standing instructions; null when the dashboard has none. */
+    private val routines: RoutineTools? = null,
 ) {
     /**
      * Set once this conversation has seen something kept to the local AI; from then on
@@ -126,6 +128,13 @@ class AgentTools(
         })
         recipes?.let { addAll(it.specs()) }
         fridge?.let { addAll(it.specs()) }
+        routines?.let { r ->
+            if (r.data.routines.any { it.enabled }) add(tool("run_routine", "Run one of the owner's routines now, e.g. God morgon, and follow what it returns.") {
+                string("name", "The routine's name")
+                required("name")
+            })
+            if (!guest) addAll(r.specs())
+        }
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
@@ -159,7 +168,10 @@ class AgentTools(
             "who_is_home" -> whoIsHome()
             "variables" -> variables()
             "ask_internet" -> askInternet(a.str("question"))
-            else -> recipes?.run(call) ?: fridge?.run(call) ?: ok("There is no tool called ${call.name}.")
+            "run_routine" -> runRoutine(a.str("name"))
+            else -> recipes?.run(call) ?: fridge?.run(call)
+                ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
+                ?: ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
@@ -373,6 +385,14 @@ class AgentTools(
         fixed[p]?.let { return ok(if (dashboard.openPage(it)) "Showing $it." else "Can't show $it.") }
         val roomId = view.room(page) ?: return ok("There's no page or room called $page.")
         return ok(if (dashboard.openPage("room", roomId)) "Showing ${view.rooms[roomId]}." else "Can't show that room.")
+    }
+
+    /** Runs a routine's steps now (the answer step doesn't wait) and returns what to tell the user. */
+    private suspend fun runRoutine(name: String): ToolResult {
+        val data = routines?.data ?: return ok("There are no routines.")
+        val routine = data.named(name)?.takeIf { it.enabled } ?: return ok("There's no routine called $name. ${RoutineTools.describe(data)}")
+        val run = RoutineRunner(this, view, today(), Routines.defaultPlayer(view)).run(routine.steps)
+        return ToolResult(RoutineText.forBrain(routine, run, emptyList()), localOnly = run.localOnly)
     }
 
     private fun goodnight(): ToolResult {
