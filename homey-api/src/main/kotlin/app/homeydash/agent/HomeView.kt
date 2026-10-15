@@ -174,7 +174,7 @@ class HomeView(
                 if (d.nicknames.isNotEmpty()) append(" also called ").append(d.nicknames.joinToString { "\"$it\"" })
                 d.group?.let { append(" group \"").append(it).append('"') }
                 append(':')
-                d.capabilities.forEach { c -> append(' ').append(catalog(c)) }
+                d.capabilities.mapNotNull(::catalog).forEach { append(' ').append(it) }
                 append('\n')
             }
         }
@@ -227,19 +227,20 @@ class HomeView(
         /** Readings worth having with every question; the rest are a get_device away. */
         private val READINGS = setOf("measure_temperature", "measure_humidity", "target_temperature", "locked", "homealarm_state", "windowcoverings_state", "windowcoverings_set", "vacuumcleaner_state")
 
-        /** A capability in the catalog: its id and what it can be set to, without its value. */
-        internal fun catalog(c: AgentCapability): String = buildString {
-            append(c.id)
-            if (c.setable) {
-                append(" [set")
-                when {
-                    c.choices != null -> append(": ").append(c.choices.joinToString("|"))
-                    c.type == "number" && c.min != null && c.max != null -> append(' ').append(num(c.min)).append("..").append(num(c.max))
-                    c.type == "boolean" -> append(" true|false")
-                }
-                append(']')
-            } else {
-                c.units?.takeIf { it.isNotBlank() }?.let { append(" (").append(it).append(')') }
+        /** Readings worth listing in the catalog; get_device reads the rest (power, battery, other sensors). */
+        private val CATALOG_READINGS = setOf("measure_temperature", "measure_humidity", "measure_co2", "alarm_motion", "alarm_contact", "alarm_water", "alarm_smoke")
+
+        /**
+         * A capability in the catalog, as short as it can be, since every token here is read
+         * on each question: a bare id is settable true|false or 0..1, a range or choices are
+         * shown only when they differ, and readings are marked (read). Null when it's left out.
+         */
+        internal fun catalog(c: AgentCapability): String? {
+            if (!c.setable) return if (c.id in CATALOG_READINGS) "${c.id} (read)" else null
+            return when {
+                c.choices != null -> "${c.id} [${c.choices.joinToString("|")}]"
+                c.type == "number" && c.min != null && c.max != null && !(c.min == 0.0 && c.max == 1.0) -> "${c.id} [${num(c.min)}..${num(c.max)}]"
+                else -> c.id
             }
         }
 

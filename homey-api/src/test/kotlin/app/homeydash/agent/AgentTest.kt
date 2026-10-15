@@ -612,7 +612,8 @@ class AgentTest {
         // The warm-up is the start of the question, word for word: the rules and the devices without their values.
         assertEquals(1, warm.size)
         assertEquals(warm[0], first[0])
-        assertTrue(first[0].text().contains("""light_1 "Kitchen lamp" light: onoff [set true|false] dim [set 0..1]"""))
+        assertTrue(first[0].text().contains("""light_1 "Kitchen lamp" light: onoff dim
+"""))
         assertFalse(first[0].text().contains("dim=0.4"))
         // What is on now comes with the question.
         assertTrue(first[1].text(), first[1].text().contains("""light_1 "Kitchen lamp": on dim=0.4"""))

@@ -56,17 +56,17 @@ class AgentTools(
     var listener: AgentListener? = null
 
     fun specs(): List<ToolSpec> = buildList {
-        add(tool("set_device", "Change one device: switch, dim, colour, temperature, volume, play/pause, blinds. Use the device alias and a capability marked [set].") {
+        add(tool("set_device", "Change one capability of one device: switch, dim, colour, temperature, volume, play/pause, blinds.") {
             string("device", "Device alias, e.g. light_3")
-            string("capability", "Capability id, e.g. onoff, dim, target_temperature, volume_set, speaker_playing")
-            string("value", "New value: true/false, a number within the range shown, or one of the listed choices")
+            string("capability", "Capability id, e.g. onoff, dim")
+            string("value", "true/false, a number, or a listed choice")
             required("device", "capability", "value")
         })
-        add(tool("set_room", "Change every device in a room, or in one of the owner's groups (shown as group \"…\"), that has the capability, e.g. all lights off in the kitchen.") {
-            string("room", "Room or group name exactly as listed")
+        add(tool("set_room", "Change a capability on every device in a room or group, e.g. all lights off in the kitchen.") {
+            string("room", "Room or group name")
             string("capability", "Capability id, usually onoff or dim")
             string("value", "New value")
-            string("device_class", "Optional: only this class, e.g. light")
+            string("device_class", "Optional, e.g. light")
             required("room", "capability", "value")
         })
         add(tool("get_device", "All details of one device, including ranges and choices.") {
@@ -84,17 +84,17 @@ class AgentTools(
         })
         add(tool("play_music", "Play a favourite, album, playlist or radio station on a player (e.g. a Sonos).") {
             string("player", "Player alias")
-            string("query", "What to play: just the album, playlist, artist or station name, e.g. \"Abbey Road\"; leave empty when the user lets you choose")
+            string("query", "Album, playlist, artist or station; empty lets you choose")
             required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
             string("device", "Device alias")
             required("device")
         })
-        add(tool("run_device_action", "Do one of a device's actions from device_actions, e.g. change channel, launch Netflix, play a Sonos favourite or playlist.") {
+        add(tool("run_device_action", "Run an action from device_actions: channel, app, favourite, playlist.") {
             string("device", "Device alias")
-            string("action", "The action's id or title from device_actions")
-            string("value", "What to pick or enter, e.g. a channel, app, playlist or station name; leave out when the action needs nothing")
+            string("action", "Action id or title")
+            string("value", "What to pick or enter, e.g. Netflix; omit if nothing")
             required("device", "action")
         })
         add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, or a room name.") {
@@ -105,9 +105,9 @@ class AgentTools(
             string("device", "Device alias")
             required("device")
         })
-        add(tool("press_remote", "Press buttons on a TV or media box remote (Apple TV, Samsung, LG, Android TV…), in order, like the remote on the dashboard.") {
-            string("device", "Device alias of the TV or box")
-            string("keys", "Buttons in order, separated by commas: up, down, left, right, ok, back, home, play, volume up, volume down, mute, power, channel up, channel down. Repeat with x, e.g. \"down x3, ok\"")
+        add(tool("press_remote", "Press TV or media box remote buttons in order.") {
+            string("device", "Device alias")
+            string("keys", "Comma-separated: up, down, left, right, ok, back, home, play, volume up/down, mute, power, channel up/down; repeat with x, e.g. \"down x3, ok\"")
             required("device", "keys")
         })
         if (!guest) add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})

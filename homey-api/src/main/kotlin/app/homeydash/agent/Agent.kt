@@ -349,7 +349,8 @@ class Agent(
 
     /** The rules and the home's devices: the part of every question that stays the same. */
     fun fixed(settings: AgentSettings, view: HomeView): String =
-        rules(settings) + "\nThe home (alias \"name\" class: capability [what it can be set to]):\n" + view.catalog()
+        rules(settings) + "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
+            "(read) only reads; get_device has the rest):\n" + view.catalog()
 
     /** What the last warm-up sent, so an unchanged start isn't sent again. */
     private var warmed: Int? = null

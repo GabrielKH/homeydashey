@@ -307,11 +307,10 @@ class RoutineTools(private val book: RoutineBook) {
         tool("list_routines", "The owner's routines (what the assistant does when it hears a phrase, like God morgon) and standing instructions.") {},
         tool(
             "save_routine",
-            "Make or change a routine: when the user says one of its phrases, you follow its instructions with your tools. " +
-                "Changing one keeps the steps set up on the tablet. Use run_routine to run one now.",
+            "Make or change a routine: a phrase that makes you follow its instructions.",
         ) {
             string("name", "The routine's name, e.g. Filmkväll")
-            string("phrases", "What the user says to start it, comma-separated, e.g. filmkväll, movie night")
+            string("phrases", "Comma-separated, e.g. filmkväll, movie night")
             string("instructions", "What to do and say, in the user's own words")
             required("name")
         },
