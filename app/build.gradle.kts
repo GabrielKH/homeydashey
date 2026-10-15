@@ -18,6 +18,9 @@ android {
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
         versionName = "0.2.$build"
+        // Only the kitchen tablet's 64-bit ARM chip: the speech, voiceprint and face libraries
+        // otherwise ship for four chip types and more than double the download.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     signingConfigs {
