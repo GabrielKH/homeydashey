@@ -299,6 +299,13 @@ fun DashboardScreen(
     onForget: () -> Unit,
 ) {
     val update by updater.state.collectAsStateWithLifecycle()
+    val screenContext = androidx.compose.ui.platform.LocalContext.current
+    // The installer opens from this screen, which is visible, so Android lets it through.
+    LaunchedEffect(update) { if (update is AppUpdater.State.ReadyToInstall) updater.openInstaller(screenContext) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(updater) {
+        updater.onResume(screenContext)
+        onPauseOrDispose { }
+    }
     val weatherState by weather.state.collectAsStateWithLifecycle()
     val weatherSource by weather.source.collectAsStateWithLifecycle()
     val weatherPlace by weather.place.collectAsStateWithLifecycle()
@@ -489,7 +496,7 @@ fun DashboardScreen(
                     }
                 }
             }
-            UpdateBanner(update, onInstall = { scope.launch { updater.install() } }, modifier = Modifier.align(Alignment.TopEnd))
+            UpdateBanner(update, onInstall = { updater.install(screenContext) }, modifier = Modifier.align(Alignment.TopEnd))
             AssistantLayer(
                 assistant,
                 assistantSettings,
@@ -534,7 +541,7 @@ fun DashboardScreen(
             version = updater.currentVersion,
             update = update,
             onCheckUpdate = { scope.launch { updater.check() } },
-            onInstallUpdate = { scope.launch { updater.install() } },
+            onInstallUpdate = { updater.install(screenContext) },
             onForget = { showSettings = false; onForget() },
             onDismiss = { showSettings = false },
         )
@@ -806,12 +813,13 @@ private fun UpdateBanner(state: AppUpdater.State, onInstall: () -> Unit, modifie
         AppUpdater.State.UpToDate -> return
         is AppUpdater.State.Available -> "New version ready · Install"
         is AppUpdater.State.Downloading -> "Downloading update… ${(state.progress * 100).toInt()}%"
+        is AppUpdater.State.ReadyToInstall -> "Opening the installer…"
         is AppUpdater.State.Failed -> "Update failed · Try again"
     }
     Row(
         modifier
             .padding(4.dp)
-            .pressable(onInstall.takeIf { state !is AppUpdater.State.Downloading })
+            .pressable(onInstall.takeIf { state is AppUpdater.State.Available || state is AppUpdater.State.Failed })
             .background(g.wallBase, PillShape)
             .glass(PillShape)
             .padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
