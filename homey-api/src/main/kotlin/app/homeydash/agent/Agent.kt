@@ -330,9 +330,10 @@ class Agent(
         "${brain.provider.label} didn't answer: ${message ?: "unknown error"}"
 
     /**
-     * What is sent: the rules first, then the earlier turns, then the home as it is now
-     * together with the question. The rules never change between questions, so a local model
-     * keeps them worked through from last time and only reads what is new (see [warm]).
+     * What is sent: the rules and the list of devices first, then the earlier turns, then a
+     * short note with what is on right now together with the question. The start only changes
+     * when the devices do, so a local model keeps it worked through from last time and only
+     * reads the note and the question (see [warm]).
      */
     private fun conversation(
         settings: AgentSettings,
@@ -343,12 +344,21 @@ class Agent(
     ): List<ChatMessage> {
         val question = turn.first()
         val now = ChatMessage.user(situation(settings, view, context) + QUESTION + question.content.orEmpty())
-        return listOf(ChatMessage.system(rules(settings))) + earlier + now + turn.drop(1)
+        return listOf(ChatMessage.system(fixed(settings, view))) + earlier + now + turn.drop(1)
     }
 
+    /** The rules and the home's devices: the part of every question that stays the same. */
+    fun fixed(settings: AgentSettings, view: HomeView): String =
+        rules(settings) + "\nThe home (alias \"name\" class: capability [what it can be set to]):\n" + view.catalog()
+
+    /** What the last warm-up sent, so an unchanged start isn't sent again. */
+    private var warmed: Int? = null
+
     /**
-     * Works through the rules and the home ahead of the question, while it is still being
-     * said, so a local model only has the question itself left to read when it arrives.
+     * Works through the rules and the home's devices ahead of the question, while it is still
+     * being said, so a local model only has the short note and the question left to read.
+     * Only sent when that start changed since last time: a server that answers one request at
+     * a time (vMLX) would otherwise make the question wait behind it.
      */
     suspend fun warm(
         settings: AgentSettings,
@@ -362,15 +372,17 @@ class Agent(
         val toolbox = tools(homeView)
         val fresh = System.currentTimeMillis() - lastActivity <= FORGET_AFTER_MS
         toolbox.privateContext = brain.local && fresh && history.any { it.localOnly }
-        val earlier = if (fresh) history.filter { brain.local || !it.localOnly }.flatMap { it.messages } else emptyList()
-        val messages = listOf(ChatMessage.system(rules(settings))) + earlier +
-            ChatMessage.user(situation(settings, homeView, context) + QUESTION)
-        chat.prefill(brain, messages, toolbox.specs())
+        val messages = listOf(ChatMessage.system(fixed(settings, homeView)))
+        val specs = toolbox.specs()
+        val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
+        if (key == warmed) return
+        warmed = key
+        chat.prefill(brain, messages, specs)
     }
 
     /** Everything the assistant is told for a question, as one text (for tests and the settings preview). */
     fun systemPrompt(settings: AgentSettings, view: HomeView, context: AskContext): String =
-        rules(settings) + "\n\n" + situation(settings, view, context)
+        fixed(settings, view) + "\n" + situation(settings, view, context)
 
     /** How to behave: the same for every question, so it can be kept worked through. */
     fun rules(settings: AgentSettings): String = buildString {
@@ -385,7 +397,9 @@ class Agent(
         )
         append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
-        append("Each question comes after a note from the app with the home as it is now; only the part after \"$QUESTION_LABEL\" is what the user said. ")
+        append("The home's devices are listed at the end of these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
+        append("devices the note leaves out are off or idle, and get_device reads anything else (power, battery, other sensors). ")
+        append("Only the part after \"$QUESTION_LABEL\" is what the user said. ")
         append("If the note says it was heard while the microphone stayed open after your last answer and it clearly isn't said to you ")
         append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
         append("Rules: use device aliases (like light_3) in tool calls, but in answers call things by their names, never the alias. People name things loosely, in Swedish or English ")
@@ -393,7 +407,7 @@ class Agent(
         append("use one of the devices it suggests or ask which one. ")
         append("A device may be named by its room or app rather than what it is: the app is shown in brackets, e.g. a TV called \"Vardagsrum\" (apple tv) is the Apple TV. ")
         append("For TV channels, opening an app, Sonos favourites, playlists, radio and remote buttons, call device_actions and then run_device_action; play_music is a shortcut for music. ")
-        append("Only use devices, rooms and moods listed in the note; ")
+        append("Only use devices, rooms and moods in the home list; ")
         append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
@@ -422,13 +436,10 @@ class Agent(
         }
     }
 
-    /**
-     * The home and the moment, for one question. The home comes first and the clock last,
-     * so the part that stays the same from one question to the next is as long as it can be.
-     */
+    /** The moment, for one question: what is on in the home right now, the clock and the rest. */
     fun situation(settings: AgentSettings, view: HomeView, context: AskContext): String = buildString {
-        append("(From the app, not the user.)\nThe home now (alias \"name\" class: capability=value [set range]):\n")
-        append(view.describe())
+        append("(From the app, not the user.)\nOn right now (everything else is off or idle):\n")
+        append(view.states().trimEnd().ifBlank { "nothing" })
         context.kitchen?.let { append("\nCooking: ").append(it) }
         context.fridge?.let { append("\nFridge: ").append(it) }
         context.weather?.let { append("\nWeather (the dashboard's weather card):\n").append(it) }

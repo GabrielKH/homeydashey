@@ -160,7 +160,94 @@ class HomeView(
         }
     }
 
+    /**
+     * The home without its live values: what each device is and what can be set. It only
+     * changes when devices do, so it sits in the fixed start of the prompt that a local model
+     * keeps worked through between questions; what is on right now is in [states].
+     */
+    fun catalog(): String = buildString {
+        devices.groupBy { it.room ?: "No room" }.toSortedMap().forEach { (room, list) ->
+            append("## ").append(room).append('\n')
+            list.forEach { d ->
+                append(d.alias).append(" \"").append(d.name).append("\" ").append(d.deviceClass)
+                d.kind?.let { append(" (").append(it).append(')') }
+                if (d.nicknames.isNotEmpty()) append(" also called ").append(d.nicknames.joinToString { "\"$it\"" })
+                d.group?.let { append(" group \"").append(it).append('"') }
+                append(':')
+                d.capabilities.forEach { c -> append(' ').append(catalog(c)) }
+                append('\n')
+            }
+        }
+        if (moods.isNotEmpty()) {
+            append("## Moods\n")
+            moods.forEach { append(it.alias).append(" \"").append(it.mood.name).append('"').append(it.room?.let { r -> " ($r)" } ?: "").append('\n') }
+        }
+    }
+
+    /**
+     * What is on, playing or worth knowing right now, one short line per device; devices
+     * that are off or idle are left out. Small, so each question only carries this.
+     */
+    fun states(): String = buildString {
+        devices.forEach { d ->
+            val parts = live(d)
+            if (parts.isEmpty()) return@forEach
+            append(d.alias).append(" \"").append(d.name).append("\":")
+            parts.forEach { append(' ').append(it) }
+            append('\n')
+        }
+    }
+
+    private fun live(d: AgentDevice): List<String> {
+        fun on(id: String) = (d.capability(id)?.value as? JsonPrimitive)?.content == "true"
+        val idle = when {
+            d.capability("onoff") != null -> !on("onoff")
+            d.capability("speaker_playing") != null -> !on("speaker_playing")
+            else -> false
+        }
+        val parts = mutableListOf<String>()
+        if (d.unreachable) parts += "UNREACHABLE"
+        d.capabilities.forEach { c ->
+            val value = c.value
+            when {
+                value == JsonNull -> Unit
+                c.id == "onoff" -> if (on("onoff")) parts += "on"
+                c.id.startsWith("alarm_") -> if (on(c.id)) parts += c.id
+                c.id in READINGS -> parts += state(c)
+                c.id.startsWith("measure_") || c.id.startsWith("meter_") -> Unit
+                idle -> Unit
+                c.type == "boolean" -> if (on(c.id)) parts += c.id
+                else -> parts += state(c)
+            }
+        }
+        return parts
+    }
+
     companion object {
+        /** Readings worth having with every question; the rest are a get_device away. */
+        private val READINGS = setOf("measure_temperature", "measure_humidity", "target_temperature", "locked", "homealarm_state", "windowcoverings_state", "windowcoverings_set", "vacuumcleaner_state")
+
+        /** A capability in the catalog: its id and what it can be set to, without its value. */
+        internal fun catalog(c: AgentCapability): String = buildString {
+            append(c.id)
+            if (c.setable) {
+                append(" [set")
+                when {
+                    c.choices != null -> append(": ").append(c.choices.joinToString("|"))
+                    c.type == "number" && c.min != null && c.max != null -> append(' ').append(num(c.min)).append("..").append(num(c.max))
+                    c.type == "boolean" -> append(" true|false")
+                }
+                append(']')
+            } else {
+                c.units?.takeIf { it.isNotBlank() }?.let { append(" (").append(it).append(')') }
+            }
+        }
+
+        private fun state(c: AgentCapability): String = buildString {
+            append(c.id).append('=').append(format(c.value))
+            c.units?.takeIf { it.isNotBlank() }?.let { append(it) }
+        }
+
         /** Capabilities that say nothing useful to an assistant. */
         private val NOISE = setOf("energy", "measure_signal_strength", "rssi", "button.identify", "button.reset_meter")
 

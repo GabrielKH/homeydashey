@@ -592,7 +592,7 @@ class AgentTest {
         server.shutdown()
     }
 
-    @Test fun `the rules stay the same and the warm-up reads ahead of the question`() = runTest {
+    @Test fun `the rules and devices stay the same and the warm-up reads them once`() = runTest {
         val server = MockWebServer()
         repeat(3) { server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Okej."}}]}""")) }
         server.start()
@@ -601,23 +601,31 @@ class AgentTest {
         val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
         fun sent(): List<JsonObject> = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject["messages"]!!.jsonArray.map { it.jsonObject }
         fun JsonObject.text() = this["content"]!!.jsonPrimitive.content
+        suspend fun warm() = agent.warm(settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(person = "Gabriel"))
 
-        agent.warm(settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(person = "Gabriel"))
+        warm()
         val warm = sent()
+        // Unchanged since last time: nothing is sent, so a question never waits behind it.
+        warm()
         agent.ask("vad är klockan", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(person = "Gabriel"))
         val first = sent()
-        // The warm-up is the start of the question, word for word.
+        // The warm-up is the start of the question, word for word: the rules and the devices without their values.
+        assertEquals(1, warm.size)
         assertEquals(warm[0], first[0])
-        assertTrue(first[1].text().startsWith(warm[1].text()))
+        assertTrue(first[0].text().contains("""light_1 "Kitchen lamp" light: onoff [set true|false] dim [set 0..1]"""))
+        assertFalse(first[0].text().contains("dim=0.4"))
+        // What is on now comes with the question.
+        assertTrue(first[1].text(), first[1].text().contains("""light_1 "Kitchen lamp": on dim=0.4"""))
         assertTrue(first[1].text().endsWith("The user said: vad är klockan"))
         minute = 7
         agent.ask("tack", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
         val second = sent()
-        // The clock and the person live with the question, so the rules don't change.
+        // The clock and the person live with the question, so the start doesn't change.
         assertEquals(first[0], second[0])
         assertFalse(second[0].text().contains("12:0") || second[0].text().contains("Gabriel"))
         assertEquals("vad är klockan", second[1].text())
         assertTrue(second.last().text().contains("12:07"))
+        assertEquals(3, server.requestCount)
         server.shutdown()
     }
 
