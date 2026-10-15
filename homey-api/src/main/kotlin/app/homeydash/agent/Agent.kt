@@ -166,6 +166,7 @@ class Agent(
                     heard.step(AgentStep(step, thinking, StepState.Done, thinking = true))
                     val keepLocal = localOnly || toolbox.privateContext
                     answer.content?.takeIf { it.isNotBlank() }?.let { heard.trace("model", it, keepLocal) }
+                    if (answer.toolCalls.isEmpty()) heard.trace("model stopped", answer.finish ?: "no reason given", keepLocal)
                     if (answer.toolCalls.isNotEmpty()) heard.trace("model calls", answer.toolCalls.joinToString("; ") { "${it.name} ${it.arguments}" }, keepLocal)
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {

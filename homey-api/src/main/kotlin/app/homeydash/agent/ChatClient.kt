@@ -27,6 +27,8 @@ data class ChatMessage(
     val content: String? = null,
     val toolCalls: List<ToolCall> = emptyList(),
     val toolCallId: String? = null,
+    /** Why the model stopped ("stop", "length", "tool_calls"), when the server says; only for the logs. */
+    val finish: String? = null,
 ) {
     companion object {
         fun system(text: String) = ChatMessage("system", text)
@@ -195,12 +197,13 @@ class ChatClient(http: OkHttpClient) {
                 val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: "call_$i"
                 ToolCall(id, name, parseArguments(fn["arguments"]))
             }
+            val finish = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("finish_reason")?.let { (it as? JsonPrimitive)?.contentOrNull }
             if (calls.isEmpty() && content != null) {
                 // Small local models sometimes write the tool call as text instead of calling it.
                 val (written, rest) = callsInText(content)
-                if (written.isNotEmpty()) return ChatMessage("assistant", rest, written)
+                if (written.isNotEmpty()) return ChatMessage("assistant", rest, written, finish = finish)
             }
-            return ChatMessage("assistant", content, calls)
+            return ChatMessage("assistant", content, calls, finish = finish)
         }
 
         private val TOOL_CALL_TAG = Regex("""<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>""")
