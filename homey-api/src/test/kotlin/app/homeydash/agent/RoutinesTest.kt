@@ -179,4 +179,27 @@ class RoutinesTest {
         val names = AgentTools(v, Home(), Dash(), routines = RoutineTools(book)).specs().map { it.name }
         assertFalse("save_routine" in names)
     }
+
+    @Test fun `play music in a room is done without the AI`() = runTest {
+        val home = Home()
+        val settings = AgentSettings()
+        val agent = Agent(ChatClient(OkHttpClient()), now = { monday })
+        val reply = agent.ask("Sätt på musik i köket!", settings, { view(settings, it) }, { AgentTools(it, home, Dash()) })
+        assertEquals("Spelar Sveriges Radio P1 på Kök Sonos.", reply.text)
+        assertEquals(listOf("d-sonos" to ""), home.played)
+        assertNull(QuickCommand.music("sätt på taklampan", view(settings)))
+    }
+
+    @Test fun `after a promise without a tool call, a tool is required`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Jag tänder lampan!"}}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Okej."}}]}"""))
+        server.start()
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val agent = Agent(ChatClient(OkHttpClient()), now = { monday })
+        agent.ask("kan du göra det mysigt", settings, { view(settings, it) }, { AgentTools(it, Home(), Dash()) })
+        assertFalse(server.takeRequest().body.readUtf8().contains("tool_choice"))
+        assertTrue(server.takeRequest().body.readUtf8().contains("\"tool_choice\":\"required\""))
+        server.shutdown()
+    }
 }

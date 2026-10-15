@@ -123,7 +123,8 @@ class Agent(
             return AgentReply(reply, actions = listOf("recipe step (without the AI)"))
         }
 
-        // Plain on, off and dim commands are done straight away, without the AI.
+        // Plain on, off and dim commands, and "play music in the kitchen", are done straight away, without the AI.
+        if (context.routine == null) quickMusic(text, view(true), tools)?.let { return it }
         if (context.routine == null) quick(text, view(true), tools)?.let { return it }
 
         // What a routine read for a local brain never goes to the internet one.
@@ -155,7 +156,7 @@ class Agent(
                     val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
                     val answer = try {
-                        chat.complete(brain, messages, specs)
+                        chat.complete(brain, messages, specs, requireTool = nudged && !acted)
                     } catch (e: IOException) {
                         heard.step(AgentStep(step, thinking, StepState.Failed, e.message, thinking = true))
                         throw e
@@ -225,6 +226,21 @@ class Agent(
             }
         }
         return AgentReply(lastError ?: "No connection answered.", error = true)
+    }
+
+    private suspend fun quickMusic(text: String, view: HomeView, tools: (HomeView) -> AgentTools): AgentReply? {
+        val player = QuickCommand.music(text, view) ?: return null
+        val call = ToolCall("quick", "play_music", kotlinx.serialization.json.buildJsonObject {
+            put("player", kotlinx.serialization.json.JsonPrimitive(player.alias))
+            put("query", kotlinx.serialization.json.JsonPrimitive(""))
+        })
+        val result = tools(view).run(call)
+        // Nothing to choose from: let the AI look further.
+        if (!result.text.startsWith("Playing ")) return null
+        val played = result.text.removePrefix("Playing ").substringBeforeLast(" on ")
+        val reply = QuickCommand.playing(played, player, Confirmation.looksSwedish(text))
+        remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
+        return AgentReply(reply, actions = listOf("play_music ${player.name} → ${result.text.take(140)} (without the AI)"))
     }
 
     private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools): AgentReply? {

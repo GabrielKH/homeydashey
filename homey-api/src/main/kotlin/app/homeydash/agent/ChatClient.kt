@@ -48,8 +48,24 @@ class ChatClient(http: OkHttpClient) {
     private val localHttp = http.newBuilder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
     private val cloudHttp = http.newBuilder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 
-    suspend fun complete(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>): ChatMessage = withContext(Dispatchers.IO) {
-        val body = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama).toString()
+    /**
+     * [requireTool] asks for a tool call this time (`tool_choice: required`), after the model
+     * promised to do something without calling one; a server that refuses it is asked again without.
+     */
+    suspend fun complete(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>, requireTool: Boolean = false): ChatMessage {
+        if (requireTool && tools.isNotEmpty()) {
+            try {
+                return send(connection, messages, tools, requireTool = true)
+            } catch (e: BrainException) {
+                // Not every server knows tool_choice; fall through and ask the plain way.
+            }
+        }
+        return send(connection, messages, tools, requireTool = false)
+    }
+
+    private suspend fun send(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>, requireTool: Boolean): ChatMessage = withContext(Dispatchers.IO) {
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+        val body = (if (requireTool) JsonObject(full + ("tool_choice" to JsonPrimitive("required"))) else full).toString()
         val request = Request.Builder()
             .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
             .apply { if (connection.apiKey.isNotBlank()) header("Authorization", "Bearer ${connection.apiKey}") }
