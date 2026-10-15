@@ -262,6 +262,13 @@ class FaceService(private val context: Context) {
         save()
     }
 
+    /** Adds voiceprints (see [app.homeydash.agent.VoiceId]) to someone's. */
+    fun addPrints(id: String, more: List<FloatArray>) {
+        if (more.isEmpty()) return
+        _people.update { list -> list.map { if (it.id == id) it.copy(print = app.homeydash.agent.VoiceId.with(it.print, more)) else it } }
+        save()
+    }
+
     fun setRole(id: String, role: Role) {
         _people.update { list -> list.map { if (it.id == id) it.copy(role = role) else it } }
         save()
@@ -281,6 +288,7 @@ class FaceService(private val context: Context) {
                     put("role", p.role.name)
                     put("samples", vectors(p.samples))
                     put("voice", vectors(p.voice))
+                    put("print", vectors(p.print))
                 })
             }
         }
@@ -304,6 +312,7 @@ class FaceService(private val context: Context) {
                 role = Role.entries.firstOrNull { it.name == o["role"]?.jsonPrimitive?.contentOrNull } ?: Role.Family,
                 samples = vectors(o["samples"]),
                 voice = vectors(o["voice"]),
+                print = vectors(o["print"]),
             )
         }
     }

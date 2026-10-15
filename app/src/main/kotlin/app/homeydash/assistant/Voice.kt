@@ -24,6 +24,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.Inet4Address
 import java.net.ServerSocket
 import java.net.Socket
@@ -223,8 +225,12 @@ class SpeechInput(private val context: Context) {
 /** A spoken answer ready to play: the sound file and how loud it is moment by moment. */
 class Spoken(val file: File, val track: VoiceTrack)
 
-/** Speaks answers with Android's text-to-speech, in one of the voice styles, on the tablet or into a file for a speaker. */
-class SpeechOutput(context: Context) {
+/**
+ * Speaks answers with Android's text-to-speech, in one of the voice styles, on the tablet or into a file for a speaker.
+ * The [VoiceStyle.cloud] voices come from OpenAI's speech model when [openAiKey] gives a key.
+ */
+class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val openAiKey: () -> String) {
+    private val http = http.newBuilder().readTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
     private val appContext = context.applicationContext
     private var ready = false
     private val done = mutableMapOf<String, () -> Unit>()
@@ -316,7 +322,9 @@ class SpeechOutput(context: Context) {
 
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
     suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
-        if (!ready || text.isBlank()) return null
+        if (text.isBlank()) return null
+        if (voice.cloud) cloud(text, file)?.let { return it }
+        if (!ready) return null
         val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
         prepare(text, language, voice)
         val made = suspendCancellableCoroutine { cont ->
@@ -337,10 +345,46 @@ class SpeechOutput(context: Context) {
         }
     }
 
+    /** The answer in OpenAI's warm voice, or null without a key or a network (the tablet's voice takes over). */
+    private suspend fun cloud(text: String, file: File): Spoken? {
+        val key = openAiKey().trim()
+        if (key.isEmpty()) return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val body = kotlinx.serialization.json.buildJsonObject {
+                    put("model", kotlinx.serialization.json.JsonPrimitive(CLOUD_MODEL))
+                    put("voice", kotlinx.serialization.json.JsonPrimitive(CLOUD_VOICE))
+                    put("input", kotlinx.serialization.json.JsonPrimitive(text))
+                    put("instructions", kotlinx.serialization.json.JsonPrimitive(WARM_INSTRUCTIONS))
+                    // Raw 24 kHz 16-bit mono, so there's no file header to trust.
+                    put("response_format", kotlinx.serialization.json.JsonPrimitive("pcm"))
+                }.toString()
+                val request = okhttp3.Request.Builder()
+                    .url("https://api.openai.com/v1/audio/speech")
+                    .header("Authorization", "Bearer $key")
+                    .post(body.toRequestBody("application/json".toMediaType()))
+                    .build()
+                val bytes = http.newCall(request).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } ?: return@runCatching null
+                if (bytes.size < 2) return@runCatching null
+                val samples = ShortArray(bytes.size / 2)
+                java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(samples)
+                val pcm = app.homeydash.agent.Pcm(24000, samples)
+                file.writeBytes(VoiceFx.writeWav(pcm))
+                Spoken(file, VoiceFx.analyse(pcm))
+            }.getOrNull()
+        }
+    }
+
     fun shutdown() = tts.shutdown()
 
     private companion object {
         val SWEDISH: Locale = Locale.forLanguageTag("sv-SE")
+        const val CLOUD_MODEL = "gpt-4o-mini-tts"
+        const val CLOUD_VOICE = "coral"
+        const val WARM_INSTRUCTIONS =
+            "Speak like a warm, close companion: soft and relaxed, gently playful and curious, with a smile in the voice " +
+                "and a little breathiness. Natural pauses and an easy rhythm, never formal or robotic. " +
+                "If the text is Swedish, speak natural Swedish with a Stockholm accent."
     }
 }
 

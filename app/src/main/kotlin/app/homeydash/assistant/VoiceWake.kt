@@ -159,14 +159,15 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
     var enrolling by mutableStateOf(false)
 
     /**
-     * Starts listening for [name]. [onHeard] gets the phrase and its voice vector (null when
-     * the phrase was too short to tell). Callbacks come on the main thread. Returns a token
+     * Starts listening for [name]. [onHeard] gets the phrase, its Vosk voice vector (null when
+     * the phrase was too short to tell) and the sound of the name being said, for a voiceprint
+     * (see [VoicePrints]). Callbacks come on the main thread. Returns a token
      * for [stop], so one user can't stop another's listening. [sensitivity] (0–100) sets the
      * microphone gain and how sure the match must be.
      */
     fun start(
         name: String,
-        onHeard: (text: String, voice: FloatArray?) -> Unit,
+        onHeard: (text: String, voice: FloatArray?, sound: ShortArray?) -> Unit,
         onError: (String) -> Unit,
         sensitivity: Int = MicSensitivity.DEFAULT,
     ): Int {
@@ -189,13 +190,13 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             val gain = MicSensitivity.gain(sensitivity)
             val main = Handler(Looper.getMainLooper())
             reader = thread(name = "wake-mic") {
-                read(rec, gain, isLive = { gen == generation }) { result, failure ->
+                read(rec, gain, isLive = { gen == generation }) { result, failure, recent ->
                     main.post {
                         if (gen != generation) return@post
                         if (failure != null) {
                             onError(failure)
                         } else {
-                            parse(result, name, minConfidence)?.let { onHeard(it.first, it.second) }
+                            parse(result, name, minConfidence, recent)?.let { onHeard(it.text, it.voice, it.sound) }
                         }
                     }
                 }
@@ -225,7 +226,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             val main = Handler(Looper.getMainLooper())
             main.postDelayed({ if (gen == generation) { stop(); onText("") } }, DICTATION_MS)
             reader = thread(name = "dictation-mic") {
-                read(rec, 1f, isLive = { gen == generation }) { result, failure ->
+                read(rec, 1f, isLive = { gen == generation }) { result, failure, _ ->
                     main.post {
                         if (gen != generation) return@post
                         if (failure != null) {
@@ -252,35 +253,40 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
      * for a wide pickup so the whole kitchen is heard, and applies [gain].
      */
     @SuppressLint("MissingPermission") // WakeWatch only starts with the microphone permission.
-    private fun read(rec: Recognizer, gain: Float, isLive: () -> Boolean, emit: (String?, String?) -> Unit) {
+    private fun read(rec: Recognizer, gain: Float, isLive: () -> Boolean, emit: (String?, String?, Recent?) -> Unit) {
         val size = maxOf(AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), RATE / 5 * 2)
         val record = try {
             AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
         } catch (e: Exception) {
             rec.close()
-            emit(null, "The microphone isn't available: ${e.message}")
+            emit(null, "The microphone isn't available: ${e.message}", null)
             return
         }
         try {
             if (record.state != AudioRecord.STATE_INITIALIZED) {
-                emit(null, "The microphone isn't available.")
+                emit(null, "The microphone isn't available.", null)
                 return
             }
             // Far-field (-1 is the widest): hear the room, not just someone right in front of the tablet.
             runCatching { record.setPreferredMicrophoneFieldDimension(-1f) }
             record.startRecording()
             val buf = ShortArray(RATE / 10)
+            // The last few seconds the recogniser heard, to cut the wake name out of.
+            val ring = ShortArray(RATE * RECENT_SECONDS)
+            var fed = 0L
             while (isLive()) {
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) {
-                    if (isLive()) emit(null, "The microphone stopped.")
+                    if (isLive()) emit(null, "The microphone stopped.", null)
                     break
                 }
                 if (n == 0) continue
                 if (gain != 1f) {
                     for (i in 0 until n) buf[i] = (buf[i] * gain).toInt().coerceIn(-32768, 32767).toShort()
                 }
-                if (rec.acceptWaveForm(buf, n)) emit(rec.result, null)
+                for (i in 0 until n) ring[((fed + i) % ring.size).toInt()] = buf[i]
+                fed += n
+                if (rec.acceptWaveForm(buf, n)) emit(rec.result, null, Recent.of(ring, fed))
             }
         } finally {
             runCatching { record.stop() }
@@ -314,21 +320,69 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         if (speakerModel == null) speakerModel = SpeakerModel(models.speaker.absolutePath)
     }
 
-    private fun parse(hypothesis: String?, name: String, minConfidence: Double): Pair<String, FloatArray?>? {
+    /** The recent microphone sound, ending [end] samples after listening started. */
+    private class Recent(val samples: ShortArray, val end: Long) {
+        /** The sound from [from] to [to] seconds after listening started, as far as it is still kept. */
+        fun cut(from: Double, to: Double): ShortArray? {
+            val start = end - samples.size
+            val a = maxOf((from * RATE).toLong(), start)
+            val b = minOf((to * RATE).toLong(), end)
+            if (b - a < RATE / 4) return null
+            return ShortArray((b - a).toInt()) { samples[(a - start + it).toInt()] }
+        }
+
+        companion object {
+            /** A copy of [ring] in time order, [fed] samples having gone into it. */
+            fun of(ring: ShortArray, fed: Long): Recent {
+                val size = minOf(fed, ring.size.toLong()).toInt()
+                val first = fed - size
+                return Recent(ShortArray(size) { ring[((first + it) % ring.size).toInt()] }, fed)
+            }
+        }
+    }
+
+    private class Heard(val text: String, val voice: FloatArray?, val sound: ShortArray?)
+
+    private fun parse(hypothesis: String?, name: String, minConfidence: Double, recent: Recent?): Heard? {
         val json = runCatching { Json.parseToJsonElement(hypothesis.orEmpty()).jsonObject }.getOrNull() ?: return null
         val text = json["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        if (!WakeName.heard(text, name)) return null
-        // Grammar mode guesses the closest phrase for any sound; skip unsure ones.
-        val unsure = (json["result"] as? kotlinx.serialization.json.JsonArray)
-            ?.mapNotNull { (it as? JsonObject)?.get("conf")?.jsonPrimitive?.doubleOrNull }
-            ?.any { it < minConfidence } ?: false
-        if (unsure) return null
+        val results = (json["result"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+        val words = results.map {
+            WakeName.Word(it["word"]?.jsonPrimitive?.contentOrNull.orEmpty(), it["conf"]?.jsonPrimitive?.doubleOrNull ?: 1.0)
+        }.ifEmpty { text.split(' ').map { WakeName.Word(it, 1.0) } }
+        // Grammar mode guesses the closest phrase for any sound; unsure guesses don't count.
+        if (!WakeName.spot(words, name, minConfidence)) return null
         val voice = json["spk"]?.jsonArray?.mapNotNull { it.jsonPrimitive.floatOrNull }?.toFloatArray()?.takeIf { it.isNotEmpty() }
-        return text to voice
+        return Heard(text, voice, recent?.let { soundOfName(results, name, it) })
+    }
+
+    /**
+     * The sound of the wake phrase ("hey nova"), with a little room either side, cut from what
+     * the microphone heard. At least a second, so the voiceprint has enough to go on.
+     */
+    private fun soundOfName(results: List<JsonObject>, name: String, recent: Recent): ShortArray? {
+        val own = WakeName.clean(name).split(' ')
+        val words = results.map {
+            Triple(WakeName.clean(it["word"]?.jsonPrimitive?.contentOrNull.orEmpty()), it["start"]?.jsonPrimitive?.doubleOrNull, it["end"]?.jsonPrimitive?.doubleOrNull)
+        }
+        val at = (0..words.size - own.size).firstOrNull { i -> words.subList(i, i + own.size).map { it.first } == own } ?: return null
+        val greeting = words.getOrNull(at - 1)?.takeIf { it.first in GREETINGS }
+        var from = (greeting ?: words[at]).second ?: return null
+        var to = words[at + own.size - 1].third ?: return null
+        from -= 0.15
+        to += 0.15
+        if (to - from < 1.0) {
+            val grow = (1.0 - (to - from)) / 2
+            from -= grow
+            to += grow
+        }
+        return recent.cut(from, to)
     }
 
     private companion object {
         const val RATE = 16000
         const val DICTATION_MS = 9_000L
+        const val RECENT_SECONDS = 4
+        val GREETINGS = setOf("hey", "hi", "okay")
     }
 }

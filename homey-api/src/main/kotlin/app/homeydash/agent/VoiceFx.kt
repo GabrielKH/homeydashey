@@ -20,11 +20,19 @@ enum class FaceStyle(val label: String, val detail: String) {
 }
 
 /** How the assistant sounds: the tablet's own voice, changed by pitch, speed and a filter. */
-enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, val rate: Float) {
+enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, val rate: Float, val cloud: Boolean = false) {
     Natural("Natural", "The tablet's own voice, clearest from across the room.", 1f, 1f),
     Cruiser("Cruiser", "Lower, calm and a bit quick, with a metallic shimmer, like KITT.", 0.82f, 1.08f),
     Robot("Robot", "A buzzing 70s android voice.", 0.9f, 1f),
     Calm("Calm lens", "Slow, low and even, with a little echo, like HAL.", 0.78f, 0.9f),
+    Warm(
+        "Warm",
+        "Soft, warm and a little playful, in the spirit of Samantha in the film Her. Spoken by OpenAI's voice " +
+            "when an OpenAI key is set (Settings → Assistant), otherwise by the tablet's own voice, a touch lower and slower.",
+        0.95f,
+        0.94f,
+        cloud = true,
+    ),
 }
 
 /** 16-bit mono speech, as Android text-to-speech writes it. */
@@ -97,11 +105,11 @@ object VoiceFx {
 
     /** Gives the voice its character; pitch and speed are set on the speech engine itself. */
     fun apply(style: VoiceStyle, pcm: Pcm): Pcm {
-        if (style == VoiceStyle.Natural) return pcm
+        if (style == VoiceStyle.Natural || style == VoiceStyle.Warm) return pcm
         val rate = pcm.sampleRate
         val x = FloatArray(pcm.samples.size) { pcm.samples[it] / 32768f }
         val y = when (style) {
-            VoiceStyle.Natural -> x
+            VoiceStyle.Natural, VoiceStyle.Warm -> x
             // A short comb filter: a faint metallic ring on top of the voice.
             VoiceStyle.Cruiser -> {
                 val d = (rate * 0.0025).toInt().coerceAtLeast(1)

@@ -57,12 +57,14 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val routines = app.homeydash.agent.RoutineBook(File(appContext.filesDir, "assistant"))
     val agent = Agent(chat, routines = { routines.data.value })
     val input = SpeechInput(appContext)
-    val output = SpeechOutput(appContext)
+    val output = SpeechOutput(appContext, http) { settings.value.openAiSpeechKeyOrBrain() }
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
     val web = WebSearch(http)
     val voiceModels = VoiceModels(appContext, http, scope)
     val wake = WakeListener(voiceModels, scope)
+    /** Voiceprints, for telling who said the wake name. */
+    val prints = VoicePrints(appContext, http, scope)
     /** Records questions for Whisper or OpenAI, when they hear instead of Google. */
     val recorder = SpeechRecorder()
     val transcriber = app.homeydash.agent.Transcriber(http)
@@ -95,6 +97,37 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
             delay(LOG_QUIET_MS)
             sendLog()
         }
+    }
+
+    private val wakeSounds = mutableMapOf<app.homeydash.agent.WakeSound, ShortArray>()
+
+    /** Plays the sound for hearing the wake name and returns how long it lasts, in milliseconds. */
+    fun playWakeSound(sound: app.homeydash.agent.WakeSound): Long {
+        val pcm = synchronized(wakeSounds) { wakeSounds.getOrPut(sound) { app.homeydash.agent.WakeSounds.render(sound) } }
+        if (pcm.isEmpty()) return 0
+        val track = runCatching {
+            android.media.AudioTrack.Builder()
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                .setAudioFormat(
+                    android.media.AudioFormat.Builder()
+                        .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(app.homeydash.agent.WakeSounds.RATE)
+                        .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(pcm.size * 2)
+                .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                .build()
+                .also { it.write(pcm, 0, pcm.size); it.play() }
+        }.getOrNull() ?: return 0
+        val ms = pcm.size * 1000L / app.homeydash.agent.WakeSounds.RATE
+        logScope.launch { delay(ms + 300); runCatching { track.release() } }
+        return ms
     }
 
     /** Sends what hasn't been sent yet; returns what happened, in words. */
@@ -445,12 +478,17 @@ class Assistant(
     /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
     fun wake(person: KnownPerson?) {
         voice = Seen(person, SystemClock.elapsedRealtime())
-        runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, 150)
-            scope.launch { delay(300); tone.release() }
+        // The "mm?" first, then the microphone, so the question doesn't start with the sound.
+        val ms = services.playWakeSound(settings.wakeSound)
+        if (ms == 0L) {
+            listen()
+            return
         }
-        listen()
+        services.onActive?.invoke()
+        scope.launch {
+            delay(ms + 60)
+            if (state == AssistantState.Idle) listen()
+        }
     }
 
     fun stopListening() {

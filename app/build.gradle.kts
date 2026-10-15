@@ -90,6 +90,8 @@ dependencies {
     // Wake name and voice recognition, offline. Vosk calls its native library through JNA,
     // which must be the Android (aar) build.
     implementation(libs.vosk.android) { exclude(group = "net.java.dev.jna") }
+    // Runs the WeSpeaker voiceprint model that tells voices apart.
+    implementation(libs.onnxruntime.android)
     implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
     implementation(platform(libs.androidx.compose.bom))

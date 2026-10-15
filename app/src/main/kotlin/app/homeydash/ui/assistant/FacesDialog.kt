@@ -111,14 +111,21 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    listOfNotNull("Face".takeIf { p.samples.isNotEmpty() }, "Voice".takeIf { p.voice.isNotEmpty() })
+                                    listOfNotNull(
+                                        "Face".takeIf { p.samples.isNotEmpty() },
+                                        when {
+                                            p.print.isNotEmpty() -> "Voice"
+                                            p.voice.isNotEmpty() -> "Voice (teach again for sharper recognition)"
+                                            else -> null
+                                        },
+                                    )
                                         .joinToString(" and ").ifEmpty { "Nothing learned yet" },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = g.muted,
                                     modifier = Modifier.weight(1f),
                                 )
                                 Text(
-                                    if (p.voice.isEmpty()) "Teach voice" else "Teach more of the voice",
+                                    if (p.voice.isEmpty() && p.print.isEmpty()) "Teach voice" else "Teach more of the voice",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = g.fg,
                                     modifier = Modifier.pressable({ teaching = p.id }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),

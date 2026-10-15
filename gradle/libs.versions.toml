@@ -16,6 +16,7 @@ mlkitFace = "16.1.7"
 mlkitBarcode = "17.3.0"
 tflite = "2.16.1"
 vosk = "0.3.75"
+onnxruntime = "1.20.0"
 jna = "5.18.1"
 jsoup = "1.18.3"
 
@@ -42,6 +43,7 @@ mlkit-face-detection = { module = "com.google.mlkit:face-detection", version.ref
 mlkit-barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkitBarcode" }
 tensorflow-lite = { module = "org.tensorflow:tensorflow-lite", version.ref = "tflite" }
 vosk-android = { module = "com.alphacephei:vosk-android", version.ref = "vosk" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { module = "androidx.compose.ui:ui" }
 androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }

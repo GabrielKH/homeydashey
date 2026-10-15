@@ -589,7 +589,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         }
     }
     Text(
-        settings.voice.detail + " Made from the tablet's own voice with pitch, speed and a sound filter.",
+        settings.voice.detail + if (settings.voice.cloud) "" else " Made from the tablet's own voice with pitch, speed and a sound filter.",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )

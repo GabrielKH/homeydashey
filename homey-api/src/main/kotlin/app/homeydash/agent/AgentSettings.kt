@@ -131,6 +131,8 @@ data class AgentSettings(
     /** How the assistant looks and sounds. */
     val face: FaceStyle = FaceStyle.Orb,
     val voice: VoiceStyle = VoiceStyle.Natural,
+    /** The little sound when the wake name is heard, before it listens. */
+    val wakeSound: WakeSound = WakeSound.Hum,
     /** The scanner in KITT's red instead of the theme's accent. */
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */

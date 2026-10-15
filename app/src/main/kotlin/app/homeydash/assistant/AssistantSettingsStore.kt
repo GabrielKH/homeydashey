@@ -61,6 +61,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         seeHiddenDevices = p[SEE_HIDDEN] != "false",
         face = enumOr(p[FACE], FaceStyle.Orb),
         voice = enumOr(p[VOICE], VoiceStyle.Natural),
+        wakeSound = enumOr(p[WAKE_SOUND], app.homeydash.agent.WakeSound.Hum),
         classicRed = p[CLASSIC_RED] == "true",
         useWhisper = p[USE_WHISPER] == "true",
         whisperUrl = p[WHISPER_URL].orEmpty(),
@@ -94,6 +95,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[SEE_HIDDEN] = s.seeHiddenDevices.toString()
         p[FACE] = s.face.name
         p[VOICE] = s.voice.name
+        p[WAKE_SOUND] = s.wakeSound.name
         p[CLASSIC_RED] = s.classicRed.toString()
         p[USE_WHISPER] = s.useWhisper.toString()
         p[WHISPER_URL] = s.whisperUrl.trim()
@@ -145,6 +147,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val SEE_HIDDEN = stringPreferencesKey("see_hidden_devices")
         val FACE = stringPreferencesKey("face")
         val VOICE = stringPreferencesKey("voice")
+        val WAKE_SOUND = stringPreferencesKey("wake_sound")
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val USE_WHISPER = stringPreferencesKey("use_whisper")
         val WHISPER_URL = stringPreferencesKey("whisper_url")
