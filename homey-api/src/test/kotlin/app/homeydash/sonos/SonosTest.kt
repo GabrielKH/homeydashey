@@ -89,7 +89,7 @@ class SonosTest {
         repeat(4) { server.enqueue(soap("Ok", "")) }
 
         val client = SonosClient(OkHttpClient(), server.port)
-        val cards = SonosCards(client) { listOf(host) }
+        val cards = SonosCards(client, { listOf(host) })
         val zones = mapOf("z-v" to Zone("z-v", "Vardagsrum"))
         val snapshot = HomeySnapshot(zones = zones, devices = mapOf("v" to Device("v", "Vardagsrum", zone = "z-v", deviceClass = "speaker")))
         val card = cards.cards(snapshot).getValue("v").first()
