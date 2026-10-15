@@ -70,6 +70,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         compactTools = p[COMPACT_TOOLS] != "false",
         logToken = p[LOG_TOKEN]?.let(KeystoreCipher::decrypt).orEmpty(),
         logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
+        spotifyClientId = p[SPOTIFY_ID].orEmpty(),
+        spotifySecret = p[SPOTIFY_SECRET]?.let(KeystoreCipher::decrypt).orEmpty(),
     )
 
     private fun write(p: MutablePreferences, s: AgentSettings) {
@@ -101,6 +103,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[COMPACT_TOOLS] = s.compactTools.toString()
         p[LOG_TOKEN] = KeystoreCipher.encrypt(s.logToken.trim())
         p[LOG_REPO] = s.logRepo.trim()
+        p[SPOTIFY_ID] = s.spotifyClientId.trim()
+        p[SPOTIFY_SECRET] = KeystoreCipher.encrypt(s.spotifySecret.trim())
     }
 
     private fun connection(p: Preferences, slot: String): Connection? {
@@ -146,6 +150,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WHISPER_URL = stringPreferencesKey("whisper_url")
         val USE_OPENAI_SPEECH = stringPreferencesKey("use_openai_speech")
         val OPENAI_SPEECH_KEY = stringPreferencesKey("openai_speech_key")
+        val SPOTIFY_ID = stringPreferencesKey("spotify_client_id")
+        val SPOTIFY_SECRET = stringPreferencesKey("spotify_secret")
         val SEND_LOGS = stringPreferencesKey("send_logs")
         val COMPACT_TOOLS = stringPreferencesKey("compact_tools")
         val LOG_TOKEN = stringPreferencesKey("log_token")

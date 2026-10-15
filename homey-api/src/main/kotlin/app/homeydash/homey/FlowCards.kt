@@ -88,6 +88,9 @@ data class MusicSource(
 ) {
     /** This source and its fallbacks, in the order to try them. */
     val all: List<MusicSource> get() = listOf(copy(fallbacks = emptyList())) + fallbacks
+
+    /** A search of a whole streaming catalogue (Spotify) rather than a list of the home's own picks. */
+    val catalogue: Boolean get() = title == FlowCards.SPOTIFY
 }
 
 object FlowCards {
@@ -225,10 +228,11 @@ object FlowCards {
         // One tab per kind: the device's own card first, then a twin's, then the app's own.
         .groupBy { it.title }.values.map { same -> same.first().copy(fallbacks = same.drop(1)) }
 
-    private val MUSIC_WORDS = listOf("favorite", "favourite", "album", "playlist", "radio", "station", "artist", "library")
+    const val SPOTIFY = "Spotify"
+    private val MUSIC_WORDS = listOf("favorite", "favourite", "album", "playlist", "radio", "station", "artist", "library", "spotify")
     private val MUSIC_TITLES = mapOf(
         "favorite" to "Favourites", "favourite" to "Favourites", "album" to "Albums", "playlist" to "Playlists",
-        "radio" to "Radio", "station" to "Radio", "artist" to "Artists", "library" to "Library",
+        "radio" to "Radio", "station" to "Radio", "artist" to "Artists", "library" to "Library", "spotify" to SPOTIFY,
     )
 
     fun parseAutocomplete(json: JsonElement): List<AutocompleteItem> {

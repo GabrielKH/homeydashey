@@ -148,7 +148,11 @@ fun MusicSheet(
             when {
                 list == null -> CircularProgressIndicator(color = g.fg)
                 list.isEmpty() -> Text(
-                    if (query.isBlank()) "Nothing in ${source.title.lowercase()} yet." else "Nothing matches \"$query\".",
+                    when {
+                        query.isNotBlank() -> "Nothing matches \"$query\"."
+                        source.catalogue -> "Search for any song, album, artist or playlist."
+                        else -> "Nothing in ${source.title.lowercase()} yet."
+                    },
                     style = MaterialTheme.typography.bodyLarge,
                     color = g.muted,
                 )
