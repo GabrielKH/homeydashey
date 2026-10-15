@@ -87,6 +87,7 @@ class SonosTest {
         server.enqueue(soap("Browse", "<Result>${esc(favourites)}</Result><NumberReturned>2</NumberReturned>"))
         server.enqueue(soap("GetZoneGroupState", "<ZoneGroupState>${esc(household)}</ZoneGroupState>"))
         repeat(5) { server.enqueue(soap("Ok", "")) }
+        server.enqueue(soap("GetTransportInfo", "<CurrentTransportState>PLAYING</CurrentTransportState>"))
 
         val client = SonosClient(OkHttpClient(), server.port)
         val cards = SonosCards(client, { listOf(host) })
@@ -100,11 +101,11 @@ class SonosTest {
         assertEquals(listOf("Lugna favoriter"), items.map { it.name })
         cards.run(card, JsonObject(mapOf("item" to items.single().raw)))
 
-        val sent = (1..8).map { server.takeRequest() }
+        val sent = (1..9).map { server.takeRequest() }
         assertEquals("\"urn:schemas-upnp-org:service:ZoneGroupTopology:1#GetZoneGroupState\"", sent[0].getHeader("SOAPACTION"))
         assertTrue(sent[1].body.readUtf8().contains("<ObjectID>FV:2</ObjectID>"))
         assertEquals(
-            listOf("RemoveAllTracksFromQueue", "AddURIToQueue", "SetAVTransportURI", "Seek", "Play"),
+            listOf("RemoveAllTracksFromQueue", "AddURIToQueue", "SetAVTransportURI", "Seek", "Play", "GetTransportInfo"),
             sent.drop(3).map { it.getHeader("SOAPACTION")!!.substringAfter('#').trimEnd('"') },
         )
         val add = sent[4].body.readUtf8()

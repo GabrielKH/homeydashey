@@ -1,6 +1,7 @@
 package app.homeydash.sonos
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -80,6 +81,32 @@ class SonosClient(private val http: OkHttpClient, private val port: Int = PORT) 
             runCatching { soap(coordinatorHost, TRANSPORT, "Seek", listOf("InstanceID" to "0", "Unit" to "TRACK_NR", "Target" to (firstTrack ?: "1"))) }
         }
         soap(coordinatorHost, TRANSPORT, "Play", listOf("InstanceID" to "0", "Speed" to "1"))
+        ensurePlaying(coordinatorHost, first.takeUnless(::isStream)?.let(::songOf))
+    }
+
+    /**
+     * Waits until the group really plays, and plays the song asked for: Sonos can take a
+     * moment to load a Spotify song, and sometimes stays stopped after "Play" or carries on
+     * with what it had. Tries "Play" (and the jump to the song) again, then says it failed.
+     */
+    private suspend fun ensurePlaying(host: String, song: String?) {
+        var nudged = 0
+        repeat(CHECKS) { check ->
+            delay(CHECK_MS)
+            val state = runCatching { soap(host, TRANSPORT, "GetTransportInfo", listOf("InstanceID" to "0")).text("CurrentTransportState") }.getOrNull()
+            if (state == "TRANSITIONING" || state == null) return@repeat
+            val right = song == null || runCatching {
+                songOf(soap(host, TRANSPORT, "GetPositionInfo", listOf("InstanceID" to "0")).text("TrackURI").orEmpty()) == song
+            }.getOrDefault(true)
+            if (state == "PLAYING" && right) return
+            // Stopped, paused, or on another song: nudge it, at most twice, a little apart.
+            if (nudged < 2 && check >= 2 * nudged + 1) {
+                nudged++
+                if (!right) runCatching { soap(host, TRANSPORT, "Seek", listOf("InstanceID" to "0", "Unit" to "TRACK_NR", "Target" to "1")) }
+                runCatching { soap(host, TRANSPORT, "Play", listOf("InstanceID" to "0", "Speed" to "1")) }
+            }
+        }
+        throw IOException("Sonos loaded it but didn't start playing")
     }
 
     private suspend fun soap(host: String, service: Service, action: String, args: List<Pair<String, String>>): Element =
@@ -110,6 +137,15 @@ class SonosClient(private val http: OkHttpClient, private val port: Int = PORT) 
 
     companion object {
         private const val PORT = 1400
+        private const val CHECKS = 10
+        private const val CHECK_MS = 700L
+
+        /** The Spotify song a link plays ("spotify:track:…"), or null for anything else. */
+        fun songOf(item: SonosItem): String? = songOf(item.uri)
+
+        fun songOf(uri: String): String? =
+            Regex("spotify(?::|%3a)track(?::|%3a)([A-Za-z0-9]+)", RegexOption.IGNORE_CASE).find(uri)?.groupValues?.get(1)?.let { "spotify:track:$it" }
+
         private val XML = "text/xml; charset=\"utf-8\"".toMediaType()
         private val TOPOLOGY = Service("/ZoneGroupTopology/Control", "urn:schemas-upnp-org:service:ZoneGroupTopology:1")
         private val CONTENT = Service("/MediaServer/ContentDirectory/Control", "urn:schemas-upnp-org:service:ContentDirectory:1")

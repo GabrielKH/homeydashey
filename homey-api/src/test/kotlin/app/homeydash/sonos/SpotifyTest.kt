@@ -17,6 +17,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 
 class SpotifyTest {
 
@@ -108,6 +109,7 @@ class SpotifyTest {
         val sonosServer = MockWebServer().apply { start() }
         val host = sonosServer.hostName
         val actions = Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val stateChecks = AtomicInteger()
         val topology = """<ZoneGroupState><ZoneGroups><ZoneGroup Coordinator="RINCON_K" ID="RINCON_K:1">""" +
             """<ZoneGroupMember UUID="RINCON_K" Location="http://$host:1400/xml/device_description.xml" ZoneName="Kök"/>""" +
             """</ZoneGroup></ZoneGroups></ZoneGroupState>"""
@@ -119,6 +121,9 @@ class SpotifyTest {
                 val inner = when (action) {
                     "GetZoneGroupState" -> "<ZoneGroupState>${esc(topology)}</ZoneGroupState>"
                     "Browse" -> "<Result></Result>"
+                    // Stopped at first, as Sonos sometimes is right after "Play", then playing.
+                    "GetTransportInfo" -> "<CurrentTransportState>${if (stateChecks.incrementAndGet() <= 2) "STOPPED" else "PLAYING"}</CurrentTransportState>"
+                    "GetPositionInfo" -> "<TrackURI>x-sonos-spotify:spotify%3atrack%3at1?sid=12&amp;flags=8224&amp;sn=3</TrackURI>"
                     else -> ""
                 }
                 return MockResponse().setBody(
@@ -148,7 +153,12 @@ class SpotifyTest {
         // Only ABBA's own songs, not the tribute band's.
         assertEquals(2, queued.size)
         assertTrue(queued[0].contains("<EnqueuedURI>spotify%3atrack%3at1</EnqueuedURI>"))
-        assertEquals(listOf("RemoveAllTracksFromQueue", "AddURIToQueue", "AddURIToQueue", "SetAVTransportURI", "Seek", "Play"), actions.map { it.first }.takeLast(6))
+        // It asked again when the group stayed stopped, and checked until it played.
+        assertEquals(
+            listOf("RemoveAllTracksFromQueue", "AddURIToQueue", "AddURIToQueue", "SetAVTransportURI", "Seek", "Play", "Play"),
+            actions.map { it.first }.filterNot { it.startsWith("Get") || it == "Browse" },
+        )
+        assertEquals("GetPositionInfo", actions.last().first)
         // Straight to the first new song, not on with what the speaker was playing.
         assertTrue(actions.single { it.first == "Seek" }.second.contains("<Unit>TRACK_NR</Unit><Target>1</Target>"))
         spotifyServer.shutdown()
