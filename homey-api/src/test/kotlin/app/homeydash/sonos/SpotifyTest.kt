@@ -76,6 +76,16 @@ class SpotifyTest {
         assertNull(SpotifyOnSonos.serviceIn(listOf(radio)))
     }
 
+    @Test fun `gives songs the Sonos app's own link when the account is known`() {
+        val list = SonosItem("Mix", "x-rincon-cpcontainer:1006206cspotify%3aplaylist%3ax?sid=12&flags=8300&sn=3", "")
+        val account = SpotifyOnSonos.accountIn(listOf(list))
+        assertEquals(SpotifyOnSonos.Account("12", "3"), account)
+        val track = SpotifyOnSonos.item(SpotifyHit(SpotifyHit.Kind.Track, "t1", "Waterloo"), account = account)
+        assertEquals("x-sonos-spotify:spotify%3atrack%3at1?sid=12&flags=8224&sn=3", track.uri)
+        val album = SpotifyOnSonos.item(SpotifyHit(SpotifyHit.Kind.Album, "a1", "Arrival"), account = account)
+        assertEquals("x-rincon-cpcontainer:1004206cspotify%3aalbum%3aa1", album.uri)
+    }
+
     @Test fun `searches Spotify and plays an artist's songs on the speaker's group`() = runTest {
         val spotifyServer = MockWebServer()
         spotifyServer.dispatcher = object : Dispatcher() {
@@ -138,7 +148,9 @@ class SpotifyTest {
         // Only ABBA's own songs, not the tribute band's.
         assertEquals(2, queued.size)
         assertTrue(queued[0].contains("<EnqueuedURI>spotify%3atrack%3at1</EnqueuedURI>"))
-        assertEquals(listOf("RemoveAllTracksFromQueue", "AddURIToQueue", "AddURIToQueue", "SetAVTransportURI", "Play"), actions.map { it.first }.takeLast(5))
+        assertEquals(listOf("RemoveAllTracksFromQueue", "AddURIToQueue", "AddURIToQueue", "SetAVTransportURI", "Seek", "Play"), actions.map { it.first }.takeLast(6))
+        // Straight to the first new song, not on with what the speaker was playing.
+        assertTrue(actions.single { it.first == "Seek" }.second.contains("<Unit>TRACK_NR</Unit><Target>1</Target>"))
         spotifyServer.shutdown()
         sonosServer.shutdown()
     }

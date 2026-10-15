@@ -209,8 +209,14 @@ object SpotifyOnSonos {
         """<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" """ +
             """xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"""
 
-    /** The item to queue for [hit] (not an artist: those are played as their songs). [service] is from [serviceIn]. */
-    fun item(hit: SpotifyHit, service: Int = EUROPE): SonosItem {
+    /** The household's Spotify account as Sonos numbers it in its own links ("sid=12&sn=3"). */
+    data class Account(val sid: String, val sn: String)
+
+    /**
+     * The item to queue for [hit] (not an artist: those are played as their songs). [service] is
+     * from [serviceIn]; with the [account] a song gets the same link the Sonos app gives it.
+     */
+    fun item(hit: SpotifyHit, service: Int = EUROPE, account: Account? = null): SonosItem {
         val encoded = "spotify%3a${hit.kind.name.lowercase()}%3a${hit.id}"
         val (key, prefix, upnpClass) = when (hit.kind) {
             SpotifyHit.Kind.Track -> Triple("00032020", "", "object.item.audioItem.musicTrack")
@@ -222,8 +228,23 @@ object SpotifyOnSonos {
             """<item id="$key$encoded" parentID="" restricted="true"><dc:title>${escape(hit.name)}</dc:title>""" +
             """<upnp:class>$upnpClass</upnp:class>""" +
             """<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON${service}_X_#Svc$service-0-Token</desc></item></DIDL-Lite>"""
-        return SonosItem(hit.name, prefix + encoded, meta, hit.description, hit.art)
+        val uri = if (hit.kind == SpotifyHit.Kind.Track && account != null) {
+            "x-sonos-spotify:$encoded?sid=${account.sid}&flags=8224&sn=${account.sn}"
+        } else {
+            prefix + encoded
+        }
+        return SonosItem(hit.name, uri, meta, hit.description, hit.art)
     }
+
+    /** The Spotify account in a Spotify favourite's link (`…spotify%3a…?sid=12&flags=8300&sn=3`). */
+    fun accountIn(items: List<SonosItem>): Account? = items.asSequence()
+        .filter { it.uri.contains("spotify", ignoreCase = true) }
+        .mapNotNull { item ->
+            val sid = Regex("[?&]sid=(\\d+)").find(item.uri)?.groupValues?.get(1) ?: return@mapNotNull null
+            val sn = Regex("[?&]sn=(\\d+)").find(item.uri)?.groupValues?.get(1) ?: return@mapNotNull null
+            Account(sid, sn)
+        }
+        .firstOrNull()
 
     /** Sonos's number for the household's Spotify account, read from a Spotify favourite or playlist. */
     fun serviceIn(items: List<SonosItem>): Int? = items.asSequence()

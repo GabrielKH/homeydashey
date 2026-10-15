@@ -63,16 +63,21 @@ class SonosClient(private val http: OkHttpClient, private val port: Int = PORT) 
             soap(coordinatorHost, TRANSPORT, "SetAVTransportURI", listOf("InstanceID" to "0", "CurrentURI" to first.uri, "CurrentURIMetaData" to first.meta))
         } else {
             soap(coordinatorHost, TRANSPORT, "RemoveAllTracksFromQueue", listOf("InstanceID" to "0"))
+            var firstTrack: String? = null
             items.filterNot(::isStream).forEach { item ->
-                soap(
+                val added = soap(
                     coordinatorHost, TRANSPORT, "AddURIToQueue",
                     listOf(
                         "InstanceID" to "0", "EnqueuedURI" to item.uri, "EnqueuedURIMetaData" to item.meta,
                         "DesiredFirstTrackNumberEnqueued" to "0", "EnqueueAsNext" to "0",
                     ),
                 )
+                if (firstTrack == null) firstTrack = added.text("FirstTrackNumberEnqueued")
             }
             soap(coordinatorHost, TRANSPORT, "SetAVTransportURI", listOf("InstanceID" to "0", "CurrentURI" to "x-rincon-queue:${speaker.coordinator}#0", "CurrentURIMetaData" to ""))
+            // Jump to what was just added: a group already playing its queue (or a Spotify session)
+            // otherwise carries on with the song it was on.
+            runCatching { soap(coordinatorHost, TRANSPORT, "Seek", listOf("InstanceID" to "0", "Unit" to "TRACK_NR", "Target" to (firstTrack ?: "1"))) }
         }
         soap(coordinatorHost, TRANSPORT, "Play", listOf("InstanceID" to "0", "Speed" to "1"))
     }

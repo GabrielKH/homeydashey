@@ -30,6 +30,7 @@ class SonosCards(
     @Volatile private var speakers: List<SonosSpeaker> = emptyList()
     @Volatile private var rooms: Map<String, SonosSpeaker> = emptyMap()
     @Volatile private var spotifyService: Int? = null
+    @Volatile private var spotifyAccount: SpotifyOnSonos.Account? = null
 
     override suspend fun cards(snapshot: HomeySnapshot): Map<String, List<FlowCardAction>> {
         speakers = household()
@@ -85,8 +86,15 @@ class SonosCards(
         }
 
         val search = spotify ?: throw IOException("Spotify isn't set up")
-        val service = spotifyService ?: runCatching { SpotifyOnSonos.serviceIn(client.favourites(speaker.host) + client.playlists(speaker.host)) }
-            .getOrNull().also { spotifyService = it } ?: SpotifyOnSonos.EUROPE
+        // Sonos's numbers for the household's Spotify account, from its Spotify favourites and playlists.
+        if (spotifyService == null || spotifyAccount == null) {
+            runCatching { client.favourites(speaker.host) + client.playlists(speaker.host) }.getOrNull()?.let { saved ->
+                spotifyService = spotifyService ?: SpotifyOnSonos.serviceIn(saved)
+                spotifyAccount = spotifyAccount ?: SpotifyOnSonos.accountIn(saved)
+            }
+        }
+        val service = spotifyService ?: SpotifyOnSonos.EUROPE
+        val account = spotifyAccount
         val kind = SpotifyHit.Kind.entries.firstOrNull { it.name == field("kind") } ?: throw IOException("Nothing was picked to play")
         val hits = if (kind == SpotifyHit.Kind.Artist) {
             search.songsBy(field("name")).ifEmpty { throw IOException("Spotify has no songs by ${field("name")}") }
@@ -94,7 +102,7 @@ class SonosCards(
             listOf(SpotifyHit(kind, field("id"), field("name")))
         }
         try {
-            client.play(current, leader.host, hits.map { SpotifyOnSonos.item(it, service) })
+            client.play(current, leader.host, hits.map { SpotifyOnSonos.item(it, service, account) })
         } catch (e: IOException) {
             throw IOException("Sonos couldn't play that from Spotify. Is Spotify added in the Sonos app? (${e.message})", e)
         }
