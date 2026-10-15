@@ -182,7 +182,7 @@ class RoutinesTest {
 
     @Test fun `after a promise without a tool call, a tool is required`() = runTest {
         val server = MockWebServer()
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Jag tänder lampan!"}}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Jag höjer volymen med 10 procent."}}]}"""))
         server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Okej."}}]}"""))
         server.start()
         val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)

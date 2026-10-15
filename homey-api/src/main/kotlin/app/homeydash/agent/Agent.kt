@@ -472,7 +472,7 @@ class Agent(
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(
             """$W(i'?ll|i will|i'?m going to|let me|turning|switching|setting|dimming|starting|playing|""" +
-                """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar)|tänder|släcker|slår (på|av)|sätter (på|igång))$E""",
+                """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar|höjer|sänker|öppnar|stänger|dimmar|pausar|byter)|tänder|släcker|slår (på|av)|sätter (på|igång))$E""",
             RegexOption.IGNORE_CASE,
         )
         /** Saying something was changed: "Taklampan är tänd", "I've turned it off", "Done". */
