@@ -78,34 +78,6 @@ object QuickCommand {
         return if (lights.isEmpty()) null else Action(null, roomId, on, dim, swedish)
     }
 
-    private val MUSIC = Regex("""^(?:kan du |snälla |please |can you )?(?:sätt på|sätta på|slå på|spela|starta|play|put on|start)\s+(?:lite |some |)(?:musik|music|låtar|songs)(?:\s+(?:i|in|på|on)\s+(.+))?$""")
-
-    /**
-     * "Sätt på musik i köket", "spela musik", "play some music in the kitchen": the player to
-     * play something of its own choosing on. Null when it isn't such a request, or when it's
-     * unclear which player is meant.
-     */
-    fun music(text: String, view: HomeView): AgentDevice? {
-        val t = text.lowercase().trim().trimEnd('.', '!', '?').replace(Regex("\\s+"), " ")
-        val m = MUSIC.matchEntire(t) ?: return null
-        val players = view.devices.filter { it.deviceClass == "speaker" && it.secret == null && !it.unreachable }
-        val where = m.groupValues[1].trim().removePrefix("the ").trim()
-        if (where.isEmpty()) {
-            return view.settings.speakerId?.let { id -> players.firstOrNull { it.id == id } }
-                ?: players.filter { !it.hiddenOnDashboard }.singleOrNull()
-        }
-        val roomId = view.room(where)?.takeIf { NameMatch.score(where, view.rooms[it].orEmpty()) >= 0.95 }
-        if (roomId != null) {
-            val inRoom = players.filter { view.inRoom(it, roomId) }
-            return inRoom.firstOrNull { !it.hiddenOnDashboard } ?: inRoom.firstOrNull()
-        }
-        return view.device(where)?.takeIf { it in players }
-    }
-
-    /** What to say once [played] is playing on [player]. */
-    fun playing(played: String, player: AgentDevice, swedish: Boolean): String =
-        if (swedish) "Spelar $played på ${player.name}." else "Playing $played on ${player.name}."
-
     /** The tool call that does [a]. */
     fun call(a: Action): ToolCall {
         val args = buildMap {
