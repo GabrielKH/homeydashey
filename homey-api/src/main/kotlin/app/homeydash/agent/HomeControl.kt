@@ -7,6 +7,7 @@ import app.homeydash.homey.FlowCards
 import app.homeydash.homey.HomeyFlow
 import app.homeydash.homey.HomeyStore
 import app.homeydash.homey.Mood
+import app.homeydash.homey.MusicSource
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -113,19 +114,20 @@ class StoreHomeControl(
         // The home's own favourites, playlists and radio first; a catalogue like Spotify when
         // none of them is clearly what was asked for.
         val (catalogues, own) = sources.partition { it.catalogue }
-        fun look(list: List<MusicSource>) = list.flatMap { source ->
+        suspend fun look(list: List<MusicSource>): List<Pair<MusicSource, AutocompleteItem>> = list.flatMap { source ->
             runCatching { choices(source.card, source.arg, query) }.getOrDefault(emptyList()).map { source to it }
         }
         // The artist is often only in the description ("Abbey Road" · "The Beatles").
-        fun score(item: AutocompleteItem) =
+        fun score(item: AutocompleteItem): Double =
             maxOf(NameMatch.score(query, item.name), NameMatch.score(query, listOfNotNull(item.name, item.description).joinToString(" ")))
         val found = look(own)
-        val ownBest = NameMatch.best(query, found) { score(it.second) }
-        val best = ownBest?.takeIf { catalogues.isEmpty() || score(it.second) >= OWN_IS_ENOUGH }
-            ?: look(catalogues).let { hits -> NameMatch.best(query, hits) { score(it.second) } ?: hits.firstOrNull() }
-            ?: ownBest
-            ?: found.firstOrNull { it.first.arg.type == "autocomplete" }
-            ?: return null
+        val ownBest: Pair<MusicSource, AutocompleteItem>? = NameMatch.best(query, found) { score(it.second) }
+        var best: Pair<MusicSource, AutocompleteItem>? = ownBest?.takeIf { catalogues.isEmpty() || score(it.second) >= OWN_IS_ENOUGH }
+        if (best == null && catalogues.isNotEmpty()) {
+            val hits = look(catalogues)
+            best = NameMatch.best(query, hits) { score(it.second) } ?: hits.firstOrNull()
+        }
+        best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" } ?: return null
         runAction(best.first.card, FlowCards.musicArgs(best.first, best.second))
         // "Dancing Queen (Song · ABBA)", so the answer says what was found.
         return if (best.first.catalogue) listOfNotNull(best.second.name, best.second.description?.let { "($it)" }).joinToString(" ") else best.second.name
