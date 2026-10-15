@@ -332,6 +332,7 @@ class AgentTest {
     @Test fun `local requests turn thinking off every way Ollama understands`() {
         val body = ChatClient.requestBody("q", listOf(ChatMessage("system", "Be brief."), ChatMessage.user("Hej")), emptyList(), noThinking = true)
         assertEquals("none", body["reasoning_effort"]!!.jsonPrimitive.content)
+        assertEquals("false", body["chat_template_kwargs"]!!.jsonObject["enable_thinking"]!!.jsonPrimitive.content)
         assertEquals("false", body["think"]!!.jsonPrimitive.content)
         assertTrue(body["messages"]!!.jsonArray[0].jsonObject["content"]!!.jsonPrimitive.content.endsWith("/no_think"))
         assertNull(ChatClient.requestBody("m", listOf(ChatMessage("system", "x")), emptyList())["think"])

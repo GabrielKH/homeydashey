@@ -114,8 +114,9 @@ class ChatClient(http: OkHttpClient) {
 
         /**
          * [noThinking] turns off a local model's reasoning step, so spoken answers come quickly.
-         * It's said three ways, since Ollama versions and models each listen to a different one:
-         * `reasoning_effort`, Ollama's own `think`, and Qwen's `/no_think` in the system prompt.
+         * It's said four ways, since servers and models each listen to a different one:
+         * `reasoning_effort`, Ollama's own `think`, the chat template's `enable_thinking`
+         * (MLX servers such as vMLX, and Qwen 3.5), and Qwen's `/no_think` in the system prompt.
          */
         fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>, noThinking: Boolean = false): JsonObject = buildJsonObject {
             put("model", model)
@@ -123,6 +124,7 @@ class ChatClient(http: OkHttpClient) {
             if (noThinking) {
                 put("reasoning_effort", "none")
                 put("think", false)
+                put("chat_template_kwargs", buildJsonObject { put("enable_thinking", false) })
             }
             val sent = if (!noThinking) messages else messages.mapIndexed { i, m ->
                 if (i == 0 && m.role == "system") m.copy(content = m.content.orEmpty() + "\n\n/no_think") else m
