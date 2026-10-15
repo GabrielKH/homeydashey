@@ -195,7 +195,7 @@ class RoutinesTest {
 
     @Test fun `the local AI gets its tools as text and calls them in writing`() = runTest {
         val server = MockWebServer()
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"<tool_call>{\"name\": \"play_music\", \"arguments\": {\"player\": \"player_1\", \"query\": \"\"}}</tool_call>"},"finish_reason":"stop"}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"CALL play_music {\"player\": \"player_1\", \"query\": \"\"}"},"finish_reason":"stop"}]}"""))
         server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Nu spelas P1 i köket."}}]}"""))
         server.start()
         val home = Home()
@@ -211,7 +211,22 @@ class RoutinesTest {
         assertFalse(first.contains("add_to_fridge"))
         val second = server.takeRequest().body.readUtf8()
         assertTrue(second.contains("<tool_response>"))
+        assertTrue(second.contains("CALL play_music"))
         assertFalse(second.contains("\"role\":\"tool\""))
+        server.shutdown()
+    }
+
+    @Test fun `an empty answer is asked again, never turned into okay`() = runTest {
+        val server = MockWebServer()
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"stop"}]}""")) }
+        server.start()
+        val home = Home()
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val agent = Agent(ChatClient(OkHttpClient()), now = { monday })
+        val reply = agent.ask("spela musik i köket", settings, { view(settings, it) }, { AgentTools(it, home, Dash()) })
+        assertTrue(reply.text, reply.text.startsWith("Förlåt"))
+        server.takeRequest()
+        assertTrue(server.takeRequest().body.readUtf8().contains("CALL lines"))
         server.shutdown()
     }
 }

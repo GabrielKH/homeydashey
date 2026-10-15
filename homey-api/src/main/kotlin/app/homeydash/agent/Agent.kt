@@ -146,6 +146,7 @@ class Agent(
             // A tool actually changed something; a failed or wrong call doesn't count.
             var changed = false
             var nudged = false
+            var emptied = false
             val actions = mutableListOf<String>()
             // What each call did this turn, so the same change asked for twice isn't done twice.
             val done = mutableMapOf<String, ToolResult>()
@@ -173,6 +174,19 @@ class Agent(
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
                         if (!acted && answer.content.orEmpty().contains(IGNORE)) return AgentReply("", brain, ignored = true)
+                        // An empty answer: the server hid what the model wrote (vMLX drops tool tags
+                        // when no tool schemas were sent), or it wrote nothing. Ask once, then say so.
+                        if (answer.content.isNullOrBlank()) {
+                            if (!emptied && !changed) {
+                                emptied = true
+                                heard.trace("guard", "The answer came back empty; asked it again.")
+                                turn += ChatMessage.user(if (compact) NUDGE_EMPTY_WRITTEN else NUDGE_EMPTY)
+                                return@repeat
+                            }
+                            heard.trace("guard", "Empty again; told the user nothing came back.", keepLocal)
+                            if (actions.isEmpty()) actions += "The AI's answer came back empty; nothing in the home was changed."
+                            return AgentReply(noAnswer(text, changed), brain, pending, actions = actions, error = !changed)
+                        }
                         // "I'll turn on the light", or "the light is on" without doing it: small models
                         // sometimes stop at the promise, or claim it's done.
                         val said = answer.content.orEmpty()
@@ -320,6 +334,13 @@ class Agent(
     private fun nothingDone(text: String): String =
         if (Confirmation.looksSwedish(text)) "Förlåt, jag fick inte till det, så inget ändrades. Säg gärna vilken lampa eller enhet du menar."
         else "Sorry, I didn't manage that, so nothing was changed. Tell me which light or device you mean."
+
+    private fun noAnswer(text: String, changed: Boolean): String = when {
+        changed && Confirmation.looksSwedish(text) -> "Klart."
+        changed -> "Done."
+        Confirmation.looksSwedish(text) -> "Förlåt, jag fick inget svar från AI:n, så inget ändrades. Försök igen."
+        else -> "Sorry, the AI gave me no answer, so nothing was changed. Try again."
+    }
 
     private fun tapToConfirm(text: String): String =
         if (Confirmation.looksSwedish(text)) "Tryck på Ja på surfplattan för att bekräfta." else "Tap Yes on the tablet to confirm."
@@ -507,6 +528,9 @@ class Agent(
         val CHANGED = listOf("Done", "Changed", "Started", "Playing")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
             "Call the right tool now, or tell the user plainly what went wrong.)"
+        const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
+        const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +
+            "like CALL play_music {\"player\": \"player_1\"}, never in <tool_call> tags; or answer the user in words.)"
         const val NUDGE = "(From the app, not the user: you said you would do something but called no tool, so nothing happened. " +
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(

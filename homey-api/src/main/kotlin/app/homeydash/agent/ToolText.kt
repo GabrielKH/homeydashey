@@ -3,7 +3,6 @@ package app.homeydash.agent
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 
 /**
@@ -14,9 +13,10 @@ import kotlinx.serialization.json.contentOrNull
  */
 object ToolText {
     /** How to call a tool, in the rules. */
-    const val HOW = "To use tools, reply with only the calls, one per line, exactly like " +
-        "<tool_call>{\"name\": \"set_device\", \"arguments\": {\"device\": \"light_3\", \"capability\": \"onoff\", \"value\": \"true\"}}</tool_call> " +
-        "and nothing else. The results come back to you; then answer the user in words. Never say you did something without calling a tool for it."
+    const val HOW = "To use a tool, reply with only lines like " +
+        "CALL set_device {\"device\": \"light_3\", \"capability\": \"onoff\", \"value\": \"true\"} " +
+        "(CALL, the tool name, its arguments as JSON), one call per line, and nothing else. No tags, no XML. " +
+        "The results come back to you; then answer the user in words. Never say you did something without calling a tool for it."
 
     /** One line per tool: `name(arg, optional?): what it does`. */
     fun lines(specs: List<ToolSpec>): String = specs.joinToString("\n") { line(it) }
@@ -43,6 +43,10 @@ object ToolText {
         }
     }
 
-    private fun call(c: ToolCall): String =
-        "<tool_call>" + buildJsonObject { put("name", JsonPrimitive(c.name)); put("arguments", c.arguments) } + "</tool_call>"
+    /**
+     * A plain CALL line rather than Qwen's <tool_call> tags: vMLX hides everything after a
+     * native tool tag when the request carries no tool schemas, so a tagged call came back as
+     * an empty answer.
+     */
+    fun call(c: ToolCall): String = "CALL ${c.name} ${c.arguments}"
 }

@@ -215,9 +215,11 @@ class ChatClient(http: OkHttpClient) {
         /**
          * Tool calls written into the answer text, and the text left over: Qwen's XML form
          * (<function=set_device><parameter=device>light_3</parameter></function>),
-         * <tool_call>{json}</tool_call>, or bare JSON.
+         * <tool_call>{json}</tool_call>, bare JSON, or `CALL name {json}` lines.
          */
         fun callsInText(content: String): Pair<List<ToolCall>, String> {
+            val lines = callLines(content)
+            if (lines.first.isNotEmpty()) return lines
             val xml = XML_FUNCTION.findAll(content).mapIndexed { i, m ->
                 val args = XML_PARAMETER.findAll(m.groupValues[2]).associate { p -> p.groupValues[1] to JsonPrimitive(p.groupValues[2].trim()) }
                 ToolCall("call_text_$i", m.groupValues[1], JsonObject(args))
@@ -227,6 +229,52 @@ class ChatClient(http: OkHttpClient) {
                 return xml to rest
             }
             return jsonCallsInText(content)
+        }
+
+        private val CALL_LINE = Regex("""(?m)^[ \t*`]*CALL[ \t]+([\w.-]+)[ \t]*""")
+
+        private val CODE_FENCE = Regex("""(?m)^[ \t]*```\w*[ \t]*$""")
+
+        /** `CALL name {json args}` lines ([ToolText.HOW]); the text left is everything else. */
+        private fun callLines(content: String): Pair<List<ToolCall>, String> {
+            val calls = mutableListOf<ToolCall>()
+            val rest = StringBuilder()
+            var from = 0
+            for (m in CALL_LINE.findAll(content)) {
+                if (m.range.first < from) continue
+                rest.append(content, from, m.range.first)
+                var end = m.range.last + 1
+                val args = if (end < content.length && content[end] == '{') {
+                    val close = closingBrace(content, end)
+                    val obj = runCatching { Lenient.parseToJsonElement(content.substring(end, close)) as? JsonObject }.getOrNull()
+                    end = close
+                    obj
+                } else null
+                calls += ToolCall("call_text_${calls.size}", m.groupValues[1], args ?: JsonObject(emptyMap()))
+                while (end < content.length && content[end] != '\n') end++
+                from = end
+            }
+            if (calls.isEmpty()) return emptyList<ToolCall>() to content
+            rest.append(content, from, content.length)
+            return calls to rest.toString().replace(CODE_FENCE, "").trim()
+        }
+
+        /** Index just past the brace that closes the one at [start], or the end of [text]. */
+        private fun closingBrace(text: String, start: Int): Int {
+            var depth = 0
+            var quoted = false
+            var i = start
+            while (i < text.length) {
+                val c = text[i]
+                when {
+                    quoted && c == '\\' -> i++
+                    c == '"' -> quoted = !quoted
+                    !quoted && c == '{' -> depth++
+                    !quoted && c == '}' -> if (--depth == 0) return i + 1
+                }
+                i++
+            }
+            return text.length
         }
 
         private fun jsonCallsInText(content: String): Pair<List<ToolCall>, String> {

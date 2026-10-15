@@ -750,6 +750,10 @@ class AgentTest {
         assertEquals("set_device", xml.first.single().name)
         assertEquals("light_1", (xml.first.single().arguments["device"] as JsonPrimitive).content)
         assertEquals("Jag tänder den.", xml.second)
+        val lines = ChatClient.callsInText("```\nCALL set_device {\"device\": \"light_1\", \"value\": \"{on}\"}\nCALL weather\n```\nKlart.")
+        assertEquals(listOf("set_device", "weather"), lines.first.map { it.name })
+        assertEquals("{on}", (lines.first[0].arguments["value"] as JsonPrimitive).content)
+        assertEquals("Klart.", lines.second)
     }
 
     @Test fun `a promise without a tool call gets one nudge`() = runTest {
