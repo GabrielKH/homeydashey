@@ -172,6 +172,12 @@ private fun Main(
     Label("Local AI: Ollama on your computer")
     val local = settings.local ?: Connection(Provider.Ollama)
     ConnectionFields(services, local, showKey = false) { c -> update { it.copy(local = c) } }
+    SwitchRow(
+        "Short tool list",
+        "The local AI gets its tools as a few lines of text and writes its calls itself. A much shorter prompt, so faster answers, " +
+            "and it works on servers like vMLX that lose tool calls on long prompts.",
+        settings.compactTools,
+    ) { on -> update { it.copy(compactTools = on) } }
 
     Label("Internet AI")
     val internet = settings.internet ?: Connection(Provider.Gemini)

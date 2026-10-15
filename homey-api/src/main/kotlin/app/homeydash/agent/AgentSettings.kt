@@ -148,6 +148,12 @@ data class AgentSettings(
     /** A GitHub token that may write issues in [logRepo]. */
     val logToken: String = "",
     val logRepo: String = AgentLog.DEFAULT_REPO,
+    /**
+     * The local AI gets its tools as short lines of text and answers with a written call, instead
+     * of JSON schemas the server must handle: a much shorter prompt, and it works on servers that
+     * lose tool calls on long prompts (vMLX with Qwen 3.5).
+     */
+    val compactTools: Boolean = true,
 ) {
     /** Who hears questions, in order; empty means Android's own speech recognition. */
     fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })

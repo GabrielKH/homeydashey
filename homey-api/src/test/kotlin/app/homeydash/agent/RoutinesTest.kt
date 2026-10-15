@@ -185,11 +185,33 @@ class RoutinesTest {
         server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Jag höjer volymen med 10 procent."}}]}"""))
         server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Okej."}}]}"""))
         server.start()
-        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local, compactTools = false)
         val agent = Agent(ChatClient(OkHttpClient()), now = { monday })
         agent.ask("kan du göra det mysigt", settings, { view(settings, it) }, { AgentTools(it, Home(), Dash()) })
         assertFalse(server.takeRequest().body.readUtf8().contains("tool_choice"))
         assertTrue(server.takeRequest().body.readUtf8().contains("\"tool_choice\":\"required\""))
+        server.shutdown()
+    }
+
+    @Test fun `the local AI gets its tools as text and calls them in writing`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"<tool_call>{\"name\": \"play_music\", \"arguments\": {\"player\": \"player_1\", \"query\": \"\"}}</tool_call>"},"finish_reason":"stop"}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Nu spelas P1 i köket."}}]}"""))
+        server.start()
+        val home = Home()
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val agent = Agent(ChatClient(OkHttpClient()), now = { monday })
+        val reply = agent.ask("spela musik i köket", settings, { view(settings, it) }, { AgentTools(it, home, Dash()) })
+        assertEquals("Nu spelas P1 i köket.", reply.text)
+        assertEquals(listOf("d-sonos" to ""), home.played)
+        val first = server.takeRequest().body.readUtf8()
+        assertFalse(first.contains("\"tools\""))
+        assertTrue(first.contains("play_music(player, query?)"))
+        // Fridge tools only come along when the question is about food.
+        assertFalse(first.contains("add_to_fridge"))
+        val second = server.takeRequest().body.readUtf8()
+        assertTrue(second.contains("<tool_response>"))
+        assertFalse(second.contains("\"role\":\"tool\""))
         server.shutdown()
     }
 }

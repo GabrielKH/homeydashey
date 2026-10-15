@@ -137,7 +137,9 @@ class Agent(
             val toolbox = tools(homeView)
             toolbox.privateContext = brain.local && history.any { it.localOnly }
             val specs = toolbox.specs()
+            val compact = brain.local && settings.compactTools
             val earlier = history.filter { brain.local || !it.localOnly }.flatMap { it.messages }
+            val tools = Tools(specs, compact, text, earlier, context)
             val turn = mutableListOf(ChatMessage.user(text))
             var localOnly = false
             var acted = false
@@ -150,12 +152,12 @@ class Agent(
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
                 repeat(MAX_ROUNDS) {
-                    val messages = conversation(settings, homeView, context, earlier, turn)
+                    val messages = conversation(settings, homeView, context, earlier, turn, tools)
                     val step = StepIds.next()
                     val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
                     val answer = try {
-                        chat.complete(brain, messages, specs, requireTool = nudged && !acted)
+                        chat.complete(brain, messages, tools.sent, requireTool = nudged && !acted)
                     } catch (e: IOException) {
                         heard.step(AgentStep(step, thinking, StepState.Failed, e.message, thinking = true))
                         throw e
@@ -342,15 +344,48 @@ class Agent(
         context: AskContext,
         earlier: List<ChatMessage>,
         turn: List<ChatMessage>,
+        tools: Tools,
     ): List<ChatMessage> {
         val question = turn.first()
-        val now = ChatMessage.user(situation(settings, view, context) + QUESTION + question.content.orEmpty())
-        return listOf(ChatMessage.system(fixed(settings, view))) + earlier + now + turn.drop(1)
+        val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
+        val now = ChatMessage.user(situation(settings, view, context) + extra + QUESTION + question.content.orEmpty())
+        val all = listOf(ChatMessage.system(fixed(settings, view, tools.core))) + earlier + now + turn.drop(1)
+        return if (tools.compact) ToolText.written(all) else all
+    }
+
+    /**
+     * The tools for one question. With [compact] they are written into the prompt: [core] in the
+     * fixed part, and [extra] (recipes, the fridge, making routines) in the question's note only
+     * when it is about them, so the fixed part stays short and the same. Otherwise every tool
+     * goes to the server as JSON ([sent]).
+     */
+    private class Tools(all: List<ToolSpec>, val compact: Boolean, question: String, earlier: List<ChatMessage>, context: AskContext) {
+        val sent: List<ToolSpec> = if (compact) emptyList() else all
+        val core: List<ToolSpec>?
+        val extra: List<ToolSpec>
+
+        init {
+            if (!compact) {
+                core = null
+                extra = emptyList()
+            } else {
+                val said = question + " " + earlier.lastOrNull { it.role == "user" }?.content.orEmpty()
+                val wanted = buildSet {
+                    if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
+                    if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
+                    if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS)
+                }
+                core = all.filter { it.name !in PACKS }
+                extra = all.filter { it.name in PACKS && it.name in wanted }
+            }
+        }
     }
 
     /** The rules and the home's devices: the part of every question that stays the same. */
-    fun fixed(settings: AgentSettings, view: HomeView): String =
-        rules(settings) + "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
+    fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null): String =
+        rules(settings) +
+            (compactTools?.let { "\n" + ToolText.HOW + "\nTools:\n" + ToolText.lines(it) + "\n" } ?: "") +
+            "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
             "(read) only reads; get_device has the rest):\n" + view.catalog()
 
     /** What the last warm-up sent, so an unchanged start isn't sent again. */
@@ -374,8 +409,10 @@ class Agent(
         val toolbox = tools(homeView)
         val fresh = System.currentTimeMillis() - lastActivity <= FORGET_AFTER_MS
         toolbox.privateContext = brain.local && fresh && history.any { it.localOnly }
-        val messages = listOf(ChatMessage.system(fixed(settings, homeView)))
-        val specs = toolbox.specs()
+        val compact = brain.local && settings.compactTools
+        val tools = Tools(toolbox.specs(), compact, "", emptyList(), AskContext())
+        val messages = listOf(ChatMessage.system(fixed(settings, homeView, tools.core)))
+        val specs = tools.sent
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
         if (key == warmed) return
         warmed = key
@@ -489,6 +526,13 @@ class Agent(
             """$W(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|turn|switch|put|set|start|dim|raise|lower|open)$E""",
             RegexOption.IGNORE_CASE,
         )
+        val RECIPE_TOOLS = setOf("find_recipes", "open_recipe", "read_recipe", "recipe_step", "close_recipe", "recipe_timers")
+        val FRIDGE_TOOLS = setOf("fridge_contents", "add_to_fridge", "update_fridge_item", "remove_from_fridge")
+        val ROUTINE_TOOLS = setOf("list_routines", "save_routine", "delete_routine", "remember_instruction", "forget_instruction")
+        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS
+        val RECIPE_WORDS = Regex("""$W(recept\w*|recipe\w*|laga\w*|cook\w*|baka\w*|middag|lunch|frukost|dinner|ingrediens\w*|ingredient\w*|steg|step|timers?)$E""", RegexOption.IGNORE_CASE)
+        val FRIDGE_WORDS = Regex("""$W(kyl\w*|frys\w*|skafferi\w*|fridge|freezer|pantry|köpt\w*|bought|åt|ate|slut|utgång\w*|bäst före|expir\w*|öppnat|opened|mat|food|hemma)$E""", RegexOption.IGNORE_CASE)
+        val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         // Long enough to remember answers across a stretch of cooking between questions.

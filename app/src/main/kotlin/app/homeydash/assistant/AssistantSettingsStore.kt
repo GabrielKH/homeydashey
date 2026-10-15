@@ -67,6 +67,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         useOpenAiSpeech = p[USE_OPENAI_SPEECH] == "true",
         openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
         sendLogs = p[SEND_LOGS] == "true",
+        compactTools = p[COMPACT_TOOLS] != "false",
         logToken = p[LOG_TOKEN]?.let(KeystoreCipher::decrypt).orEmpty(),
         logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
     )
@@ -97,6 +98,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[USE_OPENAI_SPEECH] = s.useOpenAiSpeech.toString()
         p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
         p[SEND_LOGS] = s.sendLogs.toString()
+        p[COMPACT_TOOLS] = s.compactTools.toString()
         p[LOG_TOKEN] = KeystoreCipher.encrypt(s.logToken.trim())
         p[LOG_REPO] = s.logRepo.trim()
     }
@@ -145,6 +147,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val USE_OPENAI_SPEECH = stringPreferencesKey("use_openai_speech")
         val OPENAI_SPEECH_KEY = stringPreferencesKey("openai_speech_key")
         val SEND_LOGS = stringPreferencesKey("send_logs")
+        val COMPACT_TOOLS = stringPreferencesKey("compact_tools")
         val LOG_TOKEN = stringPreferencesKey("log_token")
         val LOG_REPO = stringPreferencesKey("log_repo")
 
