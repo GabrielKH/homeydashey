@@ -85,4 +85,21 @@ class VoiceTest {
         }
         assertSame(WakeSound.Hum, AgentSettings().wakeSound)
     }
+
+    @Test
+    fun `float wav from a voice server is read`() {
+        val rate = 24000
+        val n = 100
+        val b = java.nio.ByteBuffer.allocate(44 + n * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        b.put("RIFF".toByteArray()).putInt(36 + n * 4).put("WAVE".toByteArray())
+        b.put("fmt ".toByteArray()).putInt(16).putShort(3).putShort(1).putInt(rate).putInt(rate * 4).putShort(4).putShort(32)
+        b.put("data".toByteArray()).putInt(n * 4)
+        repeat(n) { b.putFloat(if (it == 10) 0.5f else 0f) }
+        val pcm = VoiceFx.readWav(b.array())!!
+        assertEquals(rate, pcm.sampleRate)
+        assertEquals(n, pcm.samples.size)
+        assertEquals(16383, pcm.samples[10].toInt())
+        assertEquals("http://10.0.0.5:8090", AgentSettings(local = Connection(Provider.Ollama, "http://10.0.0.5:11434/v1", "", "q")).voiceServerUrlOrGuess())
+        assertEquals("", AgentSettings().voiceServerUrlOrGuess())
+    }
 }

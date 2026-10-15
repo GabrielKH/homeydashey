@@ -57,7 +57,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val routines = app.homeydash.agent.RoutineBook(File(appContext.filesDir, "assistant"))
     val agent = Agent(chat, routines = { routines.data.value })
     val input = SpeechInput(appContext)
-    val output = SpeechOutput(appContext, http) { settings.value.openAiSpeechKeyOrBrain() }
+    val output = SpeechOutput(appContext, http) { settings.value }
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
     val web = WebSearch(http)

@@ -589,10 +589,22 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         }
     }
     Text(
-        settings.voice.detail + if (settings.voice.cloud) "" else " Made from the tablet's own voice with pitch, speed and a sound filter.",
+        settings.voice.detail + if (settings.voice.local) "" else " Made from the tablet's own voice with pitch, speed and a sound filter.",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    if (settings.voice.local) {
+        Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
+        Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
+        Field("Voice", settings.voiceServerVoice) { voice -> update { it.copy(voiceServerVoice = voice) } }
+        Text(
+            "On the Mac: \"pip install mlx-audio\", then \"mlx_audio.server --host 0.0.0.0 --port 8090\". " +
+                "Everything stays in the house. Leave Voice empty for the model's own voice. Tap Hear it to try it; " +
+                "if the computer doesn't answer, the tablet's voice speaks and it tries the computer again two minutes later.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
+    }
 }
 
 @Composable

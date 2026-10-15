@@ -100,6 +100,10 @@ enum class Secret(val title: String, val detail: String) {
     Faces("Face and voice recognition", "Know who is at the tablet, by face or by voice (first name only)."),
 }
 
+/** mlx-audio's multilingual Chatterbox: natural Swedish and English on a Mac. */
+const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
+const val VOICE_SERVER_PORT = 8090
+
 data class AgentSettings(
     val enabled: Boolean = true,
     val local: Connection? = null,
@@ -141,6 +145,12 @@ data class AgentSettings(
     val useWhisper: Boolean = false,
     /** Whisper's address; empty means the Ollama computer on port 8080. */
     val whisperUrl: String = "",
+    /** The voice server on your own computer for the Warm voice (mlx-audio); empty means the Ollama computer on port 8090. */
+    val voiceServerUrl: String = "",
+    /** The speech model the voice server runs. */
+    val voiceServerModel: String = DEFAULT_VOICE_MODEL,
+    /** The model's voice, when it has several; empty for its own. */
+    val voiceServerVoice: String = "",
     /** Questions are heard by OpenAI instead of Google (after Whisper, when both are on). */
     val useOpenAiSpeech: Boolean = false,
     /** OpenAI key for hearing; empty means the internet brain's key when that is OpenAI. */
@@ -164,6 +174,11 @@ data class AgentSettings(
     fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })
 
     fun whisperUrlOrGuess(): String = whisperUrl.trim().ifBlank { Transcriber.guessUrl(local) }
+
+    fun voiceServerUrlOrGuess(): String = voiceServerUrl.trim().ifBlank {
+        val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
+        "http://$host:$VOICE_SERVER_PORT"
+    }
 
     fun openAiSpeechKeyOrBrain(): String =
         openAiSpeechKey.trim().ifBlank { internet?.takeIf { it.provider == Provider.OpenAI }?.apiKey.orEmpty() }

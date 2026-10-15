@@ -227,10 +227,13 @@ class Spoken(val file: File, val track: VoiceTrack)
 
 /**
  * Speaks answers with Android's text-to-speech, in one of the voice styles, on the tablet or into a file for a speaker.
- * The [VoiceStyle.cloud] voices come from OpenAI's speech model when [openAiKey] gives a key.
+ * The [VoiceStyle.local] voices come from a voice model on your own computer, set in [settings].
  */
-class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val openAiKey: () -> String) {
-    private val http = http.newBuilder().readTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
+class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val settings: () -> app.homeydash.agent.AgentSettings) {
+    private val http = http.newBuilder()
+        .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private val appContext = context.applicationContext
     private var ready = false
     private val done = mutableMapOf<String, () -> Unit>()
@@ -323,7 +326,7 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val ope
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
     suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
         if (text.isBlank()) return null
-        if (voice.cloud) cloud(text, file)?.let { return it }
+        if (voice.local) local(text, language, file)?.let { return it }
         if (!ready) return null
         val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
         prepare(text, language, voice)
@@ -345,33 +348,43 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val ope
         }
     }
 
-    /** The answer in OpenAI's warm voice, or null without a key or a network (the tablet's voice takes over). */
-    private suspend fun cloud(text: String, file: File): Spoken? {
-        val key = openAiKey().trim()
-        if (key.isEmpty()) return null
+    /** Until when the voice server is left alone after it didn't answer, so answers aren't held up. */
+    @Volatile private var serverDownUntil = 0L
+
+    /**
+     * The answer from the voice model on your own computer (mlx-audio's OpenAI-style speech
+     * endpoint), or null when it isn't set up or doesn't answer; the tablet's voice takes over.
+     */
+    private suspend fun local(text: String, language: Language, file: File): Spoken? {
+        val s = settings()
+        val url = s.voiceServerUrlOrGuess().trimEnd('/')
+        if (url.isEmpty() || android.os.SystemClock.elapsedRealtime() < serverDownUntil) return null
+        val swedish = when (language) {
+            Language.Swedish -> true
+            Language.English -> false
+            Language.Auto -> Confirmation.looksSwedish(text)
+        }
         return withContext(Dispatchers.IO) {
-            runCatching {
+            val spoken = runCatching {
                 val body = kotlinx.serialization.json.buildJsonObject {
-                    put("model", kotlinx.serialization.json.JsonPrimitive(CLOUD_MODEL))
-                    put("voice", kotlinx.serialization.json.JsonPrimitive(CLOUD_VOICE))
+                    put("model", kotlinx.serialization.json.JsonPrimitive(s.voiceServerModel.trim().ifBlank { app.homeydash.agent.DEFAULT_VOICE_MODEL }))
                     put("input", kotlinx.serialization.json.JsonPrimitive(text))
-                    put("instructions", kotlinx.serialization.json.JsonPrimitive(WARM_INSTRUCTIONS))
-                    // Raw 24 kHz 16-bit mono, so there's no file header to trust.
-                    put("response_format", kotlinx.serialization.json.JsonPrimitive("pcm"))
+                    s.voiceServerVoice.trim().takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
+                    put("lang_code", kotlinx.serialization.json.JsonPrimitive(if (swedish) "sv" else "en"))
+                    put("response_format", kotlinx.serialization.json.JsonPrimitive("wav"))
                 }.toString()
                 val request = okhttp3.Request.Builder()
-                    .url("https://api.openai.com/v1/audio/speech")
-                    .header("Authorization", "Bearer $key")
+                    .url("$url/v1/audio/speech")
                     .post(body.toRequestBody("application/json".toMediaType()))
                     .build()
                 val bytes = http.newCall(request).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } ?: return@runCatching null
-                if (bytes.size < 2) return@runCatching null
-                val samples = ShortArray(bytes.size / 2)
-                java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(samples)
-                val pcm = app.homeydash.agent.Pcm(24000, samples)
+                val pcm = VoiceFx.readWav(bytes) ?: return@runCatching null
+                if (pcm.samples.isEmpty()) return@runCatching null
                 file.writeBytes(VoiceFx.writeWav(pcm))
                 Spoken(file, VoiceFx.analyse(pcm))
             }.getOrNull()
+            if (spoken == null) serverDownUntil = android.os.SystemClock.elapsedRealtime() + SERVER_RETRY_MS
+            spoken
         }
     }
 
@@ -379,12 +392,7 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val ope
 
     private companion object {
         val SWEDISH: Locale = Locale.forLanguageTag("sv-SE")
-        const val CLOUD_MODEL = "gpt-4o-mini-tts"
-        const val CLOUD_VOICE = "coral"
-        const val WARM_INSTRUCTIONS =
-            "Speak like a warm, close companion: soft and relaxed, gently playful and curious, with a smile in the voice " +
-                "and a little breathiness. Natural pauses and an easy rhythm, never formal or robotic. " +
-                "If the text is Swedish, speak natural Swedish with a Stockholm accent."
+        const val SERVER_RETRY_MS = 120_000L
     }
 }
 

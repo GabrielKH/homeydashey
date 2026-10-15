@@ -20,18 +20,18 @@ enum class FaceStyle(val label: String, val detail: String) {
 }
 
 /** How the assistant sounds: the tablet's own voice, changed by pitch, speed and a filter. */
-enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, val rate: Float, val cloud: Boolean = false) {
+enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, val rate: Float, val local: Boolean = false) {
     Natural("Natural", "The tablet's own voice, clearest from across the room.", 1f, 1f),
     Cruiser("Cruiser", "Lower, calm and a bit quick, with a metallic shimmer, like KITT.", 0.82f, 1.08f),
     Robot("Robot", "A buzzing 70s android voice.", 0.9f, 1f),
     Calm("Calm lens", "Slow, low and even, with a little echo, like HAL.", 0.78f, 0.9f),
     Warm(
         "Warm",
-        "Soft, warm and a little playful, in the spirit of Samantha in the film Her. Spoken by OpenAI's voice " +
-            "when an OpenAI key is set (Settings → Assistant), otherwise by the tablet's own voice, a touch lower and slower.",
+        "Soft, warm and a little playful, in the spirit of Samantha in the film Her. Spoken by a voice model on your own " +
+            "computer (mlx-audio); while it isn't running, by the tablet's own voice, a touch lower and slower.",
         0.95f,
         0.94f,
-        cloud = true,
+        local = true,
     ),
 }
 
@@ -63,23 +63,33 @@ object VoiceFx {
         var rate = 0
         var channels = 1
         var bits = 16
+        var float = false
         while (pos + 8 <= bytes.size) {
             val id = String(bytes, pos, 4)
             val size = buf.getInt(pos + 4)
             val body = pos + 8
             when (id) {
                 "fmt " -> {
-                    if (buf.getShort(body).toInt() != 1) return null // only plain PCM
+                    // Plain 16-bit PCM, or 32-bit float as some voice servers write.
+                    float = when (buf.getShort(body).toInt()) {
+                        1 -> false
+                        3 -> true
+                        else -> return null
+                    }
                     channels = buf.getShort(body + 2).toInt()
                     rate = buf.getInt(body + 4)
                     bits = buf.getShort(body + 14).toInt()
                 }
                 "data" -> {
-                    if (rate == 0 || bits != 16 || channels < 1) return null
+                    if (rate == 0 || channels < 1 || (if (float) bits != 32 else bits != 16)) return null
                     // Some engines write a placeholder size while streaming; use what is there.
                     val end = if (size <= 0 || body + size > bytes.size) bytes.size else body + size
-                    val frames = (end - body) / (2 * channels)
-                    val out = ShortArray(frames) { i -> buf.getShort(body + i * 2 * channels) }
+                    val width = bits / 8
+                    val frames = (end - body) / (width * channels)
+                    val out = ShortArray(frames) { i ->
+                        if (float) (buf.getFloat(body + i * width * channels).coerceIn(-1f, 1f) * 32767).toInt().toShort()
+                        else buf.getShort(body + i * width * channels)
+                    }
                     return Pcm(rate, out)
                 }
             }

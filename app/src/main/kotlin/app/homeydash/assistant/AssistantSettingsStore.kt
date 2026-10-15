@@ -65,6 +65,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         classicRed = p[CLASSIC_RED] == "true",
         useWhisper = p[USE_WHISPER] == "true",
         whisperUrl = p[WHISPER_URL].orEmpty(),
+        voiceServerUrl = p[VOICE_SERVER_URL].orEmpty(),
+        voiceServerModel = p[VOICE_SERVER_MODEL]?.takeIf { it.isNotBlank() } ?: app.homeydash.agent.DEFAULT_VOICE_MODEL,
+        voiceServerVoice = p[VOICE_SERVER_VOICE].orEmpty(),
         useOpenAiSpeech = p[USE_OPENAI_SPEECH] == "true",
         openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
         sendLogs = p[SEND_LOGS] == "true",
@@ -99,6 +102,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[CLASSIC_RED] = s.classicRed.toString()
         p[USE_WHISPER] = s.useWhisper.toString()
         p[WHISPER_URL] = s.whisperUrl.trim()
+        p[VOICE_SERVER_URL] = s.voiceServerUrl.trim()
+        p[VOICE_SERVER_MODEL] = s.voiceServerModel.trim()
+        p[VOICE_SERVER_VOICE] = s.voiceServerVoice.trim()
         p[USE_OPENAI_SPEECH] = s.useOpenAiSpeech.toString()
         p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
         p[SEND_LOGS] = s.sendLogs.toString()
@@ -151,6 +157,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val USE_WHISPER = stringPreferencesKey("use_whisper")
         val WHISPER_URL = stringPreferencesKey("whisper_url")
+        val VOICE_SERVER_URL = stringPreferencesKey("voice_server_url")
+        val VOICE_SERVER_MODEL = stringPreferencesKey("voice_server_model")
+        val VOICE_SERVER_VOICE = stringPreferencesKey("voice_server_voice")
         val USE_OPENAI_SPEECH = stringPreferencesKey("use_openai_speech")
         val OPENAI_SPEECH_KEY = stringPreferencesKey("openai_speech_key")
         val SPOTIFY_ID = stringPreferencesKey("spotify_client_id")
