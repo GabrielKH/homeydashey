@@ -82,9 +82,9 @@ class AgentTools(
             string("name", "Flow name")
             required("name")
         })
-        add(tool("play_music", "Play a favourite, album, playlist or radio station on a player (e.g. a Sonos).") {
+        add(tool("play_music", "Play a song, album, artist, playlist, favourite or radio station on a player (e.g. a Sonos); finds anything on Spotify when set up.") {
             string("player", "Player alias")
-            string("query", "Album, playlist, artist or station; empty lets you choose")
+            string("query", "Song, album, artist, playlist or station, with the artist if said, e.g. \"Dancing Queen ABBA\"; empty lets you choose")
             required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {

@@ -53,17 +53,25 @@ class SonosClient(private val http: OkHttpClient, private val port: Int = PORT) 
 
     /** Plays [item] on the group [speaker] is in: radio straight away, anything else through a fresh queue. */
     suspend fun play(speaker: SonosSpeaker, coordinatorHost: String, item: SonosItem) {
-        if (isStream(item)) {
-            soap(coordinatorHost, TRANSPORT, "SetAVTransportURI", listOf("InstanceID" to "0", "CurrentURI" to item.uri, "CurrentURIMetaData" to item.meta))
+        play(speaker, coordinatorHost, listOf(item))
+    }
+
+    /** Plays [items] one after another on the group [speaker] is in, in a fresh queue (a stream plays on its own). */
+    suspend fun play(speaker: SonosSpeaker, coordinatorHost: String, items: List<SonosItem>) {
+        val first = items.firstOrNull() ?: return
+        if (isStream(first)) {
+            soap(coordinatorHost, TRANSPORT, "SetAVTransportURI", listOf("InstanceID" to "0", "CurrentURI" to first.uri, "CurrentURIMetaData" to first.meta))
         } else {
             soap(coordinatorHost, TRANSPORT, "RemoveAllTracksFromQueue", listOf("InstanceID" to "0"))
-            soap(
-                coordinatorHost, TRANSPORT, "AddURIToQueue",
-                listOf(
-                    "InstanceID" to "0", "EnqueuedURI" to item.uri, "EnqueuedURIMetaData" to item.meta,
-                    "DesiredFirstTrackNumberEnqueued" to "0", "EnqueueAsNext" to "0",
-                ),
-            )
+            items.filterNot(::isStream).forEach { item ->
+                soap(
+                    coordinatorHost, TRANSPORT, "AddURIToQueue",
+                    listOf(
+                        "InstanceID" to "0", "EnqueuedURI" to item.uri, "EnqueuedURIMetaData" to item.meta,
+                        "DesiredFirstTrackNumberEnqueued" to "0", "EnqueueAsNext" to "0",
+                    ),
+                )
+            }
             soap(coordinatorHost, TRANSPORT, "SetAVTransportURI", listOf("InstanceID" to "0", "CurrentURI" to "x-rincon-queue:${speaker.coordinator}#0", "CurrentURIMetaData" to ""))
         }
         soap(coordinatorHost, TRANSPORT, "Play", listOf("InstanceID" to "0", "Speed" to "1"))

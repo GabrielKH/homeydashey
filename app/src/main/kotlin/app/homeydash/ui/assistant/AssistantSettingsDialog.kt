@@ -186,6 +186,9 @@ private fun Main(
     }
     ConnectionFields(services, internet, showKey = true) { c -> update { it.copy(internet = c) } }
 
+    Label("Spotify on Sonos")
+    Spotify(settings, update)
+
     Label("Routines and instructions")
     NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
 
@@ -265,6 +268,26 @@ private fun Main(
 
     Label("Logs for Claude")
     Logs(services, settings, update)
+}
+
+/** A Spotify developer app's keys, so any song can be searched for and played on the Sonos speakers. */
+@Composable
+private fun Spotify(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    Text(
+        "Play any song, album, artist or playlist on Sonos: say \"spela Dancing Queen i köket\", or use the Spotify tab under Play music. " +
+            "Spotify only finds the music; the speakers play it with the Spotify account already added in the Sonos app.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    Field("Client ID", settings.spotifyClientId) { id -> update { it.copy(spotifyClientId = id) } }
+    Field("Client secret", settings.spotifySecret, secret = true) { secret -> update { it.copy(spotifySecret = secret) } }
+    Text(
+        "Make an app at developer.spotify.com/dashboard (any name, redirect URI http://127.0.0.1:8888/callback, Web API ticked) " +
+            "with a Spotify Premium account, then copy its Client ID and Client secret here.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
 }
 
 /** Sends what the assistant heard, thought and did to a GitHub issue, to find out why it misbehaves. */

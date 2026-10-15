@@ -154,6 +154,9 @@ data class AgentSettings(
      * lose tool calls on long prompts (vMLX with Qwen 3.5).
      */
     val compactTools: Boolean = true,
+    /** A Spotify developer app, so any song, album, artist or playlist can be found and played on Sonos. */
+    val spotifyClientId: String = "",
+    val spotifySecret: String = "",
 ) {
     /** Who hears questions, in order; empty means Android's own speech recognition. */
     fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })

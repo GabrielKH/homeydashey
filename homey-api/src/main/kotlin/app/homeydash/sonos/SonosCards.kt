@@ -16,21 +16,32 @@ import java.io.IOException
 
 /**
  * Gives every Sonos speaker in Homey "Play favourite" and "Play playlist" cards that the
- * app runs itself, straight on the speakers, whichever Homey app added them.
+ * app runs itself, straight on the speakers, whichever Homey app added them. With a
+ * [spotify] search set up, they also get "Play from Spotify": any song, album, artist
+ * or playlist, played with the Spotify account added in the Sonos app.
  * [find] returns addresses of Sonos speakers on the Wi-Fi; one that answers is enough.
  */
 class SonosCards(
     private val client: SonosClient,
     private val find: suspend () -> List<String>,
+    private val spotify: SpotifySearch? = null,
 ) : CardSource {
 
     @Volatile private var speakers: List<SonosSpeaker> = emptyList()
     @Volatile private var rooms: Map<String, SonosSpeaker> = emptyMap()
+    @Volatile private var spotifyService: Int? = null
 
     override suspend fun cards(snapshot: HomeySnapshot): Map<String, List<FlowCardAction>> {
         speakers = household()
         rooms = match(snapshot.devices.values, snapshot.zones, speakers)
-        return rooms.mapValues { (deviceId, _) -> listOf(card(deviceId, FAVOURITE, "Play Sonos favourite"), card(deviceId, PLAYLIST, "Play Sonos playlist")) }
+        val withSpotify = spotify?.configured == true
+        return rooms.mapValues { (deviceId, _) ->
+            listOfNotNull(
+                card(deviceId, FAVOURITE, "Play Sonos favourite"),
+                card(deviceId, PLAYLIST, "Play Sonos playlist"),
+                if (withSpotify) card(deviceId, SPOTIFY, "Play from Spotify") else null,
+            )
+        }
     }
 
     override fun owns(card: FlowCardAction) = card.ownerUri == OWNER
@@ -40,6 +51,7 @@ class SonosCards(
         val items = when (card.cardId) {
             FAVOURITE -> client.favourites(speaker.host)
             PLAYLIST -> client.playlists(speaker.host)
+            SPOTIFY -> return spotifyChoices(query)
             else -> emptyList()
         }
         val q = query.trim()
@@ -63,12 +75,41 @@ class SonosCards(
         val speaker = speakerFor(card)
         val picked = args.values.firstOrNull() as? JsonObject ?: throw IOException("Nothing was picked to play")
         fun field(name: String) = picked[name]?.jsonPrimitive?.contentOrNull.orEmpty()
-        val item = SonosItem(field("name"), field("uri"), field("meta"))
         // Groups change often, so ask who leads this speaker's group right now.
         val now = runCatching { client.speakers(speaker.host) }.getOrDefault(speakers).ifEmpty { speakers }
         val current = now.firstOrNull { it.uuid == speaker.uuid } ?: speaker
         val leader = now.firstOrNull { it.uuid == current.coordinator } ?: current
-        client.play(current, leader.host, item)
+        if (card.cardId != SPOTIFY) {
+            client.play(current, leader.host, SonosItem(field("name"), field("uri"), field("meta")))
+            return
+        }
+
+        val search = spotify ?: throw IOException("Spotify isn't set up")
+        val service = spotifyService ?: runCatching { SpotifyOnSonos.serviceIn(client.favourites(speaker.host) + client.playlists(speaker.host)) }
+            .getOrNull().also { spotifyService = it } ?: SpotifyOnSonos.EUROPE
+        val kind = SpotifyHit.Kind.entries.firstOrNull { it.name == field("kind") } ?: throw IOException("Nothing was picked to play")
+        val hits = if (kind == SpotifyHit.Kind.Artist) {
+            search.songsBy(field("name")).ifEmpty { throw IOException("Spotify has no songs by ${field("name")}") }
+        } else {
+            listOf(SpotifyHit(kind, field("id"), field("name")))
+        }
+        try {
+            client.play(current, leader.host, hits.map { SpotifyOnSonos.item(it, service) })
+        } catch (e: IOException) {
+            throw IOException("Sonos couldn't play that from Spotify. Is Spotify added in the Sonos app? (${e.message})", e)
+        }
+    }
+
+    /** Spotify's hits for [query]; nothing until something is typed. */
+    private suspend fun spotifyChoices(query: String): List<AutocompleteItem> {
+        val search = spotify ?: return emptyList()
+        if (query.isBlank()) return emptyList()
+        return search.search(query).map { hit ->
+            AutocompleteItem(
+                hit.name, hit.description, hit.art,
+                JsonObject(mapOf("name" to JsonPrimitive(hit.name), "kind" to JsonPrimitive(hit.kind.name), "id" to JsonPrimitive(hit.id))),
+            )
+        }
     }
 
     private fun speakerFor(card: FlowCardAction): SonosSpeaker {
@@ -97,6 +138,7 @@ class SonosCards(
         const val OWNER = "homeydash:sonos"
         private const val FAVOURITE = "play_favorite"
         private const val PLAYLIST = "play_playlist"
+        const val SPOTIFY = "play_spotify"
 
         /**
          * Which Sonos room each Homey speaker is: the same name, or for a device of a Sonos
