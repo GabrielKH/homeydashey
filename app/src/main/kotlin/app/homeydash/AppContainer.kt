@@ -52,7 +52,7 @@ class AppContainer(context: Context) {
 
     val discovery = HomeyDiscovery(context, http)
     private val sonos = SonosCards(SonosClient(http), SonosFinder(context, http)::find)
-    val updater = AppUpdater(context, http)
+    val updater = AppUpdater(context, http, scope)
     val calendar = CalendarRepository(context, settings, scope)
 
     val display = DisplaySettings(settings, BackgroundPhotos(context), scope)

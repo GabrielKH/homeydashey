@@ -316,6 +316,7 @@ fun SettingsDialog(
                     when (update) {
                         is AppUpdater.State.Available -> "Version $version · a newer one is ready"
                         is AppUpdater.State.Downloading -> "Downloading the update…"
+                        is AppUpdater.State.ReadyToInstall -> "Opening the installer…"
                         is AppUpdater.State.Failed -> "Update failed: ${update.message}"
                         AppUpdater.State.UpToDate -> "Version $version"
                     },
