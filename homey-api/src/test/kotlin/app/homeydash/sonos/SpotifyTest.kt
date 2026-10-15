@@ -94,7 +94,8 @@ class SpotifyTest {
         }
         spotifyServer.start()
 
-        val sonosServer = MockWebServer()
+        // Asking for hostName starts the server, so the dispatcher is set on a started one.
+        val sonosServer = MockWebServer().apply { start() }
         val host = sonosServer.hostName
         val actions = Collections.synchronizedList(mutableListOf<Pair<String, String>>())
         val topology = """<ZoneGroupState><ZoneGroups><ZoneGroup Coordinator="RINCON_K" ID="RINCON_K:1">""" +
@@ -115,7 +116,6 @@ class SpotifyTest {
                 )
             }
         }
-        sonosServer.start()
 
         val base = spotifyServer.url("/").toString().trimEnd('/')
         val search = SpotifySearch(OkHttpClient(), { SpotifyApp("id", "secret") }, accounts = base, api = base)
