@@ -94,6 +94,27 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
             val known = people.map { it.forWake(settings.wakeName) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
             var token: Int? = null
             var deciding = false
+            // Talking over the answer works for voices it knows, so its own voice can't cut itself off.
+            val withPrints = known.filter { it.print.isNotEmpty() }
+            var checking = false
+            val talked: (ShortArray) -> Unit = { sound ->
+                if (!checking) {
+                    checking = true
+                    launch {
+                        val print = services.prints.of(sound)
+                        val person = print?.let { VoiceId.match(it, withPrints) }
+                        if (person != null) {
+                            services.trace("wake", "Someone talked over the answer; voiceprint matched someone taught.", localOnly = true)
+                            wake.stop(token)
+                            assistant.talkOver(person, sound)
+                        } else if (print != null) {
+                            services.trace("wake", "Sound over the answer, not a known voice (%.2f below the bar).".format(-withPrints.maxOf { VoiceId.margin(print, it) }), localOnly = true)
+                        }
+                        checking = false
+                    }
+                }
+            }
+            val onTalk = talked.takeIf { speaking && settings.talkOver && withPrints.isNotEmpty() }
             token = wake.start(
                 settings.wakeName,
                 onHeard = { _, vector, sound ->
@@ -118,6 +139,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                 onError = {},
                 sensitivity = settings.micSensitivity,
                 echo = speaking,
+                onTalk = onTalk,
             )
             try {
                 awaitCancellation()

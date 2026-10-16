@@ -1,6 +1,8 @@
 package app.homeydash.agent
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -78,6 +80,143 @@ class ChatClient(http: OkHttpClient) {
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw BrainException("${connection.provider.label} answered ${response.code}: ${errorText(text)}")
             parseResponse(text)
+        }
+    }
+
+    /**
+     * Like [complete], but the answer comes word by word as the model writes it: [onText] gets
+     * each new piece of text as it arrives (on a background thread), so speaking can start
+     * before the answer is finished. Returns the whole answer, read the same way as [complete].
+     * A server that ignores `stream` and answers in one go still works; [onText] then gets it all at once.
+     */
+    suspend fun stream(
+        connection: Connection,
+        messages: List<ChatMessage>,
+        tools: List<ToolSpec>,
+        requireTool: Boolean = false,
+        onText: (String) -> Unit,
+    ): ChatMessage {
+        if (requireTool && tools.isNotEmpty()) {
+            try {
+                return sendStreaming(connection, messages, tools, requireTool = true, onText)
+            } catch (e: BrainException) {
+                // Not every server knows tool_choice; fall through and ask the plain way.
+            }
+        }
+        return sendStreaming(connection, messages, tools, requireTool = false, onText)
+    }
+
+    private suspend fun sendStreaming(
+        connection: Connection,
+        messages: List<ChatMessage>,
+        tools: List<ToolSpec>,
+        requireTool: Boolean,
+        onText: (String) -> Unit,
+    ): ChatMessage = withContext(Dispatchers.IO) {
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+        val body = JsonObject(full + ("stream" to JsonPrimitive(true)) + (if (requireTool) mapOf("tool_choice" to JsonPrimitive("required")) else emptyMap())).toString()
+        val request = Request.Builder()
+            .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
+            .apply { if (connection.apiKey.isNotBlank()) header("Authorization", "Bearer ${connection.apiKey}") }
+            .header("Accept", "text/event-stream")
+            .post(body.toRequestBody(JSON))
+            .build()
+        val http = if (connection.local) localHttp else cloudHttp
+        val call = http.newCall(request)
+        // The read blocks; stopping the question (a wake word, a tap) closes the connection instead.
+        val stop = coroutineContext[Job]?.invokeOnCompletion { call.cancel() }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw BrainException("${connection.provider.label} answered ${response.code}: ${errorText(response.body?.string().orEmpty())}")
+                val source = response.body?.source() ?: throw BrainException("${connection.provider.label} sent an empty answer")
+                // Some servers stream without saying so; a reply in one go starts with "{".
+                val streamed = response.header("Content-Type").orEmpty().contains("event-stream") ||
+                    runCatching { source.peek().readUtf8Line()?.trimStart()?.startsWith("{") == false }.getOrDefault(false)
+                if (!streamed) {
+                    val answer = parseResponse(source.readUtf8())
+                    answer.content?.takeIf { it.isNotEmpty() }?.let(onText)
+                    return@withContext answer
+                }
+                val answer = StreamedAnswer()
+                while (true) {
+                    ensureActive()
+                    val line = source.readUtf8Line() ?: break
+                    if (!answer.read(line, onText)) break
+                }
+                answer.message()
+            }
+        } finally {
+            stop?.dispose()
+        }
+    }
+
+    /**
+     * Puts a streamed answer back together from its server-sent events (`data: {...}` lines
+     * with a `delta` each, ending with `data: [DONE]`): the text, and tool calls whose
+     * arguments arrive in pieces by their `index`.
+     */
+    internal class StreamedAnswer {
+        private val text = StringBuilder()
+        private class Call(var id: String = "", var name: String = "", val arguments: StringBuilder = StringBuilder())
+        private val calls = sortedMapOf<Int, Call>()
+        private var finish: String? = null
+
+        /** Reads one line of the stream; false once the server says it's done. */
+        fun read(line: String, onText: (String) -> Unit): Boolean {
+            val data = line.trim().takeIf { it.startsWith("data:") }?.removePrefix("data:")?.trim() ?: return true
+            if (data == "[DONE]") return false
+            val root = runCatching { Lenient.parseToJsonElement(data) as? JsonObject }.getOrNull() ?: return true
+            (root["error"] as? JsonObject)?.let { throw BrainException(findMessage(root) ?: "The AI stopped with an error") }
+            val choice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return true
+            (choice["finish_reason"] as? JsonPrimitive)?.contentOrNull?.let { finish = it }
+            val delta = choice["delta"] as? JsonObject ?: return true
+            (delta["content"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }?.let {
+                text.append(it)
+                onText(it)
+            }
+            (delta["tool_calls"] as? JsonArray).orEmpty().forEach { el ->
+                val obj = el as? JsonObject ?: return@forEach
+                val index = (obj["index"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: calls.size
+                val call = calls.getOrPut(index) { Call() }
+                (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { call.id = it }
+                val fn = obj["function"] as? JsonObject ?: return@forEach
+                (fn["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { call.name = it }
+                when (val args = fn["arguments"]) {
+                    is JsonPrimitive -> args.contentOrNull?.let { call.arguments.append(it) }
+                    is JsonObject -> call.arguments.append(args.toString())
+                    else -> {}
+                }
+            }
+            return true
+        }
+
+        /** The whole answer, as [parseResponse] would read it from one reply. */
+        fun message(): ChatMessage {
+            val message = buildJsonObject {
+                put("role", "assistant")
+                put("content", text.toString())
+                if (calls.isNotEmpty()) put("tool_calls", buildJsonArray {
+                    calls.values.filter { it.name.isNotBlank() }.forEach { c ->
+                        add(buildJsonObject {
+                            put("id", c.id)
+                            put("type", "function")
+                            put("function", buildJsonObject {
+                                put("name", c.name)
+                                put("arguments", c.arguments.toString())
+                            })
+                        })
+                    }
+                })
+            }
+            val root = buildJsonObject {
+                put("choices", buildJsonArray {
+                    add(buildJsonObject {
+                        put("message", message)
+                        finish?.let { put("finish_reason", it) }
+                    })
+                })
+            }
+            return parseResponse(root.toString())
         }
     }
 

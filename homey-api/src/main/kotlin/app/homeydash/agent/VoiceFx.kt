@@ -144,6 +144,22 @@ object VoiceFx {
     }
 
     /** Gives the voice its character; pitch and speed are set on the speech engine itself. */
+    /** [pcm] at [rate] samples a second, by straight-line steps between samples; itself when it already is. */
+    fun resample(pcm: Pcm, rate: Int): Pcm {
+        if (pcm.sampleRate == rate || pcm.samples.isEmpty() || rate <= 0) return pcm
+        val src = pcm.samples
+        val n = (src.size.toLong() * rate / pcm.sampleRate).toInt().coerceAtLeast(1)
+        val step = pcm.sampleRate.toDouble() / rate
+        val out = ShortArray(n) { i ->
+            val at = i * step
+            val j = at.toInt().coerceAtMost(src.size - 1)
+            val k = (j + 1).coerceAtMost(src.size - 1)
+            val f = at - j
+            (src[j] * (1 - f) + src[k] * f).toInt().toShort()
+        }
+        return Pcm(rate, out)
+    }
+
     fun apply(style: VoiceStyle, pcm: Pcm): Pcm {
         if (style == VoiceStyle.Natural || style == VoiceStyle.Warm || style == VoiceStyle.Tars) return pcm
         val rate = pcm.sampleRate

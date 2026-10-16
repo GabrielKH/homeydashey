@@ -29,10 +29,12 @@ class SpeechRecorder {
      * question so far each time the speaker pauses, with the pause's number and whether a
      * held "ööhh" came just before it, while recording goes on; [onDone] gets the whole
      * question as a WAV file once the quiet has lasted, or null when nothing was said.
+     * [start] is sound already heard of the question, put before what the microphone hears.
      * Callbacks come on the main thread.
      */
     fun record(
         gain: Float,
+        start: ShortArray? = null,
         onLevel: (Float) -> Unit,
         onPause: (wav: ByteArray, pause: Int, held: Boolean) -> Unit,
         onDone: (ByteArray?) -> Unit,
@@ -40,13 +42,14 @@ class SpeechRecorder {
     ) {
         stop()
         val gen = generation
-        reader = thread(name = "question-mic") { read(gen, gain, onLevel, onPause, onDone, onError) }
+        reader = thread(name = "question-mic") { read(gen, gain, start, onLevel, onPause, onDone, onError) }
     }
 
     @SuppressLint("MissingPermission") // The assistant only listens with the microphone permission.
     private fun read(
         gen: Int,
         gain: Float,
+        start: ShortArray?,
         onLevel: (Float) -> Unit,
         onPause: (ByteArray, Int, Boolean) -> Unit,
         onDone: (ByteArray?) -> Unit,
@@ -76,6 +79,14 @@ class SpeechRecorder {
             runCatching { record.setPreferredMicrophoneFieldDimension(-1f) }
             record.startRecording()
             val buf = ShortArray(RATE / 20)
+            // What was already said goes first, so the question is heard from its start.
+            start?.toList()?.chunked(buf.size)?.forEach { part ->
+                part.forEach { v ->
+                    pcm.write(v.toInt() and 0xff)
+                    pcm.write((v.toInt() shr 8) and 0xff)
+                }
+                endpointer.feed(part.toShortArray(), part.size)
+            }
             while (gen == generation) {
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) {

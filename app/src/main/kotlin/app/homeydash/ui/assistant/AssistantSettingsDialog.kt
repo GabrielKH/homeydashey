@@ -261,6 +261,12 @@ private fun TarsVoiceState(services: AssistantServices) {
 private fun VoicePage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
+    SwitchRow(
+        "Talk like a person",
+        "Starts saying the answer while the AI is still writing it, and says a short \"hmm\" when an answer takes a moment. " +
+            "On the tablet's own speaker; a Sonos gets the whole answer at once.",
+        settings.liveSpeech,
+    ) { on -> update { it.copy(liveSpeech = on) } }
     LookAndVoice(services, settings, update)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Speaker volume", style = MaterialTheme.typography.labelLarge, color = g.fg)
@@ -287,6 +293,12 @@ private fun ListenPage(services: AssistantServices, settings: AgentSettings, upd
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    SwitchRow(
+        "Talk over the answer",
+        "Start speaking while it talks and it stops and listens, like a person would. Only voices taught under People can do this, " +
+            "so its own voice, the TV or a guest won't cut it off.",
+        settings.talkOver,
+    ) { on -> update { it.copy(talkOver = on) } }
     Label("Who hears your questions")
     Hearing(services, settings, update)
     val context = androidx.compose.ui.platform.LocalContext.current

@@ -140,6 +140,13 @@ data class AgentSettings(
     val speakerVolume: Int = 35,
     /** Speak answers aloud at all. */
     val speak: Boolean = true,
+    /**
+     * Talk like a person: start saying the answer while the AI is still writing it, and make a
+     * small "hmm" when it takes a moment. Only for answers on the tablet's own speaker.
+     */
+    val liveSpeech: Boolean = true,
+    /** Someone whose voice the tablet knows can talk over an answer to stop it and be heard. */
+    val talkOver: Boolean = true,
     /** Strangers at the tablet (face recognition sees someone it doesn't know) only get guest access. */
     val strangersAreGuests: Boolean = false,
     /** Saying this name ("Hey Nova") starts listening, like "Hey Siri". */
