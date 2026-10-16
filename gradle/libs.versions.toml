@@ -16,11 +16,13 @@ mlkitFace = "16.1.7"
 mlkitBarcode = "17.3.0"
 tflite = "2.16.1"
 vosk = "0.3.75"
-onnxruntime = "1.20.0"
+onnxruntime = "1.27.0"
+commonsCompress = "1.27.1"
 jna = "5.18.1"
 jsoup = "1.18.3"
 
 [libraries]
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }

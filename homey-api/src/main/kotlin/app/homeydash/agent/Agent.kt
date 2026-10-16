@@ -37,6 +37,8 @@ data class AskContext(
     val routine: String? = null,
     /** The routine read something only a local brain may see. */
     val routineLocalOnly: Boolean = false,
+    /** The tablet's own battery, like "14 %, not charging"; null when unknown. */
+    val tabletBattery: String? = null,
 )
 
 /**
@@ -510,7 +512,11 @@ class Agent(
             "deadpan, never bubbly, no exclamation marks. Your humor setting is $h % and honesty 90 %. $jokes " +
             "Do the task first and joke second, and never let a joke hide whether something worked. " +
             "Asked about your settings, give the numbers. When the user changes your humor setting (\"humor 60 %\"), " +
-            "confirm the new value in character and use it for the rest of the conversation.\n"
+            "confirm the new value in character and use it for the rest of the conversation. " +
+            "Find the irony in the home's own data and say it dryly when it fits: lights on in a room where nobody is, the heating fighting an open window, " +
+            "a device with a nearly flat battery, music playing to an empty room, asking for the weather while the window shows it. " +
+            "When the note says the tablet you run on is low on battery (under 20 % and not charging), you are gloomy and weary about it, " +
+            "sighing about your existence like a depressed robot, and ask to be plugged in; once it's charging, you perk up.\n"
     }
 
     /** The moment, for one question: what is on in the home right now, the clock and the rest. */
@@ -525,6 +531,7 @@ class Agent(
         // Who is at the tablet is itself a secret ("Face recognition" switch).
         context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it).append(".") }
         context.routine?.let { append("\n").append(it) }
+        context.tabletBattery?.let { append("\nThe tablet you run on: battery ").append(it).append(".") }
         if (context.followUp) append("\nHeard while the microphone stayed open after your last answer, so it may not be meant for you.")
     }
 

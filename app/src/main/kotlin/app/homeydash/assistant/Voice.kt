@@ -229,7 +229,12 @@ class Spoken(val file: File, val track: VoiceTrack)
  * Speaks answers with Android's text-to-speech, in one of the voice styles, on the tablet or into a file for a speaker.
  * The [VoiceStyle.local] voices come from a voice model on your own computer, set in [settings].
  */
-class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val settings: () -> app.homeydash.agent.AgentSettings) {
+class SpeechOutput(
+    context: Context,
+    http: okhttp3.OkHttpClient,
+    private val tars: TarsVoice,
+    private val settings: () -> app.homeydash.agent.AgentSettings,
+) {
     private val http = http.newBuilder()
         .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -326,7 +331,7 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val set
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
     suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
         if (text.isBlank()) return null
-        if (voice == VoiceStyle.Tars) piper(text, language, file)?.let { return it }
+        if (voice == VoiceStyle.Tars) tarsSpeaks(text, language, file)?.let { return it }
         else if (voice.local) local(text, language, file)?.let { return it }
         if (!ready) return null
         val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
@@ -389,40 +394,17 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val set
         }
     }
 
-    @Volatile private var piperDownUntil = 0L
-
-    /**
-     * The answer in the TARS voice from Piper's web server on your own computer, in its English
-     * or Swedish stock voice. Null when it isn't running; the tablet speaks.
-     */
-    private suspend fun piper(text: String, language: Language, file: File): Spoken? {
-        val url = settings().piperUrlOrGuess().trimEnd('/')
-        if (url.isEmpty() || android.os.SystemClock.elapsedRealtime() < piperDownUntil) return null
+    /** The answer in TARS's voice, made on the tablet; null until his voice is downloaded. */
+    private suspend fun tarsSpeaks(text: String, language: Language, file: File): Spoken? {
         val swedish = when (language) {
             Language.Swedish -> true
             Language.English -> false
             Language.Auto -> Confirmation.looksSwedish(text)
         }
+        val pcm = tars.speak(text, swedish) ?: return null
         return withContext(Dispatchers.IO) {
-            val spoken = runCatching {
-                val body = kotlinx.serialization.json.buildJsonObject {
-                    put("text", kotlinx.serialization.json.JsonPrimitive(text))
-                    val english = settings().piperEnglishVoice.trim().ifBlank { app.homeydash.agent.PIPER_ENGLISH_VOICE }
-                    put("voice", kotlinx.serialization.json.JsonPrimitive(if (swedish) app.homeydash.agent.PIPER_SWEDISH_VOICE else english))
-                    // TARS-AI's model has a speaker per mood, and the calm one is most like the film; one-voice models ignore it.
-                    put("speaker", kotlinx.serialization.json.JsonPrimitive("neutral"))
-                }.toString().toRequestBody("application/json".toMediaType())
-                // Newer Piper servers answer on /synthesize, older ones on /.
-                val bytes = listOf("$url/synthesize", "$url/").firstNotNullOfOrNull { endpoint ->
-                    val request = okhttp3.Request.Builder().url(endpoint).post(body).build()
-                    http.newCall(request).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
-                } ?: return@runCatching null
-                val pcm = VoiceFx.readWav(bytes)?.takeIf { it.samples.isNotEmpty() } ?: return@runCatching null
-                file.writeBytes(VoiceFx.writeWav(pcm))
-                Spoken(file, VoiceFx.analyse(pcm))
-            }.getOrNull()
-            if (spoken == null) piperDownUntil = android.os.SystemClock.elapsedRealtime() + SERVER_RETRY_MS
-            spoken
+            file.writeBytes(VoiceFx.writeWav(pcm))
+            Spoken(file, VoiceFx.analyse(pcm))
         }
     }
 

@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
 
 plugins {
     alias(libs.plugins.android.application)
@@ -58,6 +59,8 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // sherpa-onnx brings ONNX Runtime 1.27.1 and onnxruntime-android 1.27.0; either serves both.
+        jniLibs.pickFirsts += "lib/arm64-v8a/libonnxruntime.so"
     }
 
     // The face model is memory-mapped straight from the APK.
@@ -69,6 +72,21 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+/**
+ * sherpa-onnx (TARS's voice, spoken on the tablet) is only published as an .aar on GitHub, so
+ * it is fetched once into the build folder.
+ */
+val sherpaVersion = "1.13.5"
+val sherpaAar: File = rootProject.layout.buildDirectory.file("sherpa/sherpa-onnx-$sherpaVersion.aar").get().asFile.also { aar ->
+    if (!aar.exists()) {
+        aar.parentFile.mkdirs()
+        val part = File(aar.path + ".part")
+        URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/sherpa-onnx-$sherpaVersion.aar").toURL()
+            .openStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+        part.renameTo(aar)
     }
 }
 
@@ -95,6 +113,9 @@ dependencies {
     implementation(libs.vosk.android) { exclude(group = "net.java.dev.jna") }
     // Runs the WeSpeaker voiceprint model that tells voices apart.
     implementation(libs.onnxruntime.android)
+    // TARS's voice: a Piper model run by sherpa-onnx, and the tar.bz2 of pronunciation rules it needs.
+    implementation(files(sherpaAar))
+    implementation(libs.commons.compress)
     implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
     implementation(platform(libs.androidx.compose.bom))

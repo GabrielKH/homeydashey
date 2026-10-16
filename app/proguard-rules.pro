@@ -22,3 +22,6 @@
 -keep class * implements com.sun.jna.** { *; }
 -dontwarn java.awt.**
 -dontwarn com.sun.jna.**
+
+# sherpa-onnx (TARS's voice) reads its config classes from native code.
+-keep class com.k2fsa.sherpa.onnx.** { *; }

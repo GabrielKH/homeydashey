@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -42,9 +43,6 @@ import androidx.compose.ui.window.DialogProperties
 import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
-import app.homeydash.agent.PIPER_ENGLISH_VOICE
-import app.homeydash.agent.PIPER_SERVER_PORT
-import app.homeydash.agent.PIPER_SWEDISH_VOICE
 import app.homeydash.agent.Persona
 import app.homeydash.agent.WakeSound
 import app.homeydash.agent.AgentTools
@@ -103,13 +101,14 @@ fun AssistantSettingsDialog(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (page != "main") RoundButton(Sym.arrowBack, { page = if (page == "routine") "routines" else "main" }, size = 44.dp, filledIcon = false)
+                if (page != "main") RoundButton(Sym.arrowBack, { page = when (page) { "routine" -> "routines"; "devices", "preview" -> "privacy"; else -> "main" } }, size = 44.dp, filledIcon = false)
                 Text(
                     when (page) {
                         "devices" -> "Hidden from the assistant"
                         "preview" -> "What the assistant sees"
                         "routines" -> "Routines"
                         "routine" -> editing?.name?.ifBlank { null } ?: "New routine"
+                        in PAGES -> PAGES.getValue(page)
                         else -> "Assistant"
                     },
                     style = MaterialTheme.typography.headlineMedium,
@@ -135,24 +134,36 @@ fun AssistantSettingsDialog(
                             RoutineEditor(services, r, zones, devices, moods, flows, onRun = onRunRoutine, onDone = { page = "routines" })
                         }
                     }
-                    else -> Main(
-                        services, settings, update,
-                        onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces, onRoutines = { page = "routines" },
-                    )
+                    "voice" -> VoicePage(services, settings, update)
+                    "listen" -> ListenPage(services, settings, update)
+                    "brain" -> BrainPage(services, settings, update)
+                    "privacy" -> PrivacyPage(settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
+                    "spotify" -> Spotify(settings, update)
+                    "logs" -> Logs(services, settings, update)
+                    else -> Main(services, settings, update, onPage = { page = it }, onRoutines = { page = "routines" })
                 }
             }
         }
     }
 }
 
+/** The settings pages behind the main page, with their titles. */
+private val PAGES = mapOf(
+    "voice" to "Voice and look",
+    "listen" to "Listening",
+    "brain" to "AI brains",
+    "privacy" to "Privacy and security",
+    "spotify" to "Spotify on Sonos",
+    "logs" to "Logs for Claude",
+)
+
+/** The main page: who the assistant is, its language, and the groups of settings. */
 @Composable
 private fun Main(
     services: AssistantServices,
     settings: AgentSettings,
     update: ((AgentSettings) -> AgentSettings) -> Unit,
-    onDevices: () -> Unit,
-    onPreview: () -> Unit,
-    onFaces: () -> Unit,
+    onPage: (String) -> Unit,
     onRoutines: () -> Unit,
 ) {
     val g = GlassTheme.colors
@@ -161,41 +172,8 @@ private fun Main(
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
-    Label("Which AI answers")
-    Segmented(BrainMode.entries, settings.mode, { it.label }) { m -> update { it.copy(mode = m) } }
-    Text(
-        when (settings.mode) {
-            BrainMode.Smart -> "Your computer first. When it's off or can't answer, the internet AI takes over. " +
-                "For things it doesn't know, like news or opening hours, your computer asks the internet AI with web search, sending only the question."
-            BrainMode.Local -> "Only Ollama on your computer. Nothing leaves the house, except speech recognition when the tablet can't do it on its own."
-            BrainMode.Internet -> "Only Gemini or OpenAI, which can search the web."
-        },
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
-    )
-
-    Label("Local AI: Ollama on your computer")
-    val local = settings.local ?: Connection(Provider.Ollama)
-    ConnectionFields(services, local, showKey = false) { c -> update { it.copy(local = c) } }
-    SwitchRow(
-        "Short tool list",
-        "The local AI gets its tools as a few lines of text and writes its calls itself. A much shorter prompt, so faster answers, " +
-            "and it works on servers like vMLX that lose tool calls on long prompts.",
-        settings.compactTools,
-    ) { on -> update { it.copy(compactTools = on) } }
-
-    Label("Internet AI")
-    val internet = settings.internet ?: Connection(Provider.Gemini)
-    Segmented(listOf(Provider.Gemini, Provider.OpenAI), internet.provider, { it.label }) { p ->
-        update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
-    }
-    ConnectionFields(services, internet, showKey = true) { c -> update { it.copy(internet = c) } }
-
-    Label("Spotify on Sonos")
-    Spotify(settings, update)
-
-    Label("Routines and instructions")
-    NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
+    Label("Character")
+    Character(services, settings, update)
 
     Label("Language")
     Segmented(Language.entries, settings.language, { it.label }) { l -> update { it.copy(language = l) } }
@@ -205,33 +183,67 @@ private fun Main(
         color = g.muted,
     )
 
-    Label("Who hears your questions")
-    Hearing(services, settings, update)
+    Label("Settings")
+    NavRow(Sym.speaker, "Voice and look", { onPage("voice") })
+    NavRow(Sym.mic, "Listening: wake word and who hears you", { onPage("listen") })
+    NavRow(Sym.autoAwesome, "AI brains: ${settings.mode.label}", { onPage("brain") })
+    NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
+    NavRow(Sym.shieldLock, "Privacy and security", { onPage("privacy") })
+    NavRow(Sym.musicNote, "Spotify on Sonos", { onPage("spotify") })
+    NavRow(Sym.send, "Logs for Claude", { onPage("logs") })
+}
 
-    Label("Voice activation")
-    WakeSettings(services, settings, update)
-    Text("Keep listening after an answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
-    Segmented(FollowUp.entries, settings.followUp, { it.label }) { f -> update { it.copy(followUp = f) } }
-    Text(
-        settings.followUp.detail + " Say \"stop\", \"thanks\" or \"tack\" to end early.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
-    )
-    val context = androidx.compose.ui.platform.LocalContext.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            "The tablet's speech recognition needs Swedish and English. If it says a language is missing, add them in Android's speech settings.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-            modifier = Modifier.weight(1f),
-        )
-        SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
+/**
+ * Nova or TARS, in one tap: TARS brings his voice (downloaded to the tablet), his name as the
+ * wake word, the "huuh?" when he hears it, and his dry humor.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Character(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Persona.entries.forEach { p ->
+            Chip(p.label, p == settings.persona) {
+                update { it.asCharacter(p) }
+                if (p == Persona.Tars) services.tars.download()
+            }
+        }
     }
+    Text(settings.persona.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+    if (settings.persona == Persona.Tars) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Humor ${settings.humor} %", style = MaterialTheme.typography.labelLarge, color = g.fg)
+            GlassSlider(settings.humor / 100f, { v -> update { it.copy(humor = (v * 100).toInt()) } }, Modifier.weight(1f))
+        }
+        TarsVoiceState(services)
+    }
+}
 
-    Label("Voice")
+/** Whether TARS's voice is on the tablet yet, with a way to fetch it. */
+@Composable
+private fun TarsVoiceState(services: AssistantServices) {
+    val g = GlassTheme.colors
+    val state by services.tars.state.collectAsState()
+    val text = when (val s = state) {
+        app.homeydash.assistant.TarsVoice.State.Ready -> "TARS's voice is on the tablet. It's a fan-made copy of Bill Irwin's voice from the film (TARS-AI, non-commercial licence), for home use."
+        app.homeydash.assistant.TarsVoice.State.Missing -> "TARS's voice isn't downloaded yet (about 70 MB). Until it is, the tablet's own voice speaks."
+        is app.homeydash.assistant.TarsVoice.State.Downloading -> "Downloading ${s.what}: ${(s.progress * 100).toInt()} %"
+        is app.homeydash.assistant.TarsVoice.State.Failed -> "Couldn't get TARS's voice: ${s.message}"
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = g.muted, modifier = Modifier.weight(1f))
+        if (state is app.homeydash.assistant.TarsVoice.State.Missing || state is app.homeydash.assistant.TarsVoice.State.Failed) {
+            Chip("Download", false) { services.tars.download() }
+        }
+    }
+}
+
+/** How it sounds and looks, and where answers are played. */
+@Composable
+private fun VoicePage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
     LookAndVoice(services, settings, update)
-    Personality(settings, update)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Speaker volume", style = MaterialTheme.typography.labelLarge, color = g.fg)
         GlassSlider(settings.speakerVolume / 100f, { v -> update { it.copy(speakerVolume = (v * 100).toInt()) } }, Modifier.weight(1f))
@@ -242,8 +254,78 @@ private fun Main(
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+}
 
-    Label("Security")
+/** The wake word, its sound, how long it keeps listening, and who turns speech into text. */
+@Composable
+private fun ListenPage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    Label("Voice activation")
+    WakeSettings(services, settings, update)
+    Text("Keep listening after an answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Segmented(FollowUp.entries, settings.followUp, { it.label }) { f -> update { it.copy(followUp = f) } }
+    Text(
+        settings.followUp.detail + " Say \"stop\", \"thanks\" or \"tack\" to end early.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    Label("Who hears your questions")
+    Hearing(services, settings, update)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            "The tablet's speech recognition needs Swedish and English. If it says a language is missing, add them in Android's speech settings.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+            modifier = Modifier.weight(1f),
+        )
+        SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
+    }
+}
+
+/** Which AI answers, and how to reach the local and the internet one. */
+@Composable
+private fun BrainPage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    Label("Which AI answers")
+    Segmented(BrainMode.entries, settings.mode, { it.label }) { m -> update { it.copy(mode = m) } }
+    Text(
+        when (settings.mode) {
+            BrainMode.Smart -> "Your computer first. When it's off or can't answer, the internet AI takes over. " +
+                "For things it doesn't know, like news or opening hours, your computer asks the internet AI with web search, sending only the question."
+            BrainMode.Local -> "Only the AI on your computer. Nothing leaves the house, except speech recognition when the tablet can't do it on its own."
+            BrainMode.Internet -> "Only Gemini or OpenAI, which can search the web."
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    Label("Local AI on your computer")
+    val local = settings.local ?: Connection(Provider.Ollama)
+    ConnectionFields(services, local, showKey = false) { c -> update { it.copy(local = c) } }
+    SwitchRow(
+        "Short tool list",
+        "The local AI gets its tools as a few lines of text and writes its calls itself. A much shorter prompt, so faster answers, " +
+            "and it works on servers like vMLX that lose tool calls on long prompts.",
+        settings.compactTools,
+    ) { on -> update { it.copy(compactTools = on) } }
+    Label("Internet AI")
+    val internet = settings.internet ?: Connection(Provider.Gemini)
+    Segmented(listOf(Provider.Gemini, Provider.OpenAI), internet.provider, { it.label }) { p ->
+        update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
+    }
+    ConnectionFields(services, internet, showKey = true) { c -> update { it.copy(internet = c) } }
+}
+
+/** What the assistant may read and do, and who is who. */
+@Composable
+private fun PrivacyPage(
+    settings: AgentSettings,
+    update: ((AgentSettings) -> AgentSettings) -> Unit,
+    onDevices: () -> Unit,
+    onPreview: () -> Unit,
+    onFaces: () -> Unit,
+) {
+    val g = GlassTheme.colors
     Text(
         "The assistant reads ordinary things: rooms, lights, climate, sensors, players, moods, Flow names, weather. " +
             "Everything below is off until you turn it on. \"Local AI only\" keeps it away from the internet AI. " +
@@ -251,6 +333,9 @@ private fun Main(
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    NavRow(Sym.face, "People: faces and voices", onFaces)
+    NavRow(Sym.visibilityOff, "Hide devices from the assistant (${settings.hiddenDevices.size})", onDevices)
+    NavRow(Sym.search, "What the assistant sees", onPreview)
     Secret.entries.forEach { secret ->
         val enabled = when (secret) {
             Secret.Unlock -> settings.access(Secret.Locks) != Access.Off
@@ -268,12 +353,6 @@ private fun Main(
             }
         }
     }
-    NavRow(Sym.face, "People: faces and voices", onFaces)
-    NavRow(Sym.visibilityOff, "Hide devices from the assistant (${settings.hiddenDevices.size})", onDevices)
-    NavRow(Sym.search, "What the assistant sees", onPreview)
-
-    Label("Logs for Claude")
-    Logs(services, settings, update)
 }
 
 /** A Spotify developer app's keys, so any song can be searched for and played on the Sonos speakers. */
@@ -587,8 +666,8 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         VoiceStyle.entries.forEach { v ->
             Chip(v.label, v == settings.voice) {
-                // TARS comes as a set: his voice, his humor and the "huuh?" when he hears his name.
-                update { if (v == VoiceStyle.Tars) it.copy(voice = v, persona = Persona.Tars, wakeSound = WakeSound.Huh) else it.copy(voice = v) }
+                update { it.copy(voice = v) }
+                if (v == VoiceStyle.Tars) services.tars.download()
             }
         }
         Chip("Hear it", false) {
@@ -609,23 +688,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
-    if (settings.voice == VoiceStyle.Tars) {
-        Field("Address", settings.piperUrl.ifBlank { settings.piperUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(piperUrl = url) } }
-        Text(
-            "On the Mac, in a folder of its own: \"pip install 'piper-tts[http]'\", then \"python3 -m piper.download_voices $PIPER_ENGLISH_VOICE $PIPER_SWEDISH_VOICE\", " +
-                "and run \"python3 -m piper.http_server -m $PIPER_ENGLISH_VOICE --port $PIPER_SERVER_PORT\" there. " +
-                "Piper is light and quick; if the computer doesn't answer, the tablet's voice speaks.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
-        Field("English voice", settings.piperEnglishVoice) { v -> update { it.copy(piperEnglishVoice = v) } }
-        Text(
-            "For TARS's own voice from the film, put TARS.onnx and TARS.onnx.json from huggingface.co/olivierdion007/TARS-AI in that folder " +
-                "and write TARS here. It's a fan-made copy of Bill Irwin's voice, licensed for non-commercial use only, so keep it for home use.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
-    } else if (settings.voice.local) {
+    if (settings.voice.local && settings.voice != VoiceStyle.Tars) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
         Field("Voice", settings.voiceServerVoice) { voice -> update { it.copy(voiceServerVoice = voice) } }
@@ -636,24 +699,6 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
-    }
-}
-
-/** Who the assistant is, and for TARS how funny. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Personality(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
-    val g = GlassTheme.colors
-    Text("Personality", style = MaterialTheme.typography.labelLarge, color = g.fg)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Persona.entries.forEach { p -> Chip(p.label, p == settings.persona) { update { it.copy(persona = p) } } }
-    }
-    Text(settings.persona.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-    if (settings.persona == Persona.Tars) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Humor ${settings.humor} %", style = MaterialTheme.typography.bodyMedium, color = g.fg)
-            GlassSlider(settings.humor / 100f, { v -> update { it.copy(humor = (v * 100).toInt()) } }, Modifier.weight(1f))
-        }
     }
 }
 

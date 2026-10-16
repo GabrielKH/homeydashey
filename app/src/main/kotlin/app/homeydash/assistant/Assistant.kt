@@ -57,7 +57,9 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val routines = app.homeydash.agent.RoutineBook(File(appContext.filesDir, "assistant"))
     val agent = Agent(chat, routines = { routines.data.value })
     val input = SpeechInput(appContext)
-    val output = SpeechOutput(appContext, http) { settings.value }
+    /** TARS's voice, downloaded to the tablet when TARS is chosen. */
+    val tars = TarsVoice(appContext, http, scope)
+    val output = SpeechOutput(appContext, http, tars) { settings.value }
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
     val web = WebSearch(http)
@@ -617,7 +619,15 @@ class Assistant(
         speaker = speakerName(s), person = person, followUp = followUp,
         kitchen = services.kitchen?.cooking?.describe(), fridge = services.kitchen?.fridge?.describe(),
         weather = bridge.weatherNow(),
+        tabletBattery = tabletBattery(),
     )
+
+    /** The tablet's battery, like "14 %, not charging". */
+    private fun tabletBattery(): String? {
+        val bm = services.appContext.getSystemService(android.os.BatteryManager::class.java) ?: return null
+        val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 } ?: return null
+        return "$level %, " + if (bm.isCharging) "charging" else "not charging"
+    }
 
     private fun speakerName(s: AgentSettings): String? = s.speakerId?.let { store.snapshot.value.devices[it]?.name }
 

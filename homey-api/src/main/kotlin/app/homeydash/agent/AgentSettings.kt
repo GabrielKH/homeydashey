@@ -103,14 +103,14 @@ enum class Secret(val title: String, val detail: String) {
 /** Who the assistant is: how it talks, apart from how it sounds. */
 enum class Persona(val label: String, val detail: String) {
     Nova("Nova", "Friendly and to the point."),
-    Tars("TARS", "Dry, deadpan and honest, like TARS in Interstellar, with a humor setting you can turn up or down."),
+    Tars(
+        "TARS",
+        "TARS from Interstellar: his voice, his name as the wake word, a \"huuh?\" when he hears it, and dry, deadpan humor " +
+            "with a setting you can turn up or down. He notices ironic things in the home, and a flat tablet battery gets him down.",
+    ),
 }
 
-/** Piper's own web server (`python3 -m piper.http_server`), for the TARS voice. */
-const val PIPER_SERVER_PORT = 5000
-/** Piper's stock voices for the TARS voice: a low, even English one and a Swedish one. */
-const val PIPER_ENGLISH_VOICE = "en_US-ryan-medium"
-const val PIPER_SWEDISH_VOICE = "sv_SE-nst-medium"
+const val TARS_WAKE_NAME = "TARS"
 
 /** mlx-audio's multilingual Chatterbox: natural Swedish and English on a Mac. */
 const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
@@ -152,10 +152,6 @@ data class AgentSettings(
     /** Who the assistant is, and for TARS how funny, 0–100 %. */
     val persona: Persona = Persona.Nova,
     val humor: Int = 75,
-    /** Piper's server on your own computer for the TARS voice; empty means the Ollama computer on port 5000. */
-    val piperUrl: String = "",
-    /** The Piper voice for English answers: a stock one, or TARS-AI's TARS model if you've put it on the computer. */
-    val piperEnglishVoice: String = PIPER_ENGLISH_VOICE,
     /** The scanner in KITT's red instead of the theme's accent. */
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
@@ -199,9 +195,18 @@ data class AgentSettings(
         "http://$host:$VOICE_SERVER_PORT"
     }
 
-    fun piperUrlOrGuess(): String = piperUrl.trim().ifBlank {
-        val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
-        "http://$host:$PIPER_SERVER_PORT"
+    /**
+     * Becomes [p] in one go: TARS answers to "TARS", says "huuh?" when he hears it, and speaks in
+     * his own voice; back to Nova undoes what TARS changed and keeps the rest.
+     */
+    fun asCharacter(p: Persona): AgentSettings = when (p) {
+        Persona.Tars -> copy(persona = p, voice = VoiceStyle.Tars, wakeSound = WakeSound.Huh, wakeName = TARS_WAKE_NAME)
+        Persona.Nova -> copy(
+            persona = p,
+            voice = if (voice == VoiceStyle.Tars) VoiceStyle.Natural else voice,
+            wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Hum else wakeSound,
+            wakeName = if (wakeName.equals(TARS_WAKE_NAME, ignoreCase = true)) "Nova" else wakeName,
+        )
     }
 
     fun openAiSpeechKeyOrBrain(): String =

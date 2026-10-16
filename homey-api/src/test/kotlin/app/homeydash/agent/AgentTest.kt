@@ -529,6 +529,41 @@ class AgentTest {
         assertTrue(agent.rules(AgentSettings(persona = Persona.Tars, humor = 0)).contains("No jokes"))
     }
 
+    @Test fun `TARS is one tap, and Nova undoes only what TARS changed`() {
+        val tars = AgentSettings(voice = VoiceStyle.Warm).asCharacter(Persona.Tars)
+        assertEquals(Persona.Tars, tars.persona)
+        assertEquals(VoiceStyle.Tars, tars.voice)
+        assertEquals(WakeSound.Huh, tars.wakeSound)
+        assertEquals("TARS", tars.wakeName)
+        val nova = tars.asCharacter(Persona.Nova)
+        assertEquals(VoiceStyle.Natural, nova.voice)
+        assertEquals(WakeSound.Hum, nova.wakeSound)
+        assertEquals("Nova", nova.wakeName)
+        assertEquals("Kim", AgentSettings(wakeName = "Kim").asCharacter(Persona.Nova).wakeName)
+    }
+
+    @Test fun `a Piper voice becomes sherpa's tokens and metadata`() {
+        val cfg = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"audio":{"sample_rate":22050},"espeak":{"voice":"en"},"num_speakers":8,"speaker_id_map":{"anger":0,"neutral":5},""" +
+                """"phoneme_id_map":{"_":[0],"^":[1],"\n":[9],"a":[14]}}""",
+        ).jsonObject
+        assertEquals("_ 0\n^ 1\na 14\n", PiperModel.tokens(cfg))
+        assertEquals(5, PiperModel.speakerId(cfg, "neutral"))
+        val meta = PiperModel.metadata(cfg, espeakVoice = "sv")
+        assertEquals("sv", meta["voice"])
+        assertEquals("Swedish", meta["language"])
+        assertEquals("8", meta["n_speakers"])
+        // Field 14 (0x72), an entry with key "a" (0x0A) and value "b" (0x12).
+        assertEquals(listOf(0x72, 6, 0x0A, 1, 'a'.code, 0x12, 1, 'b'.code), PiperModel.metadataBytes(mapOf("a" to "b")).map { it.toInt() })
+    }
+
+    @Test fun `the note tells TARS how the tablet's battery is`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val view = HomeView.build(emptyMap(), emptyMap(), emptyMap(), emptySet(), AgentSettings(), local = true)
+        assertTrue(agent.situation(AgentSettings(), view, AskContext(tabletBattery = "12 %, not charging")).contains("battery 12 %, not charging"))
+        assertTrue(agent.rules(AgentSettings(persona = Persona.Tars)).contains("gloomy"))
+    }
+
     @Test
     fun `thanks and stop end a conversation, questions don't`() {
         assertTrue(FollowUp.ends("Thanks!"))
