@@ -682,7 +682,7 @@ class Assistant(
         val s = settings
         val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
         if (speaker != null && sayOn(speaker.second, text, s)) return
-        services.output.speak(text, s.language, s.voice, ::meter)
+        services.output.speak(text, s.answers, s.voice, ::meter)
     }
 
     /** The voice's level and its low, middle and high parts, for the face. */
@@ -699,7 +699,7 @@ class Assistant(
             AnnounceCard.Kind.Text -> text
             AnnounceCard.Kind.Url -> {
                 val file = File(services.appContext.cacheDir, "answer.wav")
-                spoken = services.output.render(text, s.language, s.voice, file)
+                spoken = services.output.render(text, s.answers, s.voice, file)
                 spoken?.let { services.server.publish(it.file) }
             }
         }
@@ -755,7 +755,7 @@ class Assistant(
     private suspend fun ring(timer: KitchenTimer) {
         services.onActive?.invoke()
         open = true
-        val swedish = when (settings.language) {
+        val swedish = when (settings.answers) {
             app.homeydash.agent.Language.Swedish -> true
             app.homeydash.agent.Language.English -> false
             app.homeydash.agent.Language.Auto -> lines.lastOrNull { it.fromUser }?.let { app.homeydash.agent.Confirmation.looksSwedish(it.text) } ?: true

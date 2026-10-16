@@ -178,7 +178,8 @@ private fun Main(
     Label("Language")
     Segmented(Language.entries, settings.language, { it.label }) { l -> update { it.copy(language = l) } }
     Text(
-        "Svenska + English hears both and answers in the language you spoke.",
+        if (settings.persona == Persona.Tars) "TARS understands the language you pick here but always answers in English."
+        else "Svenska + English hears both and answers in the language you spoke.",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
@@ -674,12 +675,11 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             scope.launch {
                 val tars = settings.persona == Persona.Tars
                 val sample = when {
-                    settings.language == Language.English && tars -> "Humor setting at ${settings.humor} percent. Dinner music in the living room? I'll try not to pick anything with bagpipes."
+                    tars -> "Humor setting at ${settings.humor} percent. Dinner music in the living room? I'll try not to pick anything with bagpipes."
                     settings.language == Language.English -> "Hi, I'm your kitchen assistant. Dinner music in the living room?"
-                    tars -> "Humorinställning ${settings.humor} procent. Middagsmusik? Jag lovar att inte välja säckpipa."
                     else -> "Hej, jag är er köksassistent. Ska jag sätta på middagsmusik?"
                 }
-                services.output.speak(sample, settings.language, settings.voice)
+                services.output.speak(sample, settings.answers, settings.voice)
             }
         }
     }

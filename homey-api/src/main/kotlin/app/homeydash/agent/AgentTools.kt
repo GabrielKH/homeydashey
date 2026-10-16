@@ -4,6 +4,9 @@ import app.homeydash.homey.FlowCardAction
 import app.homeydash.homey.FlowCards
 import app.homeydash.homey.RemoteAction
 import app.homeydash.homey.Remotes
+import app.homeydash.homey.VacuumCommand
+import app.homeydash.homey.VacuumRoom
+import app.homeydash.homey.Vacuums
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -97,6 +100,16 @@ class AgentTools(
             string("value", "What to pick or enter, e.g. Netflix; omit if nothing")
             required("device", "action")
         })
+        if (!guest && view.devices.any { it.deviceClass == "vacuumcleaner" && it.secret == null }) add(tool(
+            "vacuum",
+            "Control a robot vacuum: start, pause, resume, stop, dock (send home), clean_rooms (clean only the named rooms), " +
+                "go_to (drive to a room, e.g. so the user can empty it there), or rooms (list the rooms it knows).",
+        ) {
+            string("device", "Vacuum alias; may be left out when there is one")
+            string("action", "start, pause, resume, stop, dock, clean_rooms, go_to or rooms")
+            string("rooms", "For clean_rooms and go_to: room names, comma-separated, e.g. \"Kitchen, Hall\"")
+            required("action")
+        })
         add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, or a room name.") {
             string("page", "overview, moods, media, calendar, recipes, fridge, or a room name")
             required("page")
@@ -187,6 +200,7 @@ class AgentTools(
             "open_page" -> openPage(a.str("page"))
             "open_device" -> view.device(a.str("device"))?.let { d -> ok(if (dashboard.openDevice(d.id)) "Opened ${d.name}." else "Can't open ${d.name}.") } ?: unknown(a.str("device"))
             "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
+            "vacuum" -> vacuum(a.str("device"), a.str("action"), a.str("rooms"))
             "goodnight" -> goodnight()
             "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"))
             "recipe_timers" -> recipeTimers()
@@ -420,6 +434,80 @@ class AgentTools(
         return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}.")
     }
 
+    /**
+     * A robot vacuum, whatever its brand: the same buttons and room cleaning the vacuum page
+     * finds in its Homey app's capabilities and Flow cards.
+     */
+    private suspend fun vacuum(alias: String, action: String, rooms: String): ToolResult {
+        val vacuums = view.devices.filter { it.deviceClass == "vacuumcleaner" }
+        val d = (if (alias.isBlank()) vacuums.singleOrNull() else view.device(alias))
+            ?: return if (alias.isBlank()) ok("Which vacuum? " + vacuums.joinToString { "${it.alias} \"${it.name}\"" }) else unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name} can't be used here.")
+        val device = home.device(d.id) ?: return ok("Homey hasn't said anything about ${d.name} yet; try again in a moment.")
+        if (!Vacuums.isVacuum(device)) return ok("${d.name} isn't a robot vacuum.")
+        val c = Vacuums.controls(device, cards)
+        suspend fun exec(cmd: VacuumCommand?, done: String): ToolResult {
+            cmd ?: return ok("${d.name}'s Homey app has no way to $action it.")
+            when (cmd) {
+                is VacuumCommand.Set -> home.setCapability(d.id, cmd.capability, cmd.value)
+                is VacuumCommand.Card -> home.runAction(cmd.card, cmd.args)
+            }
+            return ok(done)
+        }
+        val verb = action.trim().lowercase().replace(' ', '_')
+        return when (verb) {
+            "start" -> exec(c.start, "${d.name} started cleaning.")
+            "pause" -> exec(c.pause, "${d.name} paused.")
+            "resume", "continue" -> exec(c.resume, "${d.name} carries on.")
+            "stop" -> exec(c.stop, "${d.name} stopped.")
+            "dock", "home", "return" -> exec(c.dock, "${d.name} is going back to its dock.")
+            "rooms" -> vacuumRooms(c, cards).let { known ->
+                ok(if (known.isEmpty()) "${d.name} doesn't list its rooms in Homey." else "${d.name}'s rooms: " + known.joinToString { it.name } + ".")
+            }
+            "clean_rooms", "clean", "go_to", "goto" -> {
+                val wanted = rooms.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+                if (wanted.isEmpty()) return ok("Say which room.")
+                val goTo = verb.startsWith("go")
+                val goCard = if (goTo) Vacuums.goToCard(cards) else null
+                val goArg = goCard?.second
+                if (goCard != null && goArg != null && goArg.type != "text") {
+                    val items = home.choices(goCard.first, goArg, wanted[0])
+                    val item = NameMatch.best(wanted[0], items) { NameMatch.score(wanted[0], it.name) } ?: items.singleOrNull()
+                    if (item != null) {
+                        home.runAction(goCard.first, JsonObject(mapOf(goArg.name to FlowCards.argValue(goArg, item))))
+                        return ok("${d.name} is driving to ${item.name}.")
+                    }
+                } else if (goCard != null && goArg != null) {
+                    home.runAction(goCard.first, JsonObject(mapOf(goArg.name to JsonPrimitive(wanted[0]))))
+                    return ok("${d.name} is driving to ${wanted[0]}.")
+                }
+                val cleaning = c.roomCleaning ?: return ok("${d.name}'s Homey app can't send it to a room; it can only start, stop and dock.")
+                val known = vacuumRooms(c, cards)
+                val picked = wanted.map { w ->
+                    NameMatch.best(w, known) { NameMatch.score(w, it.name) }
+                        ?: return ok("${d.name} has no room \"$w\"." + if (known.isEmpty()) "" else " Its rooms: " + known.joinToString { it.name } + ". Use one of these.")
+                }.distinct()
+                if (goTo && picked.size > 1) return ok("${d.name} can only drive to one room at a time.")
+                val max = cleaning.maxRooms
+                if (max != null && picked.size > max) return ok("${d.name} can take at most $max room(s) at once.")
+                val names = picked.joinToString(" and ") { it.name }
+                // Without a go-to card, cleaning just that room is how the robot gets there.
+                exec(
+                    Vacuums.roomArgs(cleaning, picked),
+                    if (goTo) "${d.name} has no plain go-to in Homey, so it is cleaning $names, which takes it there. Tell the user, and that \"pause\" stops it when it arrives."
+                    else "${d.name} is cleaning $names.",
+                )
+            }
+            else -> ok("Use start, pause, resume, stop, dock, clean_rooms, go_to or rooms.")
+        }
+    }
+
+    private suspend fun vacuumRooms(c: app.homeydash.homey.VacuumControls, cards: List<FlowCardAction>): List<VacuumRoom> {
+        val listArg = Vacuums.roomListArg(c.roomCleaning, cards)
+        val fromCard = listArg?.let { (card, arg) -> runCatching { Vacuums.roomsFrom(home.choices(card, arg, "")) }.getOrDefault(emptyList()) }.orEmpty()
+        return fromCard.ifEmpty { c.pickerRooms }
+    }
+
     /** Presses [keys] ("down x3, ok") on a remote, as the dashboard's remote sheet would. */
     private suspend fun pressRemote(alias: String, keys: String): ToolResult {
         val d = view.device(alias) ?: return unknown(alias)
@@ -539,7 +627,7 @@ class AgentTools(
             return ok("This conversation includes private things, so nothing is looked up on the internet now. Answer from what you know.")
         }
         if (mentionsHome(question)) return ok("Leave this home's devices, rooms and people out of internet questions; ask a general question instead.")
-        return ok(lookup.answer(question, view.settings.language))
+        return ok(lookup.answer(question, view.settings.answers))
     }
 
     /** Whether a question names a device alias or a guarded device, which must stay home. */
@@ -567,7 +655,7 @@ class AgentTools(
         private const val MAX_ACTIONS = 40
 
         private const val REMOTE_GAP_MS = 350L
-        private val GUEST_BLOCKED = setOf("list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
+        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */
         private val SENSITIVE = Regex("""\b(un)?lock\w*|\blås\w*|\b(dis)?arm\w*|\b(av)?larm\w*|\balarm\w*|\bgarage\w*|\bdoor\w*|\bdörr\w*""", RegexOption.IGNORE_CASE)

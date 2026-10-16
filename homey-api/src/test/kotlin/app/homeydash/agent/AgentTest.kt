@@ -519,13 +519,31 @@ class AgentTest {
         assertNull(VoiceFx.readWav(ByteArray(10)))
     }
 
+    @Test fun `TARS always answers in English and jokes about other languages`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val rules = agent.rules(AgentSettings(persona = Persona.Tars, language = Language.Swedish))
+        assertTrue(rules.contains("Always answer in English, even when the user speaks Swedish"))
+        assertFalse(rules.contains("Always answer in Swedish"))
+        assertTrue(rules.contains("clever, deadpan line"))
+        assertEquals(Language.English, AgentSettings(persona = Persona.Tars, language = Language.Auto).answers)
+        assertEquals(Language.Swedish, AgentSettings(language = Language.Swedish).answers)
+    }
+
+    @Test fun `the note gives the day, date and week number`() {
+        val t = java.time.ZonedDateTime.of(2026, 10, 16, 16, 45, 0, 0, java.time.ZoneId.of("Europe/Stockholm"))
+        assertEquals("Friday 16 October 2026 (2026-10-16), week 42, 16:45", nowLine(t))
+        // New Year's Day 2027 is a Friday, still in 2026's week 53.
+        assertTrue(nowLine(t.withYear(2027).withMonth(1).withDayOfMonth(1)).contains("week 53"))
+    }
+
     @Test fun `TARS gets his personality and humor setting in the rules`() {
         val agent = Agent(ChatClient(OkHttpClient()))
         assertFalse(agent.rules(AgentSettings()).contains("TARS"))
         val tars = agent.rules(AgentSettings(persona = Persona.Tars, humor = 60))
         assertTrue(tars.contains("you are TARS"))
         assertTrue(tars.contains("humor setting is 60 %"))
-        assertTrue(tars.contains("About every other answer"))
+        assertTrue(tars.contains("Most answers get a sarcastic aside"))
+        assertTrue(tars.contains("noticeably sarcastic"))
         assertTrue(agent.rules(AgentSettings(persona = Persona.Tars, humor = 0)).contains("No jokes"))
     }
 

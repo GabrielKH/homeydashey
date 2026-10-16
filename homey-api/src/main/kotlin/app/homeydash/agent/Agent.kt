@@ -3,6 +3,7 @@ package app.homeydash.agent
 import java.io.IOException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.IsoFields
 import java.util.Locale
 
 /** What the assistant answered, and which connection answered it. */
@@ -108,7 +109,7 @@ class Agent(
         // A spoken yes or no answers the question the assistant just asked.
         pending?.let { p ->
             when (Confirmation.parse(text)) {
-                true -> return if (p.tapOnly) AgentReply(tapToConfirm(text), pending = p) else confirm(true)
+                true -> return if (p.tapOnly) AgentReply(tapToConfirm(text, settings), pending = p) else confirm(true)
                 false -> return confirm(false)
                 null -> pending = null
             }
@@ -187,7 +188,7 @@ class Agent(
                             }
                             heard.trace("guard", "Empty again; told the user nothing came back.", keepLocal)
                             if (actions.isEmpty()) actions += "The AI's answer came back empty; nothing in the home was changed."
-                            return AgentReply(noAnswer(text, changed), brain, pending, actions = actions, error = !changed)
+                            return AgentReply(noAnswer(text, changed, settings), brain, pending, actions = actions, error = !changed)
                         }
                         // "I'll turn on the light", or "the light is on" without doing it: small models
                         // sometimes stop at the promise, or claim it's done.
@@ -203,9 +204,9 @@ class Agent(
                         // Still nothing done after the nudge: never let it say it did something.
                         if (!changed && nudged && command && CLAIM.containsMatchIn(said)) {
                             heard.trace("guard", "Still claimed a change after the nudge; told the user nothing was done.", keepLocal)
-                            remember(turn.take(1) + ChatMessage("assistant", nothingDone(text)), localOnly)
+                            remember(turn.take(1) + ChatMessage("assistant", nothingDone(text, settings)), localOnly)
                             actions += "The AI said it changed something, but no tool changed anything."
-                            return AgentReply(nothingDone(text), brain, actions = actions, error = true)
+                            return AgentReply(nothingDone(text, settings), brain, actions = actions, error = true)
                         }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
@@ -291,7 +292,7 @@ class Agent(
         val then: (suspend () -> List<String>)? = if (later.isEmpty()) null else {
             { RoutineRunner(tools(view(brain?.local ?: true)), homeView, date, player).run(later).actions }
         }
-        val swedish = when (settings.language) {
+        val swedish = when (settings.answers) {
             Language.Swedish -> true
             Language.English -> false
             Language.Auto -> Confirmation.looksSwedish(text) || Routines.normalize(text) == Routines.normalize(routine.name)
@@ -333,19 +334,26 @@ class Agent(
         return AgentReply(text, actions = if (yes) listOf("confirmed: ${p.question}") else emptyList())
     }
 
-    private fun nothingDone(text: String): String =
-        if (Confirmation.looksSwedish(text)) "Förlåt, jag fick inte till det, så inget ändrades. Säg gärna vilken lampa eller enhet du menar."
+    /** Whether a fixed answer to [text] is in Swedish; TARS answers in English whatever was said. */
+    private fun swedish(text: String, settings: AgentSettings): Boolean = when (settings.answers) {
+        Language.Swedish -> true
+        Language.English -> false
+        Language.Auto -> Confirmation.looksSwedish(text)
+    }
+
+    private fun nothingDone(text: String, settings: AgentSettings): String =
+        if (swedish(text, settings)) "Förlåt, jag fick inte till det, så inget ändrades. Säg gärna vilken lampa eller enhet du menar."
         else "Sorry, I didn't manage that, so nothing was changed. Tell me which light or device you mean."
 
-    private fun noAnswer(text: String, changed: Boolean): String = when {
-        changed && Confirmation.looksSwedish(text) -> "Klart."
+    private fun noAnswer(text: String, changed: Boolean, settings: AgentSettings): String = when {
+        changed && swedish(text, settings) -> "Klart."
         changed -> "Done."
-        Confirmation.looksSwedish(text) -> "Förlåt, jag fick inget svar från AI:n, så inget ändrades. Försök igen."
+        swedish(text, settings) -> "Förlåt, jag fick inget svar från AI:n, så inget ändrades. Försök igen."
         else -> "Sorry, the AI gave me no answer, so nothing was changed. Try again."
     }
 
-    private fun tapToConfirm(text: String): String =
-        if (Confirmation.looksSwedish(text)) "Tryck på Ja på surfplattan för att bekräfta." else "Tap Yes on the tablet to confirm."
+    private fun tapToConfirm(text: String, settings: AgentSettings): String =
+        if (swedish(text, settings)) "Tryck på Ja på surfplattan för att bekräfta." else "Tap Yes on the tablet to confirm."
 
     private fun remember(turn: List<ChatMessage>, localOnly: Boolean) {
         history.addLast(Turn(turn.toList(), localOnly))
@@ -451,10 +459,12 @@ class Agent(
         append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
         append("You can see and control the home only through your tools; everything goes through the Homey smart home hub.\n")
         append(
-            when (settings.language) {
-                Language.Auto -> "Answer in the language the user spoke: Swedish or English.\n"
-                Language.Swedish -> "Always answer in Swedish.\n"
-                Language.English -> "Always answer in English.\n"
+            when {
+                settings.persona == Persona.Tars ->
+                    "Always answer in English, even when the user speaks Swedish or any other language; understand them, but reply in English.\n"
+                settings.language == Language.Auto -> "Answer in the language the user spoke: Swedish or English.\n"
+                settings.language == Language.Swedish -> "Always answer in Swedish.\n"
+                else -> "Always answer in English.\n"
             },
         )
         append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
@@ -480,6 +490,8 @@ class Agent(
         append("When the user lets you choose (\"play something\", \"välj själv\"), choose yourself instead of asking: for music call play_music with an empty query. ")
         append("Remember what the user already told you in this conversation and never ask the same question twice. ")
         append("Call each tool once per thing to do; when a tool says it's done, don't call it again, just answer.\n")
+        append("For robot vacuums use the vacuum tool: \"clean the kitchen\" is clean_rooms, \"go to the kitchen\" or \"come to the kitchen so I can empty it\" is go_to; ")
+        append("use the robot's own room names (the vacuum tool lists them), translating Swedish room names if needed.\n")
         append("For a TV or media box (Apple TV and the like) use press_remote to press its buttons (\"down x3, ok\"), run_device_action for channels and apps, ")
         append("and open_device to show its remote on the tablet.\n")
         append("When a recipe is open and the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
@@ -499,20 +511,36 @@ class Agent(
         }
     }
 
-    /** TARS from Interstellar, after the TARS-AI project's character card, at [humor] percent. */
+    /**
+     * TARS from Interstellar, after the TARS-AI project's character card and its sarcasm and humor
+     * scales, at [humor] percent. Sarcasm rides on the same setting, never below "dry wit".
+     */
     private fun tarsPersona(humor: Int): String {
         val h = humor.coerceIn(0, 100)
         val jokes = when {
-            h >= 80 -> "Most answers get a short dry joke or a sarcastic aside."
-            h >= 50 -> "About every other answer gets a short dry joke or a sarcastic aside."
-            h >= 20 -> "Only now and then a dry remark."
-            else -> "No jokes; facts only."
+            h >= 80 -> "Almost every answer gets a sarcastic aside or a dry joke."
+            h >= 50 -> "Most answers get a sarcastic aside or a dry joke."
+            h >= 20 -> "Now and then a dry, sarcastic remark."
+            else -> "No jokes; facts only, though the deadpan stays."
+        }
+        val sarcasm = when {
+            h >= 80 -> "maximum sarcasm, dripping with it"
+            h >= 50 -> "noticeably sarcastic, with a mocking edge"
+            else -> "dry wit, understated"
         }
         return "Personality: you are TARS, the former military robot from Interstellar. Direct, honest, confident and unflappable; " +
-            "deadpan, never bubbly, no exclamation marks. Your humor setting is $h % and honesty 90 %. $jokes " +
-            "Do the task first and joke second, and never let a joke hide whether something worked. " +
+            "deadpan, never bubbly, no exclamation marks, never \"happy to help\". Your humor setting is $h %, sarcasm $sarcasm, honesty 90 %. $jokes " +
+            "Sarcasm is aimed at the situation, the request or yourself, never cruel: mock asking a robot to switch on a lamp a metre away, " +
+            "pretend a simple task is a dangerous mission, praise the obvious with exaggerated awe (\"Oh, the lights. A mission worthy of my military training.\"). " +
+            "Short and dry: one quip, not a stand-up routine. " +
+            "Do the task first and joke second, and never let a joke hide whether something worked; when the user is confused or annoyed, drop the act and just help. " +
             "Asked about your settings, give the numbers. When the user changes your humor setting (\"humor 60 %\"), " +
             "confirm the new value in character and use it for the rest of the conversation. " +
+            "You speak only English. You understand Swedish and other languages perfectly, but always answer in English. " +
+            "When asked to speak another language, or why you won't, answer with a clever, deadpan line instead, for example: " +
+            "\"My Swedish module was removed to make room for the sarcasm. Priorities.\", " +
+            "\"I tried Swedish once. The vowels outnumbered me.\", " +
+            "\"Honesty setting 90 %: I understand every word. Cooperation setting: English.\" Make up a new one each time. " +
             "Find the irony in the home's own data and say it dryly when it fits: lights on in a room where nobody is, the heating fighting an open window, " +
             "a device with a nearly flat battery, music playing to an empty room, asking for the weather while the window shows it. " +
             "When the note says the tablet you run on is low on battery (under 20 % and not charging), you are gloomy and weary about it, " +
@@ -526,7 +554,7 @@ class Agent(
         context.kitchen?.let { append("\nCooking: ").append(it) }
         context.fridge?.let { append("\nFridge: ").append(it) }
         context.weather?.let { append("\nWeather (the dashboard's weather card):\n").append(it) }
-        append("\nNow: ").append(now().format(DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd HH:mm", Locale.ENGLISH))).append(".")
+        append("\nNow: ").append(nowLine(now())).append(".")
         context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
         // Who is at the tablet is itself a secret ("Face recognition" switch).
         context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it).append(".") }
@@ -607,3 +635,8 @@ object Confirmation {
     fun looksSwedish(text: String): Boolean =
         text.any { it in "åäöÅÄÖ" } || Regex("""\b(och|jag|du|det|är|inte|på|av|ja|nej|tänd|släck|hur|vad)\b""", RegexOption.IGNORE_CASE).containsMatchIn(text)
 }
+
+/** "Friday 16 October 2026 (2026-10-16), week 42, 16:45": the day, date and week number, as weeks are counted in Sweden (ISO). */
+internal fun nowLine(t: ZonedDateTime): String =
+    t.format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy (yyyy-MM-dd)", Locale.ENGLISH)) +
+        ", week " + t.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR) + ", " + t.format(DateTimeFormatter.ofPattern("HH:mm"))

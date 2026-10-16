@@ -317,6 +317,19 @@ object Vacuums {
         }
     }
 
+    /**
+     * A card that drives the robot to a room or spot without cleaning ("Go to room", "Move to
+     * kitchen"), with its room argument when it takes one; null when the app has none.
+     */
+    fun goToCard(cards: List<FlowCardAction>): Pair<FlowCardAction, FlowCardArg?>? = cards.firstNotNullOfOrNull { c ->
+        val w = FlowCards.tokens(c.cardId) + FlowCards.tokens(c.title.orEmpty())
+        val goes = "goto" in w || "navigate" in w || ("go" in w && "to" in w) || ("move" in w && "to" in w)
+        if (!goes || "clean" in w || w.any { it in DOCK_WORDS }) return@firstNotNullOfOrNull null
+        val roomArg = c.inputArgs.firstOrNull { isRoomArg(it) && it.type in setOf("autocomplete", "text", "dropdown") }
+        // Coordinates or anything else the user can't say aren't for a voice command.
+        if (c.inputArgs.any { it != roomArg }) null else c to roomArg
+    }
+
     fun roomsFrom(items: List<AutocompleteItem>): List<VacuumRoom> = items.map { item ->
         val id = (item.raw["id"] as? JsonPrimitive)?.contentOrNull ?: item.name
         VacuumRoom(id, item.name, item.raw)

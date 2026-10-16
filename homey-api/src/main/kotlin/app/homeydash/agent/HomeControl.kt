@@ -1,6 +1,7 @@
 package app.homeydash.agent
 
 import app.homeydash.homey.AutocompleteItem
+import app.homeydash.homey.Device
 import app.homeydash.homey.FlowCardAction
 import app.homeydash.homey.FlowCardArg
 import app.homeydash.homey.FlowCards
@@ -51,6 +52,9 @@ interface HomeControl {
 
     /** Runs a Flow card; throws when Homey refuses. */
     suspend fun runAction(card: FlowCardAction, args: JsonObject) {}
+
+    /** The device as Homey last reported it, all capabilities included; null when unknown. */
+    fun device(deviceId: String): Device? = null
 }
 
 /** One calendar event as the assistant sees it. */
@@ -144,6 +148,8 @@ class StoreHomeControl(
         if (arg.type == "dropdown") FlowCards.dropdownItems(arg) else store.autocomplete(card, arg.name, query)
 
     override suspend fun runAction(card: FlowCardAction, args: JsonObject) = store.runAction(card, args, rethrow = true)
+
+    override fun device(deviceId: String): Device? = store.snapshot.value.devices[deviceId]
 
     companion object {
         /** How well one of the home's own picks must match before a catalogue isn't searched. */

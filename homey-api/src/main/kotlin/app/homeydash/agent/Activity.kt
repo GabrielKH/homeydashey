@@ -67,6 +67,7 @@ object StepText {
             "device_actions" -> "Looking at what ${device()} can do"
             "run_device_action" -> "${device()}: ${str("action")}" + (str("value").takeIf { it.isNotEmpty() }?.let { " $it" } ?: "")
             "press_remote" -> "Pressing ${str("keys")} on ${device()}"
+            "vacuum" -> "${device().ifBlank { "Vacuum" }}: ${str("action").replace('_', ' ')}" + (str("rooms").takeIf { it.isNotEmpty() }?.let { " $it" } ?: "")
             "open_page" -> "Opening ${str("page")}"
             "open_device" -> "Opening ${device()}"
             "goodnight" -> "Getting goodnight ready"

@@ -106,7 +106,7 @@ enum class Persona(val label: String, val detail: String) {
     Tars(
         "TARS",
         "TARS from Interstellar: his voice, his name as the wake word, a \"huuh?\" when he hears it, and dry, deadpan humor " +
-            "with a setting you can turn up or down. He notices ironic things in the home, and a flat tablet battery gets him down.",
+            "and sarcasm with a setting you can turn up or down. He only answers in English, whatever you speak. He notices ironic things in the home, and a flat tablet battery gets him down.",
     ),
 }
 
@@ -208,6 +208,9 @@ data class AgentSettings(
             wakeName = if (wakeName.equals(TARS_WAKE_NAME, ignoreCase = true)) "Nova" else wakeName,
         )
     }
+
+    /** The language answers are spoken in: TARS answers in English whatever language he hears. */
+    val answers: Language get() = if (persona == Persona.Tars) Language.English else language
 
     fun openAiSpeechKeyOrBrain(): String =
         openAiSpeechKey.trim().ifBlank { internet?.takeIf { it.provider == Provider.OpenAI }?.apiKey.orEmpty() }
