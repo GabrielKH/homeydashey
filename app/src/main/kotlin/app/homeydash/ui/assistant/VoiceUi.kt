@@ -41,6 +41,7 @@ import app.homeydash.agent.KnownPerson
 import app.homeydash.agent.VoiceId
 import app.homeydash.agent.WakeSound
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
 import app.homeydash.agent.WakeName
 import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.AssistantServices
@@ -317,6 +318,9 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
     val models by services.voiceModels.state.collectAsState()
     val samples = remember { mutableStateListOf<FloatArray>() }
     val prints = remember { mutableStateListOf<FloatArray>() }
+    val jobs = remember { mutableListOf<kotlinx.coroutines.Job>() }
+    var noSound by remember { mutableStateOf(0) }
+    var failed by remember { mutableStateOf<String?>(null) }
     val printModel by services.prints.state.collectAsState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
@@ -341,8 +345,9 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                 onHeard = { _, vector, sound ->
                     if (vector == null) error = "Didn't catch that; say it a little slower." else if (samples.size < VOICE_SAMPLES) {
                         error = null
+                        failed = null
                         samples += vector
-                        if (sound != null) scope.launch { services.prints.of(sound)?.let { prints += it } }
+                        if (sound == null) noSound++ else jobs += scope.launch { services.prints.of(sound)?.let { prints += it } }
                     }
                 },
                 onError = { error = it },
@@ -355,12 +360,30 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
         }
         LaunchedEffect(samples.size >= VOICE_SAMPLES) {
             if (samples.size >= VOICE_SAMPLES) {
-                // The last voiceprint is worked out a moment after the last phrase.
-                delay(400)
+                // Voiceprints are worked out after each phrase; wait for all of them.
+                jobs.toList().joinAll()
                 // Teaching again adds to what the tablet already knows of the voice.
                 services.faces.addVoice(person.id, samples.toList())
                 services.faces.addPrints(person.id, wakeName, prints.toList())
-                onDone()
+                val why = when {
+                    printModel !is app.homeydash.assistant.VoicePrints.State.Ready -> "the voiceprint model isn't on the tablet ($printModel)"
+                    noSound == samples.size -> "the sound of the name wasn't caught"
+                    else -> services.prints.lastError ?: "unknown"
+                }
+                services.trace(
+                    "wake",
+                    "Taught \"Hey $wakeName\": ${samples.size} phrases, ${prints.size} voiceprints" + if (prints.isEmpty()) " (none made: $why)." else ".",
+                    localOnly = false,
+                )
+                if (prints.isEmpty()) {
+                    // Nothing new was learned for this name; say why instead of closing as if it worked.
+                    failed = "Couldn't make voiceprints for \"Hey $wakeName\": $why. Try again."
+                    samples.clear()
+                    jobs.clear()
+                    noSound = 0
+                } else {
+                    onDone()
+                }
             }
         }
     }
@@ -380,6 +403,7 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
         )
         LinearProgressIndicator(progress = { samples.size / VOICE_SAMPLES.toFloat() }, modifier = Modifier.fillMaxWidth(), color = g.on, trackColor = g.glassLine)
         error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = g.muted) }
+        failed?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = g.danger) }
         Box {
             Text(
                 "Cancel",

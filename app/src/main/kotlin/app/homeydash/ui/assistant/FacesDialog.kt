@@ -37,6 +37,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.homeydash.ui.components.AppDialog
+import app.homeydash.ui.components.Ic
+import app.homeydash.agent.TARS_WAKE_NAME
+import app.homeydash.agent.KnownPerson
 import androidx.compose.runtime.key
 import app.homeydash.agent.Persona
 import androidx.activity.compose.BackHandler
@@ -71,7 +74,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
     AppDialog(onDismiss) {
         Column(
             Modifier
-                .dialogSize(560.dp)
+                .dialogSize(740.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .padding(vertical = 20.dp),
@@ -116,41 +119,13 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                     Enrol(services, onVoiceOnly = { id -> adding = false; teaching = id to settings.wakeName }) { adding = false }
                 } else {
                     people.forEach { p ->
-                        Column(Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                SymIcon(Sym.face, size = 22.dp)
-                                Text(p.name, style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
-                                Text("Remove", style = MaterialTheme.typography.labelLarge, color = g.danger, modifier = Modifier.pressable({ faces.remove(p.id) }).padding(8.dp))
-                            }
-                            Text(
-                                when {
-                                    p.samples.isNotEmpty() -> "Face known"
-                                    else -> "Face not learned"
-                                } + if (p.voice.isNotEmpty() && p.prints.isEmpty()) ". Voice taught before each character had its own: teach it again for sharper recognition." else "",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = g.muted,
-                            )
-                            // "Hey TARS" and "Hey Nova" sound different, so each is taught on its own.
-                            listOf(Persona.Nova, Persona.Tars).forEach { character ->
-                                val name = settings.nameOf(character)
-                                val taught = p.printsFor(name).isNotEmpty()
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "Voice for \"Hey $name\": " + if (taught) "taught" else "not taught yet",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (taught) g.fg else g.muted,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Text(
-                                        if (taught) "Teach more" else "Teach",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = g.fg,
-                                        modifier = Modifier.pressable({ teaching = p.id to name }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
-                                    )
-                                }
-                            }
-                            RoleChoice(p.role) { faces.setRole(p.id, it) }
-                        }
+                        PersonCard(
+                            person = p,
+                            novaName = settings.nameOf(Persona.Nova),
+                            onTeach = { name -> teaching = p.id to name },
+                            onRole = { faces.setRole(p.id, it) },
+                            onRemove = { faces.remove(p.id) },
+                        )
                     }
                     Row(
                         Modifier.fillMaxWidth().pressable({ adding = true }).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
@@ -168,6 +143,74 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * One person: who they are, and side by side what the tablet knows them by: their face, and
+ * their voice saying each character's name.
+ */
+@Composable
+private fun PersonCard(person: KnownPerson, novaName: String, onTeach: (String) -> Unit, onRole: (Role) -> Unit, onRemove: () -> Unit) {
+    val g = GlassTheme.colors
+    Column(
+        Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(22.dp)).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(Modifier.size(48.dp).background(g.on.copy(alpha = 0.18f), androidx.compose.foundation.shape.CircleShape), contentAlignment = Alignment.Center) {
+                Text(person.name.take(1).uppercase(), style = MaterialTheme.typography.titleLarge, color = g.fg)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(person.name, style = MaterialTheme.typography.titleLarge, color = g.fg)
+                Text(person.role.label, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+            }
+            Text("Remove", style = MaterialTheme.typography.labelLarge, color = g.danger, modifier = Modifier.pressable(onRemove).padding(8.dp))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            KnownBy(Sym.face, "Face", if (person.samples.isNotEmpty()) "Recognised" else "Not learned", person.samples.isNotEmpty(), null, Modifier.weight(1f))
+            // "Hey TARS" and "Hey Nova" sound different, so each is taught on its own.
+            listOf(novaName, TARS_WAKE_NAME).forEach { name ->
+                val n = person.printsFor(name).size
+                KnownBy(
+                    Sym.mic,
+                    "Hey $name",
+                    if (n > 0) "Taught" else "Not taught",
+                    n > 0,
+                    (if (n > 0) "Teach more" else "Teach") to { onTeach(name) },
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        RoleChoice(person.role, onRole)
+    }
+}
+
+/** A tile saying whether the tablet knows someone by one thing, with a button to teach it. */
+@Composable
+private fun KnownBy(icon: Ic, title: String, status: String, known: Boolean, action: Pair<String, () -> Unit>?, modifier: Modifier) {
+    val g = GlassTheme.colors
+    Column(
+        modifier.glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SymIcon(icon, size = 20.dp)
+            Text(title, style = MaterialTheme.typography.labelLarge, color = g.fg, maxLines = 1)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(8.dp).background(if (known) g.ok else g.muted.copy(alpha = 0.5f), androidx.compose.foundation.shape.CircleShape))
+            Text(status, style = MaterialTheme.typography.bodyMedium, color = if (known) g.fg else g.muted)
+        }
+        action?.let { (label, onClick) ->
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = g.fg,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().pressable(onClick).glass(PillShape).padding(vertical = 8.dp),
+            )
         }
     }
 }

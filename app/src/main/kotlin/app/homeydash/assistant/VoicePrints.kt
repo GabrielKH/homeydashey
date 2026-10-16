@@ -85,9 +85,15 @@ class VoicePrints(context: Context, http: OkHttpClient, private val scope: Corou
 
     /** The voiceprint of 16 kHz [samples], or null without the model or enough sound. */
     suspend fun of(samples: ShortArray): FloatArray? = withContext(Dispatchers.Default) {
-        if (_state.value != State.Ready || samples.size < Fbank.RATE / 4) return@withContext null
-        runCatching { embed(samples) }.getOrNull()
+        if (_state.value != State.Ready) return@withContext null.also { lastError = "the voiceprint model isn't ready (${_state.value})" }
+        if (samples.size < Fbank.RATE / 4) return@withContext null.also { lastError = "too little sound" }
+        runCatching { embed(samples) }
+            .onFailure { lastError = "${it::class.simpleName}: ${it.message}" }
+            .getOrNull()
     }
+
+    /** Why the last voiceprint couldn't be made, for the log and the teaching screen. */
+    @Volatile var lastError: String? = null
 
     @Synchronized
     private fun embed(samples: ShortArray): FloatArray? {

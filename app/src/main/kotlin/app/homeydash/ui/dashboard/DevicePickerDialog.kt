@@ -51,7 +51,7 @@ fun DevicePickerDialog(
     AppDialog(onDismiss) {
         Column(
             Modifier
-                .dialogSize(620.dp)
+                .dialogSize(780.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .padding(24.dp),

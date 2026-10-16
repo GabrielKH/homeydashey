@@ -110,7 +110,7 @@ fun AssistantSettingsDialog(
     AppDialog(onDismiss) {
         Column(
             Modifier
-                .dialogSize(620.dp)
+                .dialogSize(780.dp)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .padding(vertical = 20.dp),
