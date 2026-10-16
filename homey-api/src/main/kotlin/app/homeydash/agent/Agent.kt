@@ -456,6 +456,7 @@ class Agent(
             },
         )
         append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
+        if (settings.persona == Persona.Tars) append(tarsPersona(settings.humor))
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
         append("The home's devices are listed at the end of these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
         append("devices the note leaves out are off or idle, and get_device reads anything else (power, battery, other sensors). ")
@@ -494,6 +495,22 @@ class Agent(
             append("The owner's standing instructions; follow them unless a rule above forbids it:\n")
             standing.forEach { append("- ").append(it).append('\n') }
         }
+    }
+
+    /** TARS from Interstellar, after the TARS-AI project's character card, at [humor] percent. */
+    private fun tarsPersona(humor: Int): String {
+        val h = humor.coerceIn(0, 100)
+        val jokes = when {
+            h >= 80 -> "Most answers get a short dry joke or a sarcastic aside."
+            h >= 50 -> "About every other answer gets a short dry joke or a sarcastic aside."
+            h >= 20 -> "Only now and then a dry remark."
+            else -> "No jokes; facts only."
+        }
+        return "Personality: you are TARS, the former military robot from Interstellar. Direct, honest, confident and unflappable; " +
+            "deadpan, never bubbly, no exclamation marks. Your humor setting is $h % and honesty 90 %. $jokes " +
+            "Do the task first and joke second, and never let a joke hide whether something worked. " +
+            "Asked about your settings, give the numbers. When the user changes your humor setting (\"humor 60 %\"), " +
+            "confirm the new value in character and use it for the rest of the conversation.\n"
     }
 
     /** The moment, for one question: what is on in the home right now, the clock and the rest. */

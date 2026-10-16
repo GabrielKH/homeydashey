@@ -100,6 +100,17 @@ enum class Secret(val title: String, val detail: String) {
     Faces("Face and voice recognition", "Know who is at the tablet, by face or by voice (first name only)."),
 }
 
+/** Who the assistant is: how it talks, apart from how it sounds. */
+enum class Persona(val label: String, val detail: String) {
+    Nova("Nova", "Friendly and to the point."),
+    Tars("TARS", "Dry, deadpan and honest, like TARS in Interstellar, with a humor setting you can turn up or down."),
+}
+
+/** Piper's own web server (`python3 -m piper.http_server`), for the TARS voice. */
+const val PIPER_SERVER_PORT = 5000
+/** The Piper voice for Swedish answers, next to TARS (who only speaks English). */
+const val PIPER_SWEDISH_VOICE = "sv_SE-nst-medium"
+
 /** mlx-audio's multilingual Chatterbox: natural Swedish and English on a Mac. */
 const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
 const val VOICE_SERVER_PORT = 8090
@@ -137,6 +148,11 @@ data class AgentSettings(
     val voice: VoiceStyle = VoiceStyle.Natural,
     /** The little sound when the wake name is heard, before it listens. */
     val wakeSound: WakeSound = WakeSound.Hum,
+    /** Who the assistant is, and for TARS how funny, 0–100 %. */
+    val persona: Persona = Persona.Nova,
+    val humor: Int = 75,
+    /** Piper's server on your own computer for the TARS voice; empty means the Ollama computer on port 5000. */
+    val piperUrl: String = "",
     /** The scanner in KITT's red instead of the theme's accent. */
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
@@ -178,6 +194,11 @@ data class AgentSettings(
     fun voiceServerUrlOrGuess(): String = voiceServerUrl.trim().ifBlank {
         val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
         "http://$host:$VOICE_SERVER_PORT"
+    }
+
+    fun piperUrlOrGuess(): String = piperUrl.trim().ifBlank {
+        val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
+        "http://$host:$PIPER_SERVER_PORT"
     }
 
     fun openAiSpeechKeyOrBrain(): String =

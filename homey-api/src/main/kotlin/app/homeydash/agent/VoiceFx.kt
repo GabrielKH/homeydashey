@@ -33,6 +33,14 @@ enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, v
         0.94f,
         local = true,
     ),
+    Tars(
+        "TARS",
+        "TARS from Interstellar: the voice model the TARS-AI project trained on the film, spoken by Piper on your own computer. " +
+            "TARS only speaks English, so Swedish answers use Piper's Swedish voice; while the computer isn't running it, the tablet's voice, low and even.",
+        0.8f,
+        0.98f,
+        local = true,
+    ),
 }
 
 /** 16-bit mono speech, as Android text-to-speech writes it. */
@@ -115,11 +123,11 @@ object VoiceFx {
 
     /** Gives the voice its character; pitch and speed are set on the speech engine itself. */
     fun apply(style: VoiceStyle, pcm: Pcm): Pcm {
-        if (style == VoiceStyle.Natural || style == VoiceStyle.Warm) return pcm
+        if (style == VoiceStyle.Natural || style == VoiceStyle.Warm || style == VoiceStyle.Tars) return pcm
         val rate = pcm.sampleRate
         val x = FloatArray(pcm.samples.size) { pcm.samples[it] / 32768f }
         val y = when (style) {
-            VoiceStyle.Natural, VoiceStyle.Warm -> x
+            VoiceStyle.Natural, VoiceStyle.Warm, VoiceStyle.Tars -> x
             // A short comb filter: a faint metallic ring on top of the voice.
             VoiceStyle.Cruiser -> {
                 val d = (rate * 0.0025).toInt().coerceAtLeast(1)

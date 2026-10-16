@@ -326,7 +326,8 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val set
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
     suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
         if (text.isBlank()) return null
-        if (voice.local) local(text, language, file)?.let { return it }
+        if (voice == VoiceStyle.Tars) piper(text, language, file)?.let { return it }
+        else if (voice.local) local(text, language, file)?.let { return it }
         if (!ready) return null
         val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
         prepare(text, language, voice)
@@ -384,6 +385,42 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val set
                 Spoken(file, VoiceFx.analyse(pcm))
             }.getOrNull()
             if (spoken == null) serverDownUntil = android.os.SystemClock.elapsedRealtime() + SERVER_RETRY_MS
+            spoken
+        }
+    }
+
+    @Volatile private var piperDownUntil = 0L
+
+    /**
+     * The answer in TARS's voice from Piper's web server on your own computer: the TARS model
+     * for English, Piper's Swedish voice for Swedish. Null when it isn't running; the tablet speaks.
+     */
+    private suspend fun piper(text: String, language: Language, file: File): Spoken? {
+        val url = settings().piperUrlOrGuess().trimEnd('/')
+        if (url.isEmpty() || android.os.SystemClock.elapsedRealtime() < piperDownUntil) return null
+        val swedish = when (language) {
+            Language.Swedish -> true
+            Language.English -> false
+            Language.Auto -> Confirmation.looksSwedish(text)
+        }
+        return withContext(Dispatchers.IO) {
+            val spoken = runCatching {
+                val body = kotlinx.serialization.json.buildJsonObject {
+                    put("text", kotlinx.serialization.json.JsonPrimitive(text))
+                    if (swedish) put("voice", kotlinx.serialization.json.JsonPrimitive(app.homeydash.agent.PIPER_SWEDISH_VOICE))
+                    // The TARS model has a speaker per mood; the calm one sounds most like the film.
+                    else put("speaker", kotlinx.serialization.json.JsonPrimitive("neutral"))
+                }.toString().toRequestBody("application/json".toMediaType())
+                // Newer Piper servers answer on /synthesize, older ones on /.
+                val bytes = listOf("$url/synthesize", "$url/").firstNotNullOfOrNull { endpoint ->
+                    val request = okhttp3.Request.Builder().url(endpoint).post(body).build()
+                    http.newCall(request).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
+                } ?: return@runCatching null
+                val pcm = VoiceFx.readWav(bytes)?.takeIf { it.samples.isNotEmpty() } ?: return@runCatching null
+                file.writeBytes(VoiceFx.writeWav(pcm))
+                Spoken(file, VoiceFx.analyse(pcm))
+            }.getOrNull()
+            if (spoken == null) piperDownUntil = android.os.SystemClock.elapsedRealtime() + SERVER_RETRY_MS
             spoken
         }
     }

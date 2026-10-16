@@ -42,6 +42,10 @@ import androidx.compose.ui.window.DialogProperties
 import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
+import app.homeydash.agent.PIPER_SERVER_PORT
+import app.homeydash.agent.PIPER_SWEDISH_VOICE
+import app.homeydash.agent.Persona
+import app.homeydash.agent.WakeSound
 import app.homeydash.agent.AgentTools
 import app.homeydash.agent.AskContext
 import app.homeydash.agent.BrainMode
@@ -226,6 +230,7 @@ private fun Main(
     Label("Voice")
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
     LookAndVoice(services, settings, update)
+    Personality(settings, update)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Speaker volume", style = MaterialTheme.typography.labelLarge, color = g.fg)
         GlassSlider(settings.speakerVolume / 100f, { v -> update { it.copy(speakerVolume = (v * 100).toInt()) } }, Modifier.weight(1f))
@@ -579,11 +584,21 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
 
     Text("Voice", style = MaterialTheme.typography.labelLarge, color = g.fg)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        VoiceStyle.entries.forEach { v -> Chip(v.label, v == settings.voice) { update { it.copy(voice = v) } } }
+        VoiceStyle.entries.forEach { v ->
+            Chip(v.label, v == settings.voice) {
+                // TARS comes as a set: his voice, his humor and the "huuh?" when he hears his name.
+                update { if (v == VoiceStyle.Tars) it.copy(voice = v, persona = Persona.Tars, wakeSound = WakeSound.Huh) else it.copy(voice = v) }
+            }
+        }
         Chip("Hear it", false) {
             scope.launch {
-                val sample = if (settings.language == Language.English) "Hi, I'm your kitchen assistant. Dinner music in the living room?"
-                else "Hej, jag är er köksassistent. Ska jag sätta på middagsmusik?"
+                val tars = settings.persona == Persona.Tars
+                val sample = when {
+                    settings.language == Language.English && tars -> "Humor setting at ${settings.humor} percent. Dinner music in the living room? I'll try not to pick anything with bagpipes."
+                    settings.language == Language.English -> "Hi, I'm your kitchen assistant. Dinner music in the living room?"
+                    tars -> "Humorinställning ${settings.humor} procent. Middagsmusik? Jag lovar att inte välja säckpipa."
+                    else -> "Hej, jag är er köksassistent. Ska jag sätta på middagsmusik?"
+                }
                 services.output.speak(sample, settings.language, settings.voice)
             }
         }
@@ -593,7 +608,16 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
-    if (settings.voice.local) {
+    if (settings.voice == VoiceStyle.Tars) {
+        Field("Address", settings.piperUrl.ifBlank { settings.piperUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(piperUrl = url) } }
+        Text(
+            "On the Mac: \"pip install 'piper-tts[http]'\", then \"python3 -m piper.download_voices $PIPER_SWEDISH_VOICE\", put TARS.onnx and " +
+                "TARS.onnx.json from the TARS-AI project in the same folder, and run \"python3 -m piper.http_server -m TARS.onnx --port $PIPER_SERVER_PORT\" there. " +
+                "Piper is light and quick; if the computer doesn't answer, the tablet's voice speaks.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
+    } else if (settings.voice.local) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
         Field("Voice", settings.voiceServerVoice) { voice -> update { it.copy(voiceServerVoice = voice) } }
@@ -604,6 +628,24 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
+    }
+}
+
+/** Who the assistant is, and for TARS how funny. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Personality(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    Text("Personality", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Persona.entries.forEach { p -> Chip(p.label, p == settings.persona) { update { it.copy(persona = p) } } }
+    }
+    Text(settings.persona.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+    if (settings.persona == Persona.Tars) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Humor ${settings.humor} %", style = MaterialTheme.typography.bodyMedium, color = g.fg)
+            GlassSlider(settings.humor / 100f, { v -> update { it.copy(humor = (v * 100).toInt()) } }, Modifier.weight(1f))
+        }
     }
 }
 

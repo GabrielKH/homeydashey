@@ -519,6 +519,16 @@ class AgentTest {
         assertNull(VoiceFx.readWav(ByteArray(10)))
     }
 
+    @Test fun `TARS gets his personality and humor setting in the rules`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        assertFalse(agent.rules(AgentSettings()).contains("TARS"))
+        val tars = agent.rules(AgentSettings(persona = Persona.Tars, humor = 60))
+        assertTrue(tars.contains("you are TARS"))
+        assertTrue(tars.contains("humor setting is 60 %"))
+        assertTrue(tars.contains("About every other answer"))
+        assertTrue(agent.rules(AgentSettings(persona = Persona.Tars, humor = 0)).contains("No jokes"))
+    }
+
     @Test
     fun `thanks and stop end a conversation, questions don't`() {
         assertTrue(FollowUp.ends("Thanks!"))
