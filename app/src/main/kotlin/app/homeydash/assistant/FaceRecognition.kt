@@ -289,6 +289,7 @@ class FaceService(private val context: Context) {
                     put("samples", vectors(p.samples))
                     put("voice", vectors(p.voice))
                     put("prints", buildJsonObject { p.prints.forEach { (wake, list) -> put(wake, vectors(list)) } })
+                    put("printsBy", PRINTS_BY)
                 })
             }
         }
@@ -312,13 +313,16 @@ class FaceService(private val context: Context) {
                 role = Role.entries.firstOrNull { it.name == o["role"]?.jsonPrimitive?.contentOrNull } ?: Role.Family,
                 samples = vectors(o["samples"]),
                 voice = vectors(o["voice"]),
-                // Voiceprints from before each character had its own were all taught on "Nova".
-                prints = (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }
-                    ?: vectors(o["print"]).takeIf { it.isNotEmpty() }?.let { mapOf(app.homeydash.agent.WakeName.key("Nova") to it) }.orEmpty(),
+                // Voiceprints made before they came from sherpa-onnx don't compare with today's; they are
+                // dropped, and the person is shown as not taught for that name until taught again.
+                prints = if (o["printsBy"]?.jsonPrimitive?.contentOrNull == PRINTS_BY) (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }.orEmpty() else emptyMap(),
             )
         }
     }
 }
+
+/** Which model made the stored voiceprints; prints from another can't be compared. */
+private const val PRINTS_BY = "sherpa-wespeaker-resnet34"
 
 /** How long after recognising someone face recognition looks less often. */
 private const val RECOGNISED_FOR_MS = 10_000L

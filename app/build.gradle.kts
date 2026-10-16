@@ -59,8 +59,6 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        // sherpa-onnx brings ONNX Runtime 1.27.1 and onnxruntime-android 1.27.0; either serves both.
-        jniLibs.pickFirsts += "**/libonnxruntime.so"
     }
 
     // The face model is memory-mapped straight from the APK.
@@ -112,7 +110,6 @@ dependencies {
     // which must be the Android (aar) build.
     implementation(libs.vosk.android) { exclude(group = "net.java.dev.jna") }
     // Runs the WeSpeaker voiceprint model that tells voices apart.
-    implementation(libs.onnxruntime.android)
     // TARS's voice: a Piper model run by sherpa-onnx, and the tar.bz2 of pronunciation rules it needs.
     implementation(files(sherpaAar))
     implementation(libs.commons.compress)

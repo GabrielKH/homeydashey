@@ -1,11 +1,10 @@
 package app.homeydash.assistant
 
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
 import android.content.Context
 import app.homeydash.agent.Fbank
 import app.homeydash.agent.VoiceId
+import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
+import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +18,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
-import java.nio.FloatBuffer
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,7 +36,6 @@ class VoicePrints(context: Context, http: OkHttpClient, private val scope: Corou
     private val file = File(File(context.filesDir, "vosk"), "wespeaker-resnet34.onnx")
     private val http = http.newBuilder().readTimeout(60, TimeUnit.SECONDS).build()
     private var job: Job? = null
-    private var session: OrtSession? = null
 
     private val _state = MutableStateFlow<State>(if (file.exists()) State.Ready else State.Missing)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -95,19 +92,23 @@ class VoicePrints(context: Context, http: OkHttpClient, private val scope: Corou
     /** Why the last voiceprint couldn't be made, for the log and the teaching screen. */
     @Volatile var lastError: String? = null
 
+    private var extractor: SpeakerEmbeddingExtractor? = null
+
+    /**
+     * Runs the model with sherpa-onnx, which TARS's voice already brings. (ONNX Runtime's own
+     * Java library can't share the native runtime sherpa-onnx ships, so it failed to load.)
+     */
     @Synchronized
     private fun embed(samples: ShortArray): FloatArray? {
-        val env = OrtEnvironment.getEnvironment()
-        val s = session ?: env.createSession(file.path, OrtSession.SessionOptions()).also { session = it }
-        val feats = Fbank.features(samples)
-        if (feats.isEmpty()) return null
-        val buffer = FloatBuffer.allocate(feats.size * Fbank.BANDS)
-        feats.forEach { buffer.put(it) }
-        buffer.rewind()
-        return OnnxTensor.createTensor(env, buffer, longArrayOf(1, feats.size.toLong(), Fbank.BANDS.toLong())).use { input ->
-            s.run(mapOf("feats" to input)).use { result ->
-                ((result.get(0).value as? Array<*>)?.firstOrNull() as? FloatArray)?.let(VoiceId::normalize)
-            }
+        val e = extractor ?: SpeakerEmbeddingExtractor(config = SpeakerEmbeddingExtractorConfig(model = file.path, numThreads = 2)).also { extractor = it }
+        val stream = e.createStream()
+        try {
+            stream.acceptWaveform(FloatArray(samples.size) { samples[it] / 32768f }, Fbank.RATE)
+            stream.inputFinished()
+            if (!e.isReady(stream)) return null
+            return VoiceId.normalize(e.compute(stream))
+        } finally {
+            stream.release()
         }
     }
 
