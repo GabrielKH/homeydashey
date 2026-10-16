@@ -60,7 +60,7 @@ android {
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
         // sherpa-onnx brings ONNX Runtime 1.27.1 and onnxruntime-android 1.27.0; either serves both.
-        jniLibs.pickFirsts += "lib/arm64-v8a/libonnxruntime.so"
+        jniLibs.pickFirsts += "**/libonnxruntime.so"
     }
 
     // The face model is memory-mapped straight from the APK.
