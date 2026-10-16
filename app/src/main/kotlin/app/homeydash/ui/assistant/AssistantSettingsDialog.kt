@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -38,8 +39,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import app.homeydash.ui.components.AppDialog
+import androidx.activity.compose.BackHandler
 import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
@@ -83,15 +84,30 @@ fun AssistantSettingsDialog(
     preview: (local: Boolean) -> Pair<HomeView, AgentTools>,
     onFaces: () -> Unit,
     onDismiss: () -> Unit,
+    /** The page to open on, so coming back from People lands where it left. */
+    initialPage: String = "main",
+    onPage: (String) -> Unit = {},
+    /** Back from the main page: to the dashboard's Settings. */
+    onBack: () -> Unit = onDismiss,
     moods: Map<String, app.homeydash.homey.Mood> = emptyMap(),
     flows: suspend () -> List<String> = { emptyList() },
     onRunRoutine: (app.homeydash.agent.Routine) -> Unit = {},
 ) {
     val g = GlassTheme.colors
     val update = services.settingsStore::update
-    var page by remember { mutableStateOf("main") }
+    var page by remember { mutableStateOf(initialPage) }
     var editing by remember { mutableStateOf<app.homeydash.agent.Routine?>(null) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    LaunchedEffect(page) { onPage(page) }
+    val back: () -> Unit = {
+        when (page) {
+            "main" -> onBack()
+            "routine" -> page = "routines"
+            "devices", "preview" -> page = "privacy"
+            else -> page = "main"
+        }
+        Unit
+    }
+    AppDialog(onDismiss) {
         Column(
             Modifier
                 .dialogSize(620.dp)
@@ -100,8 +116,9 @@ fun AssistantSettingsDialog(
                 .padding(vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            BackHandler(onBack = back)
             Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (page != "main") RoundButton(Sym.arrowBack, { page = when (page) { "routine" -> "routines"; "devices", "preview" -> "privacy"; else -> "main" } }, size = 44.dp, filledIcon = false)
+                RoundButton(Sym.arrowBack, back, size = 44.dp, filledIcon = false)
                 Text(
                     when (page) {
                         "devices" -> "Hidden from the assistant"

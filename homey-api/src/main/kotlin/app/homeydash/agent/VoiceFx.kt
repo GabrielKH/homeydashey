@@ -60,6 +60,28 @@ class VoiceTrack(val level: FloatArray, val low: FloatArray, val mid: FloatArray
     }
 }
 
+/**
+ * An answer cut into sentences, so a voice made on the tablet can start speaking the first
+ * while the rest is still being made. Very short pieces ("Done.") ride along with the next.
+ */
+object Sentences {
+    private val END = Regex("""(?<=[.!?…:;])\s+""")
+
+    fun split(text: String, shortest: Int = 24): List<String> {
+        val parts = text.trim().split(END).map { it.trim() }.filter { it.isNotEmpty() }
+        val out = mutableListOf<String>()
+        var carry = ""
+        for (p in parts) {
+            val joined = if (carry.isEmpty()) p else "$carry $p"
+            if (joined.length < shortest) carry = joined else { out += joined; carry = "" }
+        }
+        if (carry.isNotEmpty()) {
+            if (out.isEmpty()) out += carry else out[out.lastIndex] = out.last() + " " + carry
+        }
+        return out
+    }
+}
+
 /** Reads and writes WAV files, gives voices their character, and measures them for the face. */
 object VoiceFx {
     const val FPS = 60

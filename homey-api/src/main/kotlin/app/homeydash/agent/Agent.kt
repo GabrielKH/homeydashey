@@ -457,6 +457,7 @@ class Agent(
     /** How to behave: the same for every question, so it can be kept worked through. */
     fun rules(settings: AgentSettings): String = buildString {
         append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
+        if (settings.persona == Persona.Nova) append("Your name is ").append(settings.nameOf(Persona.Nova)).append(". ")
         append("You can see and control the home only through your tools; everything goes through the Homey smart home hub.\n")
         append(
             when {

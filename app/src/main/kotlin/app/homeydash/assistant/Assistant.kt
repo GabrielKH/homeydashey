@@ -424,6 +424,8 @@ class Assistant(
      * being said, so only the question itself is left to read when it arrives.
      */
     private fun warmUp() {
+        // TARS's voice is loaded while the question is said, so he speaks without a pause.
+        if (settings.speak) services.output.warm(settings.voice)
         val local = settings.local?.takeIf { it.usable && settings.mode != BrainMode.Internet } ?: return
         val followUp = conversing
         scope.launch {

@@ -384,6 +384,9 @@ fun DashboardScreen(
     val assistantSettings by assistantServices.settings.collectAsStateWithLifecycle()
     var showAssistantSettings by rememberSaveable { mutableStateOf(false) }
     var showFaces by rememberSaveable { mutableStateOf(false) }
+    var assistantPage by rememberSaveable { mutableStateOf("main") }
+    // Something opened from Settings goes back to Settings when it closes.
+    var backToSettings by rememberSaveable { mutableStateOf(false) }
     val assistant = remember(store) { Assistant(assistantServices, store, scope) }
     val currentHidden by rememberUpdatedState(hidden)
     remember(assistant) {
@@ -520,10 +523,10 @@ fun DashboardScreen(
             onAccent = display::setAccent,
             accentOpacity = accentOpacity,
             onAccentOpacity = display::setAccentOpacity,
-            onHomeBackground = { showSettings = false; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
-            onChooseDevices = { showSettings = false; showDevices = true },
-            onChooseRooms = { showSettings = false; actions.open(Sheet.Rooms) },
-            onWeather = { showSettings = false; actions.open(Sheet.Weather) },
+            onHomeBackground = { showSettings = false; backToSettings = true; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
+            onChooseDevices = { showSettings = false; backToSettings = true; showDevices = true },
+            onChooseRooms = { showSettings = false; backToSettings = true; actions.open(Sheet.Rooms) },
+            onWeather = { showSettings = false; backToSettings = true; actions.open(Sheet.Weather) },
             uiScale = uiScale,
             onUiScale = display::setUiScale,
             palette = Palette.of(palette),
@@ -536,14 +539,14 @@ fun DashboardScreen(
             onWakeOnProximity = display::setWakeOnProximity,
             kiosk = kiosk,
             onKiosk = display::setKiosk,
-            onCalendars = { showSettings = false; actions.open(Sheet.Calendars) },
-            onAssistant = { showSettings = false; showAssistantSettings = true },
+            onCalendars = { showSettings = false; backToSettings = true; actions.open(Sheet.Calendars) },
+            onAssistant = { showSettings = false; backToSettings = true; assistantPage = "main"; showAssistantSettings = true },
             version = updater.currentVersion,
             update = update,
             onCheckUpdate = { scope.launch { updater.check() } },
             onInstallUpdate = { updater.install(screenContext) },
             onForget = { showSettings = false; onForget() },
-            onDismiss = { showSettings = false },
+            onDismiss = { showSettings = false; backToSettings = false },
         )
     }
     if (showAssistantSettings) {
@@ -554,15 +557,30 @@ fun DashboardScreen(
             devices = snapshot.devices,
             hidden = hidden,
             preview = assistant::preview,
+            initialPage = assistantPage,
+            onPage = { assistantPage = it },
+            onBack = { showAssistantSettings = false },
             onFaces = { showAssistantSettings = false; showFaces = true },
-            onDismiss = { showAssistantSettings = false },
+            onDismiss = { showAssistantSettings = false; backToSettings = false },
             moods = snapshot.moods,
             flows = { actions.flows().map { it.name } },
-            onRunRoutine = { showAssistantSettings = false; assistant.runRoutine(it) },
+            onRunRoutine = { showAssistantSettings = false; backToSettings = false; assistant.runRoutine(it) },
         )
     }
     if (showFaces) {
-        FacesDialog(assistantServices, assistantSettings, onDismiss = { showFaces = false; showAssistantSettings = true })
+        FacesDialog(
+            assistantServices,
+            assistantSettings,
+            onDismiss = { showFaces = false; assistantPage = "privacy"; showAssistantSettings = true },
+            onClose = { showFaces = false; backToSettings = false },
+        )
+    }
+    // Closing what Settings opened shows Settings again, like a back button.
+    LaunchedEffect(actions.sheet, showDevices, showAssistantSettings, showFaces, showSettings) {
+        if (backToSettings && actions.sheet == null && !showDevices && !showAssistantSettings && !showFaces && !showSettings) {
+            backToSettings = false
+            showSettings = true
+        }
     }
     if (showDevices) {
         DevicePickerDialog(

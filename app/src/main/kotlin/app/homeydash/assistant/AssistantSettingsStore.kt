@@ -64,6 +64,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         wakeSound = enumOr(p[WAKE_SOUND], app.homeydash.agent.WakeSound.Hum),
         persona = enumOr(p[PERSONA], app.homeydash.agent.Persona.Nova),
         humor = p[HUMOR]?.toIntOrNull()?.coerceIn(0, 100) ?: 75,
+        novaName = p[NOVA_NAME] ?: AgentSettings().novaName,
         classicRed = p[CLASSIC_RED] == "true",
         useWhisper = p[USE_WHISPER] == "true",
         whisperUrl = p[WHISPER_URL].orEmpty(),
@@ -103,6 +104,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[WAKE_SOUND] = s.wakeSound.name
         p[PERSONA] = s.persona.name
         p[HUMOR] = s.humor.toString()
+        p[NOVA_NAME] = s.novaName
         p[CLASSIC_RED] = s.classicRed.toString()
         p[USE_WHISPER] = s.useWhisper.toString()
         p[WHISPER_URL] = s.whisperUrl.trim()
@@ -160,6 +162,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WAKE_SOUND = stringPreferencesKey("wake_sound")
         val PERSONA = stringPreferencesKey("persona")
         val HUMOR = stringPreferencesKey("humor")
+        val NOVA_NAME = stringPreferencesKey("nova_name")
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val USE_WHISPER = stringPreferencesKey("use_whisper")
         val WHISPER_URL = stringPreferencesKey("whisper_url")

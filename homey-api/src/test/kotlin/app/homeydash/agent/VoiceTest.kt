@@ -102,4 +102,36 @@ class VoiceTest {
         assertEquals("http://10.0.0.5:8090", AgentSettings(local = Connection(Provider.Ollama, "http://10.0.0.5:11434/v1", "", "q")).voiceServerUrlOrGuess())
         assertEquals("", AgentSettings().voiceServerUrlOrGuess())
     }
+
+    @Test
+    fun `answers are cut into sentences, short ones riding along`() {
+        assertEquals(
+            listOf("Done. The kitchen lights are off now.", "Humor setting at seventy-five percent, as usual."),
+            Sentences.split("Done. The kitchen lights are off now. Humor setting at seventy-five percent, as usual."),
+        )
+        assertEquals(listOf("Okay."), Sentences.split("Okay."))
+        assertEquals(listOf("The heating is on, and the window is open. Bold."), Sentences.split("The heating is on, and the window is open. Bold."))
+    }
+
+    @Test
+    fun `each character's name keeps its own voiceprints`() {
+        val v = FloatArray(4) { 1f }
+        val old = KnownPerson("g", "Gabriel", Role.Owner, emptyList())
+        val p = old.withPrints("Nova", listOf(v)).withPrints("TARS", listOf(v, v))
+        assertEquals(1, p.printsFor("nova").size)
+        assertEquals(2, p.printsFor("Hey TARS").size)
+        assertEquals(2, p.forWake("Tars").print.size)
+        assertTrue(p.forWake("Max").print.isEmpty())
+    }
+
+    @Test
+    fun `switching characters swaps the wake name and keeps Nova's own`() {
+        val kim = AgentSettings(wakeName = "Kim")
+        val tars = kim.asCharacter(Persona.Tars)
+        assertEquals("TARS", tars.wakeName)
+        assertEquals("Kim", tars.nameOf(Persona.Nova))
+        assertEquals("Kim", tars.asCharacter(Persona.Nova).wakeName)
+        assertEquals("TARS", kim.nameOf(Persona.Tars))
+        assertTrue(Agent(ChatClient(okhttp3.OkHttpClient())).rules(kim).contains("Your name is Kim."))
+    }
 }

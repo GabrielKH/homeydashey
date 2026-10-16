@@ -22,8 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import app.homeydash.ui.components.AppDialog
 import app.homeydash.ui.components.dialogSize
 import app.homeydash.homey.Device
 import app.homeydash.homey.Zone
@@ -49,7 +48,7 @@ fun DevicePickerDialog(
     val rows = remember(zones, devices) {
         devices.values.sortedWith(compareBy<Device>({ it.zone?.let(zones::get)?.name?.lowercase() ?: "~" }, { it.name.lowercase() }))
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    AppDialog(onDismiss) {
         Column(
             Modifier
                 .dialogSize(620.dp)

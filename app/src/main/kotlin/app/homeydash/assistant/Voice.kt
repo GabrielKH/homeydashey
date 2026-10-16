@@ -17,6 +17,13 @@ import app.homeydash.agent.VoiceStyle
 import app.homeydash.agent.VoiceTrack
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.AudioFormat
+import android.media.AudioTrack
+import app.homeydash.agent.Pcm
+import kotlinx.coroutines.channels.produce
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -274,7 +281,14 @@ class SpeechOutput(
      * level, low, mid and high (0..1) about 60 times a second while it plays.
      */
     suspend fun speak(text: String, language: Language, voice: VoiceStyle = VoiceStyle.Natural, onFrame: (FloatArray) -> Unit = {}) {
-        if (!ready || text.isBlank()) return
+        if (text.isBlank()) return
+        // TARS's voice is made on the tablet sentence by sentence: he starts on the first one
+        // while the rest is still being made, instead of after the whole answer.
+        if (voice == VoiceStyle.Tars && tars.isReady) {
+            val swedish = swedish(text, language)
+            if (stream(app.homeydash.agent.Sentences.split(text), { tars.speak(it, swedish) }, onFrame)) return
+        }
+        if (!ready) return
         val spoken = render(text, language, voice, File(appContext.cacheDir, "say.wav"))
         if (spoken == null) {
             plain(text, language, voice)
@@ -326,6 +340,82 @@ class SpeechOutput(
     fun stop() {
         tts.stop()
         player?.let { runCatching { it.stop() } }
+        track?.let { runCatching { it.pause(); it.flush() } }
+        track = null
+    }
+
+    @Volatile private var track: AudioTrack? = null
+
+    /** Gets TARS's voice ready before he has something to say. */
+    fun warm(voice: VoiceStyle) {
+        if (voice == VoiceStyle.Tars) tars.warm()
+    }
+
+    private fun swedish(text: String, language: Language) = when (language) {
+        Language.Swedish -> true
+        Language.English -> false
+        Language.Auto -> Confirmation.looksSwedish(text)
+    }
+
+    /**
+     * Plays [sentences] as they are made: the next one is made while the one before plays.
+     * False when not even the first could be made, so another voice can take over.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun stream(sentences: List<String>, make: suspend (String) -> Pcm?, onFrame: (FloatArray) -> Unit): Boolean = coroutineScope {
+        val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(it) } }
+        val first = made.receiveCatching().getOrNull() ?: return@coroutineScope false
+        val rate = first.sampleRate
+        val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val t = AudioTrack.Builder()
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+            .setBufferSizeInBytes(maxOf(min, rate / 5 * 2))
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        track = t
+        // Where each sentence starts, in frames, with its levels for the face.
+        val parts = java.util.concurrent.CopyOnWriteArrayList<Pair<Long, VoiceTrack>>()
+        var written = 0L
+        val meter = launch {
+            while (true) {
+                val head = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                val part = parts.lastOrNull { it.first <= head }
+                onFrame(part?.let { (start, levels) -> levels.at((head - start) * 1000 / rate) } ?: FloatArray(4))
+                delay(16)
+            }
+        }
+        try {
+            t.play()
+            var next: Pcm? = first
+            while (next != null && track === t) {
+                val pcm = next
+                if (pcm.sampleRate == rate) {
+                    parts += written to VoiceFx.analyse(pcm)
+                    withContext(Dispatchers.IO) {
+                        var offset = 0
+                        while (offset < pcm.samples.size && track === t) {
+                            ensureActive()
+                            val n = t.write(pcm.samples, offset, pcm.samples.size - offset)
+                            if (n <= 0) break
+                            offset += n
+                        }
+                    }
+                    written += pcm.samples.size
+                }
+                next = made.receiveCatching().getOrNull()
+            }
+            // Let the last of it play out.
+            while (track === t && (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) < written && t.playState == AudioTrack.PLAYSTATE_PLAYING) delay(20)
+        } finally {
+            meter.cancel()
+            made.cancel()
+            onFrame(FloatArray(4))
+            runCatching { t.stop() }
+            t.release()
+            if (track === t) track = null
+        }
+        true
     }
 
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */

@@ -262,10 +262,10 @@ class FaceService(private val context: Context) {
         save()
     }
 
-    /** Adds voiceprints (see [app.homeydash.agent.VoiceId]) to someone's. */
-    fun addPrints(id: String, more: List<FloatArray>) {
+    /** Adds voiceprints (see [app.homeydash.agent.VoiceId]) said with [wakeName] to someone's. */
+    fun addPrints(id: String, wakeName: String, more: List<FloatArray>) {
         if (more.isEmpty()) return
-        _people.update { list -> list.map { if (it.id == id) it.copy(print = app.homeydash.agent.VoiceId.with(it.print, more)) else it } }
+        _people.update { list -> list.map { if (it.id == id) it.withPrints(wakeName, more) else it } }
         save()
     }
 
@@ -288,7 +288,7 @@ class FaceService(private val context: Context) {
                     put("role", p.role.name)
                     put("samples", vectors(p.samples))
                     put("voice", vectors(p.voice))
-                    put("print", vectors(p.print))
+                    put("prints", buildJsonObject { p.prints.forEach { (wake, list) -> put(wake, vectors(list)) } })
                 })
             }
         }
@@ -312,7 +312,9 @@ class FaceService(private val context: Context) {
                 role = Role.entries.firstOrNull { it.name == o["role"]?.jsonPrimitive?.contentOrNull } ?: Role.Family,
                 samples = vectors(o["samples"]),
                 voice = vectors(o["voice"]),
-                print = vectors(o["print"]),
+                // Voiceprints from before each character had its own were all taught on "Nova".
+                prints = (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }
+                    ?: vectors(o["print"]).takeIf { it.isNotEmpty() }?.let { mapOf(app.homeydash.agent.WakeName.key("Nova") to it) }.orEmpty(),
             )
         }
     }

@@ -47,7 +47,7 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
     private val espeak = File(dir, "espeak-ng-data")
     private val http = http.newBuilder().readTimeout(60, TimeUnit.SECONDS).build()
     private var job: Job? = null
-    private val engines = mutableMapOf<Boolean, OfflineTts>()
+    private val engines = java.util.concurrent.ConcurrentHashMap<Boolean, OfflineTts>()
 
     private fun ready() = english.exists() && swedish.exists() && tokens.exists() && File(espeak, "phontab").exists()
 
@@ -150,22 +150,40 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
         runCatching { synth(text, inSwedish) }.getOrNull()
     }
 
+    /** Whether his voice is on the tablet. */
+    val isReady: Boolean get() = _state.value == State.Ready
+
+    /**
+     * Loads the voice ahead of the first answer (reading the 60 MB model takes a moment), so
+     * TARS starts talking as soon as the text is there.
+     */
+    fun warm(inSwedish: Boolean = false) {
+        if (!isReady || engines.containsKey(inSwedish)) return
+        scope.launch(Dispatchers.Default) { runCatching { engine(inSwedish) } }
+    }
+
+    @Volatile private var neutral: Int? = null
+
     @Synchronized
-    private fun synth(text: String, inSwedish: Boolean): Pcm {
-        val tts = engines.getOrPut(inSwedish) {
+    private fun engine(inSwedish: Boolean): OfflineTts =
+        engines.getOrPut(inSwedish) {
             val model = if (inSwedish) swedish else english
             OfflineTts(
                 config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
                         vits = OfflineTtsVitsModelConfig(model = model.path, tokens = tokens.path, dataDir = espeak.path),
-                        numThreads = 2,
+                        numThreads = 4,
                     ),
                 ),
             )
         }
-        val cfg = Json.parseToJsonElement(config.readText()).jsonObject
+
+    @Synchronized
+    private fun synth(text: String, inSwedish: Boolean): Pcm {
+        val tts = engine(inSwedish)
         // The calm mood of TARS's eight sounds most like the film.
-        val audio = tts.generate(text, sid = PiperModel.speakerId(cfg, "neutral"), speed = 1f)
+        val sid = neutral ?: PiperModel.speakerId(Json.parseToJsonElement(config.readText()).jsonObject, "neutral").also { neutral = it }
+        val audio = tts.generate(text, sid = sid, speed = 1f)
         val samples = ShortArray(audio.samples.size) { i -> (audio.samples[i].coerceIn(-1f, 1f) * 32767).toInt().toShort() }
         return Pcm(audio.sampleRate, samples)
     }

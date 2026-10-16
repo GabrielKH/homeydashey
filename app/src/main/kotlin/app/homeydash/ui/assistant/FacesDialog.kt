@@ -36,8 +36,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import app.homeydash.ui.components.AppDialog
+import androidx.compose.runtime.key
+import app.homeydash.agent.Persona
+import androidx.activity.compose.BackHandler
 import app.homeydash.ui.components.dialogSize
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.homeydash.agent.Access
@@ -59,13 +61,14 @@ private const val SAMPLES = 8
 
 /** Settings → Assistant → People: who the tablet knows by face or voice, and what each may do. */
 @Composable
-fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss: () -> Unit) {
+fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss: () -> Unit, onClose: () -> Unit = onDismiss) {
     val g = GlassTheme.colors
     val faces = services.faces
     val people by faces.people.collectAsState()
     var adding by remember { mutableStateOf(false) }
-    var teaching by remember { mutableStateOf<String?>(null) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // Who is being taught, and the name they say ("TARS" or Nova's name).
+    var teaching by remember { mutableStateOf<Pair<String, String>?>(null) }
+    AppDialog(onDismiss) {
         Column(
             Modifier
                 .dialogSize(560.dp)
@@ -74,9 +77,19 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                 .padding(vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+            val back: () -> Unit = {
+                when {
+                    teaching != null -> teaching = null
+                    adding -> adding = false
+                    else -> onDismiss()
+                }
+                Unit
+            }
+            BackHandler(onBack = back)
+            Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                RoundButton(Sym.arrowBack, back, size = 44.dp, filledIcon = false)
                 Text("People", style = MaterialTheme.typography.headlineMedium, color = g.fg, modifier = Modifier.weight(1f))
-                RoundButton(Sym.close, onDismiss, size = 44.dp, filledIcon = false)
+                RoundButton(Sym.close, onClose, size = 44.dp, filledIcon = false)
             }
             // Only the content scrolls; the title and close button stay put.
             Column(
@@ -96,11 +109,11 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                         color = g.danger,
                     )
                 }
-                val learning = people.firstOrNull { it.id == teaching }
+                val learning = people.firstOrNull { it.id == teaching?.first }
                 if (learning != null) {
-                    VoiceEnrol(services, settings, learning) { teaching = null }
+                    key(teaching) { VoiceEnrol(services, settings, learning, teaching!!.second) { teaching = null } }
                 } else if (adding) {
-                    Enrol(services, onVoiceOnly = { id -> adding = false; teaching = id }) { adding = false }
+                    Enrol(services, onVoiceOnly = { id -> adding = false; teaching = id to settings.wakeName }) { adding = false }
                 } else {
                     people.forEach { p ->
                         Column(Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -109,27 +122,32 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                                 Text(p.name, style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
                                 Text("Remove", style = MaterialTheme.typography.labelLarge, color = g.danger, modifier = Modifier.pressable({ faces.remove(p.id) }).padding(8.dp))
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    listOfNotNull(
-                                        "Face".takeIf { p.samples.isNotEmpty() },
-                                        when {
-                                            p.print.isNotEmpty() -> "Voice"
-                                            p.voice.isNotEmpty() -> "Voice (teach again for sharper recognition)"
-                                            else -> null
-                                        },
+                            Text(
+                                when {
+                                    p.samples.isNotEmpty() -> "Face known"
+                                    else -> "Face not learned"
+                                } + if (p.voice.isNotEmpty() && p.prints.isEmpty()) ". Voice taught before each character had its own: teach it again for sharper recognition." else "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = g.muted,
+                            )
+                            // "Hey TARS" and "Hey Nova" sound different, so each is taught on its own.
+                            listOf(Persona.Nova, Persona.Tars).forEach { character ->
+                                val name = settings.nameOf(character)
+                                val taught = p.printsFor(name).isNotEmpty()
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Voice for \"Hey $name\": " + if (taught) "taught" else "not taught yet",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (taught) g.fg else g.muted,
+                                        modifier = Modifier.weight(1f),
                                     )
-                                        .joinToString(" and ").ifEmpty { "Nothing learned yet" },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = g.muted,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Text(
-                                    if (p.voice.isEmpty() && p.print.isEmpty()) "Teach voice" else "Teach more of the voice",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = g.fg,
-                                    modifier = Modifier.pressable({ teaching = p.id }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
-                                )
+                                    Text(
+                                        if (taught) "Teach more" else "Teach",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = g.fg,
+                                        modifier = Modifier.pressable({ teaching = p.id to name }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
+                                    )
+                                }
                             }
                             RoleChoice(p.role) { faces.setRole(p.id, it) }
                         }

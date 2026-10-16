@@ -86,7 +86,8 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
         LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, settings.micSensitivity, people) {
             // Give the speech recogniser or text-to-speech a moment to let go of the audio.
             delay(600)
-            val known = people.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
+            // Each character's name is taught on its own; match against the name in use.
+            val known = people.map { it.forWake(settings.wakeName) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
             var token: Int? = null
             var deciding = false
             token = wake.start(
@@ -96,7 +97,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                         deciding = true
                         launch {
                             val print = sound?.let { services.prints.of(it) }
-                            val who = whoSpoke(services, known, vector, print)
+                            val who = whoSpoke(services, settings.wakeName, known, vector, print)
                             services.trace("wake", who.log, localOnly = true)
                             if (!settings.onlyKnownVoices || known.isEmpty() || who.person != null) {
                                 wake.stop(token)
@@ -131,12 +132,12 @@ private class Speaker(val person: KnownPerson?, val log: String)
  * Vosk match only for people taught before voiceprints existed. A wake that clearly was someone
  * teaches the tablet a little more of their voice, so it keeps getting surer.
  */
-private fun whoSpoke(services: AssistantServices, known: List<KnownPerson>, vector: FloatArray?, print: FloatArray?): Speaker {
+private fun whoSpoke(services: AssistantServices, wakeName: String, known: List<KnownPerson>, vector: FloatArray?, print: FloatArray?): Speaker {
     val withPrints = known.filter { it.print.isNotEmpty() }
     if (print != null && withPrints.isNotEmpty()) {
         val person = VoiceId.match(print, withPrints)
         val best = withPrints.maxOf { VoiceId.margin(print, it) }
-        if (person != null && VoiceId.margin(print, person) >= LEARN_MARGIN) services.faces.addPrints(person.id, listOf(print))
+        if (person != null && VoiceId.margin(print, person) >= LEARN_MARGIN) services.faces.addPrints(person.id, wakeName, listOf(print))
         if (person != null) return Speaker(person, "Wake name heard; voiceprint matched someone taught (%.2f over their bar).".format(best))
     }
     val older = known.filter { it.print.isEmpty() && it.voice.isNotEmpty() }
@@ -145,7 +146,7 @@ private fun whoSpoke(services: AssistantServices, known: List<KnownPerson>, vect
         if (FaceMatcher.voiceScore(vector, person) >= FaceMatcher.VOICE_LEARN) {
             services.faces.addVoice(person.id, listOf(vector))
             // Their first voiceprints come from wakes the older match is sure of.
-            print?.let { services.faces.addPrints(person.id, listOf(it)) }
+            print?.let { services.faces.addPrints(person.id, wakeName, listOf(it)) }
         }
         return Speaker(person, "Wake name heard; older voice match recognised someone taught.")
     }
@@ -212,7 +213,9 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
         }
         VoiceModels.State.Ready -> Unit
     }
-    NameField(settings.wakeName) { name -> update { it.copy(wakeName = name) } }
+    NameField(settings.wakeName) { name ->
+        update { it.copy(wakeName = name, novaName = if (it.persona == app.homeydash.agent.Persona.Nova && name.isNotBlank()) name.trim() else it.novaName) }
+    }
     val unknown = if (models == VoiceModels.State.Ready) {
         services.voiceModels.vocabulary?.let { WakeName.unknownWords(settings.wakeName, it) }.orEmpty()
     } else {
@@ -284,6 +287,8 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
 private fun NameField(value: String, onChange: (String) -> Unit) {
     val g = GlassTheme.colors
     var text by remember { mutableStateOf(value) }
+    // Picking TARS or Nova changes the name from outside the field.
+    LaunchedEffect(value) { if (value != text) text = value }
     Row(
         Modifier.fillMaxWidth().glass(PillShape).padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -306,7 +311,7 @@ private fun NameField(value: String, onChange: (String) -> Unit) {
  * speaker model's fingerprint of each is kept (no recording).
  */
 @Composable
-fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: KnownPerson, onDone: () -> Unit) {
+fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: KnownPerson, wakeName: String = settings.wakeName, onDone: () -> Unit) {
     val g = GlassTheme.colors
     val context = LocalContext.current
     val models by services.voiceModels.state.collectAsState()
@@ -319,8 +324,8 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     // Wait for the voiceprint model too, unless it can't be had; then only the older voice match learns.
     val printsSettled = printModel == app.homeydash.assistant.VoicePrints.State.Ready || printModel is app.homeydash.assistant.VoicePrints.State.Failed
-    val ready = models == VoiceModels.State.Ready && printsSettled && WakeName.clean(settings.wakeName).isNotEmpty()
-    val phrase = "Hey ${settings.wakeName.trim()}"
+    val ready = models == VoiceModels.State.Ready && printsSettled && WakeName.clean(wakeName).isNotEmpty()
+    val phrase = "Hey ${wakeName.trim()}"
 
     LaunchedEffect(Unit) {
         if (!granted) permission.launch(Manifest.permission.RECORD_AUDIO)
@@ -332,7 +337,7 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
             val wake = services.wake
             wake.enrolling = true
             val token = wake.start(
-                settings.wakeName,
+                wakeName,
                 onHeard = { _, vector, sound ->
                     if (vector == null) error = "Didn't catch that; say it a little slower." else if (samples.size < VOICE_SAMPLES) {
                         error = null
@@ -354,7 +359,7 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                 delay(400)
                 // Teaching again adds to what the tablet already knows of the voice.
                 services.faces.addVoice(person.id, samples.toList())
-                services.faces.addPrints(person.id, prints.toList())
+                services.faces.addPrints(person.id, wakeName, prints.toList())
                 onDone()
             }
         }
@@ -367,7 +372,7 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                 models is VoiceModels.State.Downloading -> "Getting the voice models first…"
                 printModel is app.homeydash.assistant.VoicePrints.State.Downloading -> "Getting the voiceprint model first (about 26 MB, once)…"
                 models is VoiceModels.State.Failed -> (models as VoiceModels.State.Failed).message
-                WakeName.clean(settings.wakeName).isEmpty() -> "Give the assistant a name under Voice activation first."
+                WakeName.clean(wakeName).isEmpty() -> "Give the assistant a name under Voice activation first."
                 else -> "${person.name}, say \"$phrase\" ${VOICE_WAYS[samples.size.coerceAtMost(VOICE_WAYS.lastIndex)]} (${samples.size + 1} of $VOICE_SAMPLES)."
             },
             style = MaterialTheme.typography.titleMedium,

@@ -152,6 +152,8 @@ data class AgentSettings(
     /** Who the assistant is, and for TARS how funny, 0–100 %. */
     val persona: Persona = Persona.Nova,
     val humor: Int = 75,
+    /** Nova's wake name, kept while TARS answers to his own. */
+    val novaName: String = "Nova",
     /** The scanner in KITT's red instead of the theme's accent. */
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
@@ -200,13 +202,26 @@ data class AgentSettings(
      * his own voice; back to Nova undoes what TARS changed and keeps the rest.
      */
     fun asCharacter(p: Persona): AgentSettings = when (p) {
-        Persona.Tars -> copy(persona = p, voice = VoiceStyle.Tars, wakeSound = WakeSound.Huh, wakeName = TARS_WAKE_NAME)
+        Persona.Tars -> copy(
+            persona = p,
+            voice = VoiceStyle.Tars,
+            wakeSound = WakeSound.Huh,
+            wakeName = TARS_WAKE_NAME,
+            novaName = if (persona == Persona.Nova) wakeName.trim().ifBlank { novaName } else novaName,
+        )
         Persona.Nova -> copy(
             persona = p,
             voice = if (voice == VoiceStyle.Tars) VoiceStyle.Natural else voice,
             wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Hum else wakeSound,
-            wakeName = if (wakeName.equals(TARS_WAKE_NAME, ignoreCase = true)) "Nova" else wakeName,
+            wakeName = if (wakeName.trim().equals(TARS_WAKE_NAME, ignoreCase = true)) novaName else wakeName,
         )
+    }
+
+    /** The name [p] answers to: TARS's own, or the name given to Nova. */
+    fun nameOf(p: Persona): String = when {
+        p == Persona.Tars -> TARS_WAKE_NAME
+        persona == Persona.Nova -> wakeName.trim().ifBlank { novaName }
+        else -> novaName
     }
 
     /** The language answers are spoken in: TARS answers in English whatever language he hears. */
