@@ -6,6 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -90,6 +91,7 @@ class VacuumsTest {
 
     @Test fun `roborock state and main buttons`() {
         val c = Vacuums.controls(roborock, cards)
+        assertEquals(c.state, Vacuums.state(roborock))
         assertEquals(VacuumState.Charging, c.state)
         assertEquals(87.0, c.battery)
         assertTrue(c.charging)
@@ -166,6 +168,7 @@ class VacuumsTest {
         )
         val c = Vacuums.controls(device, emptyList())
         assertEquals(VacuumState.Cleaning, c.state)
+        assertEquals(c.state, Vacuums.state(device))
         assertEquals(VacuumCommand.Set("vacuumcleaner_state", JsonPrimitive("cleaning")), c.start)
         assertEquals(VacuumCommand.Set("vacuumcleaner_state", JsonPrimitive("docked")), c.dock)
         assertEquals(VacuumCommand.Set("vacuumcleaner_state", JsonPrimitive("stopped")), c.stop)
@@ -186,8 +189,18 @@ class VacuumsTest {
         )
         val c = Vacuums.controls(device, emptyList())
         assertEquals(VacuumState.Returning, c.state)
+        assertEquals(c.state, Vacuums.state(device))
         assertEquals("Returning to dock", c.statusText)
         assertFalse(c.charging)
         assertNotNull(Vacuums.readable("button.reset_mesh_filter"))
+    }
+
+    @Test fun `an update to the same value keeps the device`() {
+        val device = Device(
+            "x", "X", capabilities = listOf("onoff"),
+            capabilitiesObj = mapOf("onoff" to Capability("onoff", type = "boolean", value = JsonPrimitive(true))),
+        )
+        assertSame(device, device.withCapabilityValue("onoff", JsonPrimitive(true)))
+        assertEquals(JsonPrimitive(false), device.withCapabilityValue("onoff", JsonPrimitive(false)).capability("onoff")?.value)
     }
 }

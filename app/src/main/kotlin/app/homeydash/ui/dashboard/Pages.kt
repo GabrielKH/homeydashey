@@ -105,48 +105,37 @@ fun OverviewScreen(
     widget: @Composable (String) -> Unit,
 ) {
     val g = GlassTheme.colors
-    val now = rememberNow()
-    val context = LocalContext.current
-    val timeFormat = remember(context) { DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm") }
-    val dateFormat = remember { DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()) }
-    val lightsOn = rooms.sumOf { it.lightsOn }
-    val locks = rooms.flatMap { it.devices }.filter { it.capability("locked") != null }
-    val unlocked = locks.count { it.capability("locked")?.booleanValue != true }
+    val lightsOn = remember(rooms) { rooms.sumOf { it.lightsOn } }
+    val locks = remember(rooms) { rooms.flatMap { it.devices }.filter { it.capability("locked") != null } }
+    val unlocked = remember(locks) { locks.count { it.capability("locked")?.booleanValue != true } }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
     // Two lanes on a small tablet, three on the 11", four on a big screen.
     val laneCount = (maxWidth / 380.dp).toInt().coerceIn(2, 4)
     val roomsById = remember(rooms) { rooms.associateBy { ROOM_KEY + it.zone.id } }
     val favouritesById = remember(favourites) { favourites.associateBy { FAV + it.id } }
-    val laneCards = buildList {
+    val hasPlayer = player != null
+    val laneCards = remember(hasPlayer, favouritesById, roomsById) { buildList {
         add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
         add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
         add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
-        if (player != null) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
+        if (hasPlayer) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
         favouritesById.forEach { (key, device) ->
             val wide = tileSpan(device) > 1
             add(LaneCard(key, LaneCard.Kind.Device, wide = wide, height = if (wide) 310 else 148))
         }
         roomsById.keys.forEach { add(LaneCard(it, LaneCard.Kind.Room, wide = false, height = 148)) }
-    }
-    val wideKeys = laneCards.filter { it.wide }.map { it.key }.toSet()
+    } }
+    val wideKeys = remember(laneCards) { laneCards.filter { it.wide }.map { it.key }.toSet() }
     // The lanes while a card is dragged, until the saved layout catches up.
     var draft by remember { mutableStateOf<List<List<String>>?>(null) }
     LaunchedEffect(order) { draft = null }
-    val lanes = draft ?: OverviewLanes.place(OverviewLanes.parse(order), laneCards, laneCount)
+    val placed = remember(order, laneCards, laneCount) { OverviewLanes.place(OverviewLanes.parse(order), laneCards, laneCount) }
+    val lanes = draft ?: placed
     val autoArrange = { onOrder(OverviewLanes.flatten(OverviewLanes.auto(laneCards, laneCount))) }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.Bottom) {
-            Column(Modifier.weight(1f)) {
-                Text(greeting(now.hour), style = MaterialTheme.typography.bodyLarge, color = g.muted)
-                Text(now.format(timeFormat), style = MaterialTheme.typography.displayLarge, color = g.fg)
-                Text(
-                    now.format(dateFormat).replaceFirstChar { it.titlecase(Locale.getDefault()) },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = g.muted,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
+            OverviewClock(Modifier.weight(1f))
             if (actions.rearrange.editing) {
                 DoneChip(actions, Modifier.padding(bottom = 4.dp), onAutoArrange = autoArrange)
             } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) {
@@ -213,6 +202,26 @@ fun OverviewScreen(
             }
         }
     }
+    }
+}
+
+/** The greeting, time and date; on its own so the minute ticking redraws only this, not the cards. */
+@Composable
+private fun OverviewClock(modifier: Modifier) {
+    val g = GlassTheme.colors
+    val now = rememberNow()
+    val context = LocalContext.current
+    val timeFormat = remember(context) { DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm") }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()) }
+    Column(modifier) {
+        Text(greeting(now.hour), style = MaterialTheme.typography.bodyLarge, color = g.muted)
+        Text(now.format(timeFormat), style = MaterialTheme.typography.displayLarge, color = g.fg)
+        Text(
+            now.format(dateFormat).replaceFirstChar { it.titlecase(Locale.getDefault()) },
+            style = MaterialTheme.typography.bodyLarge,
+            color = g.muted,
+            modifier = Modifier.padding(top = 2.dp),
+        )
     }
 }
 

@@ -114,7 +114,8 @@ class SpotifySearch(
             SpotifyHit.Kind.Album to "(the album|albumet|album|skivan|plattan)",
             SpotifyHit.Kind.Playlist to "(the playlist|playlist|spellistan|spellista)",
             SpotifyHit.Kind.Track to "(the song|song|the track|track|låten|låt|singeln)",
-        )
+        ).map { (kind, words) -> kind to Regex("(^|\\s)$words(\\s|$)", RegexOption.IGNORE_CASE) }
+        private val SPACES = Regex("\\s+")
         private val LEAD = Regex("^(play|spela( upp)?|put on|sätt på|starta)\\s+", RegexOption.IGNORE_CASE)
         private val TAIL = Regex("\\s+(on|from|på|från|i) spotify$", RegexOption.IGNORE_CASE)
         private val BY = Regex("\\s+(by|med|av)\\s+", RegexOption.IGNORE_CASE)
@@ -123,15 +124,14 @@ class SpotifySearch(
         fun parse(text: String): Pair<SpotifyHit.Kind?, String> {
             var q = text.trim().replace(LEAD, "").replace(TAIL, "").trim()
             var kind: SpotifyHit.Kind? = null
-            for ((k, words) in KIND_WORDS) {
-                val at = Regex("(^|\\s)$words(\\s|$)", RegexOption.IGNORE_CASE)
+            for ((k, at) in KIND_WORDS) {
                 if (at.containsMatchIn(q)) {
                     kind = k
                     q = q.replace(at, " ").trim()
                     break
                 }
             }
-            q = q.replace(BY, " ").replace(Regex("\\s+"), " ").trim()
+            q = q.replace(BY, " ").replace(SPACES, " ").trim()
             return kind to q
         }
 
@@ -202,6 +202,9 @@ class SpotifySearch(
  * when you paste a Spotify link, tied to the Spotify account already added to Sonos.
  */
 object SpotifyOnSonos {
+    private val SID = Regex("[?&]sid=(\\d+)")
+    private val SN = Regex("[?&]sn=(\\d+)")
+
     /** Sonos's number for Spotify in Europe; accounts in the Americas use 3079. */
     const val EUROPE = 2311
 
@@ -240,8 +243,8 @@ object SpotifyOnSonos {
     fun accountIn(items: List<SonosItem>): Account? = items.asSequence()
         .filter { it.uri.contains("spotify", ignoreCase = true) }
         .mapNotNull { item ->
-            val sid = Regex("[?&]sid=(\\d+)").find(item.uri)?.groupValues?.get(1) ?: return@mapNotNull null
-            val sn = Regex("[?&]sn=(\\d+)").find(item.uri)?.groupValues?.get(1) ?: return@mapNotNull null
+            val sid = SID.find(item.uri)?.groupValues?.get(1) ?: return@mapNotNull null
+            val sn = SN.find(item.uri)?.groupValues?.get(1) ?: return@mapNotNull null
             Account(sid, sn)
         }
         .firstOrNull()

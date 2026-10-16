@@ -17,6 +17,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
@@ -55,8 +56,11 @@ class MainActivity : ComponentActivity() {
             val flat by container.display.flat.collectAsStateWithLifecycle()
             HomeyDashTheme(themeMode, accent, accentOpacity, Palette.of(palette), flat) {
                 Box(Modifier.fillMaxSize()) {
-                    AppRoot(container)
                     val dimmed by screen.dimmed.collectAsStateWithLifecycle()
+                    // Under the black screen the dashboard isn't drawn at all (playing bars, progress), only kept.
+                    Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (dimmed) 0f else 1f }) {
+                        AppRoot(container)
+                    }
                     if (dimmed) DimmedScreen()
                 }
             }
@@ -117,6 +121,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private val CLOCK = DateTimeFormatter.ofPattern("HH:mm")
+
 /** The dimmed screen: black, with a faint clock so it still tells the time. */
 @Composable
 private fun DimmedScreen() {
@@ -128,7 +134,7 @@ private fun DimmedScreen() {
     }
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         Text(
-            time.format(DateTimeFormatter.ofPattern("HH:mm")),
+            time.format(CLOCK),
             color = Color.White.copy(alpha = 0.35f),
             fontSize = 96.sp,
             fontFamily = Inter,

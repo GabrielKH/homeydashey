@@ -5,7 +5,7 @@ It talks to the Homey directly over the local network with an API key, builds it
 
 ## Install
 
-Every push builds a debug APK. The newest one is always at **Releases → Latest test build** (`releases/download/dev/homey-dashboard.apk`); sideload it on the tablet.
+Every push builds the APK the tablet runs (an unshrunk release build, signed with the shared key). The newest one is always at **Releases → Latest test build** (`releases/download/dev/homey-dashboard.apk`); sideload it on the tablet.
 
 Every build is signed with the same key (`app/signing/homeydash.jks`) and numbered by its CI run, so a new APK installs over the old one and keeps the settings. The app checks the release's `version.txt` every few hours and offers to install a newer build (Android asks once to allow installs from the app). The key is in the repo because this is a sideloaded kiosk app; use a private key before publishing it anywhere.
 

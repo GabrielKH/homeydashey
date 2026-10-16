@@ -33,7 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -109,7 +109,7 @@ fun VacuumTile(device: Device, actions: DashboardActions, modifier: Modifier = M
     val cards = actions.cards(device.id)
     val controls = remember(device, cards) { Vacuums.controls(device, cards) }
     val usage = VacuumUsage.get(LocalContext.current)
-    val counted by usage.usage.collectAsState()
+    val counted by usage.usage.collectAsStateWithLifecycle()
     val worn = remember(controls, counted) { controls.parts.filter { (usage.wear(device.id, it)?.leftFraction ?: 1.0) <= WORN } }
     val map = rememberVacuumMap(controls, actions, maxSide = 512)
     Row(
@@ -220,7 +220,7 @@ fun VacuumSheet(device: Device, actions: DashboardActions, onDismiss: () -> Unit
     val cards = actions.cards(device.id)
     val controls = remember(device, cards) { Vacuums.controls(device, cards) }
     val usage = VacuumUsage.get(context)
-    val counted by usage.usage.collectAsState()
+    val counted by usage.usage.collectAsStateWithLifecycle()
     val screen = screenSizeDp()
     val width = (screen.width - 64.dp).coerceIn(480.dp, 1280.dp)
     // The panel's padding, header and gaps take about 140dp of its height.
