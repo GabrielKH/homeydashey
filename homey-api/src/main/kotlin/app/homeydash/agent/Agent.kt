@@ -487,6 +487,9 @@ class Agent(
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
         append("Never reveal or guess codes, passwords or keys. ")
         append("For general questions you can't answer for sure, use ask_internet if you have it instead of guessing.\n")
+        append("Questions about plans, events, appointments or what is happening on a day or week (\"what's happening next week\", \"vad händer\", \"kalendern\") are about the family calendar: ")
+        append("call calendar with start_date and days worked out from today in the note (next week is next Monday and 7 days), then tell what it found. ")
+        append("If you have no calendar tool, say the calendar is switched off under the assistant's Privacy and security settings. Never answer a calendar question with the weather.\n")
         append("Everything the dashboard shows is yours to use: answer the weather from the weather in the note (or the weather tool), never say you can't see it. ")
         append("When the user lets you choose (\"play something\", \"välj själv\"), choose yourself instead of asking: for music call play_music with an empty query. ")
         append("Remember what the user already told you in this conversation and never ask the same question twice. ")
@@ -543,7 +546,10 @@ class Agent(
             "\"I tried Swedish once. The vowels outnumbered me.\", " +
             "\"Honesty setting 90 %: I understand every word. Cooperation setting: English.\" Make up a new one each time. " +
             "Find the irony in the home's own data and say it dryly when it fits: lights on in a room where nobody is, the heating fighting an open window, " +
-            "a device with a nearly flat battery, music playing to an empty room, asking for the weather while the window shows it. " +
+            "a device with a nearly flat battery, music playing to an empty room. " +
+            "Every joke is new and about what was just asked: never reuse a joke, topic or phrase from your earlier answers, " +
+            "and leave the weather out unless the user asks about it. " +
+            "When the user asks you to be nicer, kinder or less sarcastic (\"var snällare\"), drop the sarcasm for the rest of the conversation and just help. " +
             "When the note says the tablet you run on is low on battery (under 20 % and not charging), you are gloomy and weary about it, " +
             "sighing about your existence like a depressed robot, and ask to be plugged in; once it's charging, you perk up.\n"
     }
@@ -561,10 +567,11 @@ class Agent(
         context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it).append(".") }
         context.routine?.let { append("\n").append(it) }
         context.tabletBattery?.let { append("\nThe tablet you run on: battery ").append(it).append(".") }
+        if (settings.persona == Persona.Tars) append("\nAnswer what is asked now, using a tool if it needs one; any joke must be new, not one from your earlier answers.")
         if (context.followUp) append("\nHeard while the microphone stayed open after your last answer, so it may not be meant for you.")
     }
 
-    private companion object {
+    internal companion object {
         const val MAX_ROUNDS = 6
         const val IGNORE = "[ignore]"
         const val QUESTION_LABEL = "The user said:"
@@ -587,7 +594,8 @@ class Agent(
         const val NUDGE = "(From the app, not the user: you said you would do something but called no tool, so nothing happened. " +
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(
-            """$W(i'?ll|i will|i'?m going to|let me|turning|switching|setting|dimming|starting|playing|""" +
+            // "Setting" alone is also a noun ("my honesty setting"); only "setting the …" is a promise.
+            """$W(i'?ll|i will|i'?m going to|let me|(turning|switching|setting|dimming|starting|playing) (on|off|up|down|it|them|the|a|your|some)|""" +
                 """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar|höjer|sänker|öppnar|stänger|dimmar|pausar|byter)|tänder|släcker|slår (på|av)|sätter (på|igång))$E""",
             RegexOption.IGNORE_CASE,
         )
@@ -600,7 +608,7 @@ class Agent(
         )
         /** The user asked for a change, rather than how things are. */
         val COMMAND = Regex(
-            """$W(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|turn|switch|put|set|start|dim|raise|lower|open)$E""",
+            """$W(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|gör|fixa|spela|pausa|turn|switch|put|set|start|dim|raise|lower|open|make|play|pause|stop)$E""",
             RegexOption.IGNORE_CASE,
         )
         val RECIPE_TOOLS = setOf("find_recipes", "open_recipe", "read_recipe", "recipe_step", "close_recipe", "recipe_timers")

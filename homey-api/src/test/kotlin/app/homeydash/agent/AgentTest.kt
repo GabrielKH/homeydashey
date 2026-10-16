@@ -519,6 +519,16 @@ class AgentTest {
         assertNull(VoiceFx.readWav(ByteArray(10)))
     }
 
+    @Test fun `TARS's chat about his settings isn't taken for a promise`() {
+        assertFalse(Agent.PROMISE.containsMatchIn("I can try, but I'm still a robot with a 90% honesty setting."))
+        assertTrue(Agent.PROMISE.containsMatchIn("Setting the living room to Myskväll."))
+        assertTrue(Agent.PROMISE.containsMatchIn("Dimming the lights now."))
+        assertTrue(Agent.COMMAND.containsMatchIn("Can you make it cozy in the living room?"))
+        val rules = Agent(ChatClient(OkHttpClient())).rules(AgentSettings(persona = Persona.Tars))
+        assertTrue(rules.contains("call calendar with start_date"))
+        assertTrue(rules.contains("leave the weather out unless"))
+    }
+
     @Test fun `TARS always answers in English and jokes about other languages`() {
         val agent = Agent(ChatClient(OkHttpClient()))
         val rules = agent.rules(AgentSettings(persona = Persona.Tars, language = Language.Swedish))
