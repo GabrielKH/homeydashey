@@ -40,9 +40,12 @@ android {
         debug {
             signingConfig = signingConfigs.getByName("shared")
         }
+        // The build the tablet runs. Unlike debug, Android compiles it ahead of time with the
+        // libraries' startup profiles and Compose skips its debug checks, so scrolling and
+        // animations are smoother. Code isn't shrunk: the speech, voice and camera libraries load
+        // classes by name, and nothing here is published to a store.
         release {
-            isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("shared")
         }
     }

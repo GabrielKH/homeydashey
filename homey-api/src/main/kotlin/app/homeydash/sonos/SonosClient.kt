@@ -144,8 +144,9 @@ class SonosClient(private val http: OkHttpClient, private val port: Int = PORT) 
         fun songOf(item: SonosItem): String? = songOf(item.uri)
 
         fun songOf(uri: String): String? =
-            Regex("spotify(?::|%3a)track(?::|%3a)([A-Za-z0-9]+)", RegexOption.IGNORE_CASE).find(uri)?.groupValues?.get(1)?.let { "spotify:track:$it" }
+            SONG.find(uri)?.groupValues?.get(1)?.let { "spotify:track:$it" }
 
+        private val SONG = Regex("spotify(?::|%3a)track(?::|%3a)([A-Za-z0-9]+)", RegexOption.IGNORE_CASE)
         private val XML = "text/xml; charset=\"utf-8\"".toMediaType()
         private val TOPOLOGY = Service("/ZoneGroupTopology/Control", "urn:schemas-upnp-org:service:ZoneGroupTopology:1")
         private val CONTENT = Service("/MediaServer/ContentDirectory/Control", "urn:schemas-upnp-org:service:ContentDirectory:1")

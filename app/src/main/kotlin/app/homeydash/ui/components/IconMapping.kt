@@ -6,7 +6,7 @@ import app.homeydash.homey.Zone
 
 /** Picks a symbol for a device from its Homey class and capabilities. */
 fun deviceIcon(device: Device): Ic {
-    val caps = device.capabilities.toSet()
+    val caps = device.capabilities
     return when (device.effectiveClass) {
         "light" -> if (device.deviceClass == "socket") Sym.floorLamp else Sym.lightbulb
         "socket" -> Sym.outlet

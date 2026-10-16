@@ -38,12 +38,16 @@ class BackgroundPhotos(private val context: Context) {
             ?.also { cache.put(cacheKey, it) }
     }
 
-    fun delete(key: String) {
+    suspend fun delete(key: String) = withContext(Dispatchers.IO) {
         File(dir, fileName(key)).delete()
         cache.evictAll()
     }
 
-    private fun fileName(key: String) = key.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".jpg"
+    private fun fileName(key: String) = key.replace(UNSAFE, "_") + ".jpg"
+
+    private companion object {
+        val UNSAFE = Regex("[^A-Za-z0-9_-]")
+    }
 
     private fun decode(uri: Uri, maxSide: Int): Bitmap =
         if (Build.VERSION.SDK_INT >= 28) {
@@ -65,6 +69,16 @@ class BackgroundPhotos(private val context: Context) {
         val height = (bitmap.height * width.toFloat() / bitmap.width).roundToInt().coerceAtLeast(1)
         return Bitmap.createScaledBitmap(bitmap, width, height, true)
     }
+}
+
+/** Decodes an image no larger than about [maxSide], so a grid of album covers or recipe photos stays light; null if it isn't one. */
+internal fun decodeScaled(bytes: ByteArray, maxSide: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0) return null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
 }
 
 /** A small, fast box blur for album art and photos; done once, never per frame. */

@@ -280,7 +280,9 @@ private fun rememberHour(): String {
     return value
 }
 
-private fun hourKey() = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:00"))
+private val HOUR_KEY = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:00")
+
+private fun hourKey() = LocalDateTime.now().format(HOUR_KEY)
 
 @Composable
 private fun DayRow(day: DayWeather, isToday: Boolean, low: Double, high: Double, now: Double?, iconSize: Dp = 22.dp) {

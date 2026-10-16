@@ -37,9 +37,10 @@ data class RoomSummary(
 object DashboardLayout {
     private val MEDIA_CLASSES = setOf("speaker", "tv", "amplifier", "mediaplayer", "settopbox", "remote")
     private val MEDIA_CAPS = listOf("speaker_", "volume_", "channel_")
+    private val ROOM_SENSOR_CLASSES = setOf("sensor", "thermostat", "heater")
 
     fun cardKind(device: Device): CardKind {
-        val caps = device.capabilities.toSet()
+        val caps = device.capabilities
         val cls = device.effectiveClass
         return when {
             Vacuums.isVacuum(device) -> CardKind.Vacuum
@@ -132,7 +133,7 @@ object DashboardLayout {
             val celsius = if (cap.units?.contains("F") == true) (raw - 32) * 5 / 9 else raw
             device to celsius
         }.filter { (_, c) -> c in 5.0..35.0 }
-        val preferred = readings.filter { (d, _) -> d.effectiveClass in setOf("sensor", "thermostat", "heater") }.ifEmpty { readings }
+        val preferred = readings.filter { (d, _) -> d.effectiveClass in ROOM_SENSOR_CLASSES }.ifEmpty { readings }
         return preferred.map { it.second }.sorted().let { if (it.isEmpty()) null else it[(it.size - 1) / 2] }
     }
 

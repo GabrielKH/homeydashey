@@ -129,11 +129,7 @@ class ScreenControl(private val activity: Activity, private val display: Display
         runCatching {
             val component = ComponentName(activity, "app.homeydash.HomeScreen")
             if (activity.packageManager.getComponentEnabledSetting(component) == wanted) return@runCatching
-            activity.packageManager.setComponentEnabledSetting(
-                ComponentName(activity, "app.homeydash.HomeScreen"),
-                if (on) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP,
-            )
+            activity.packageManager.setComponentEnabledSetting(component, wanted, PackageManager.DONT_KILL_APP)
         }
         pin(on)
     }

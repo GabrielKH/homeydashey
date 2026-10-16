@@ -1,7 +1,6 @@
 package app.homeydash.ui.dashboard
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateDpAsState
@@ -89,6 +88,7 @@ import app.homeydash.ui.assistant.WakeWatch
 import app.homeydash.ui.assistant.VoiceOverlay
 import androidx.compose.runtime.rememberUpdatedState
 import app.homeydash.data.Blur
+import app.homeydash.data.decodeScaled
 import app.homeydash.data.CalendarRepository
 import app.homeydash.data.WeatherRepository
 import app.homeydash.data.DisplaySettings
@@ -269,15 +269,6 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
     }
 }
 
-/** Decodes an image no larger than about [maxSide], so a grid of album covers stays light. */
-private fun decodeScaled(bytes: ByteArray, maxSide: Int): Bitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    var sample = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-}
-
 private const val OVERVIEW = "overview"
 private const val MOODS = "moods"
 private const val MEDIA = "media"
@@ -359,14 +350,12 @@ fun DashboardScreen(
     val players = remember(snapshot.devices, hidden) { DashboardLayout.mediaPlayers(snapshot.devices, hidden) }
     val moods = remember(snapshot.moods) { DashboardLayout.moods(snapshot.moods) }
     val homeName = remember(snapshot.zones) { snapshot.zones.values.firstOrNull { it.parent == null }?.name ?: "Home" }
-    val visibleDevices = remember(snapshot.devices, hidden) { DashboardLayout.visible(snapshot.devices, hidden).values }
+    val visibleById = remember(snapshot.devices, hidden) { DashboardLayout.visible(snapshot.devices, hidden) }
+    val visibleDevices = remember(visibleById) { visibleById.values }
     val speakers = remember(visibleDevices, actions.deviceCards) { musicSpeakers(visibleDevices, actions) }
     val groupable = remember(visibleDevices, actions.deviceCards) { visibleDevices.filter { actions.grouping(it.id) != null }.sortedBy { it.name.lowercase() } }
 
-    val favourites = remember(overviewDevices, snapshot.devices, hidden) {
-        val shown = DashboardLayout.visible(snapshot.devices, hidden)
-        overviewDevices.mapNotNull { shown[it] }
-    }
+    val favourites = remember(overviewDevices, visibleById) { overviewDevices.mapNotNull { visibleById[it] } }
 
     // Remembers the player that started last, so the media page opens on it.
     var wasPlaying by remember { mutableStateOf(emptySet<String>()) }
