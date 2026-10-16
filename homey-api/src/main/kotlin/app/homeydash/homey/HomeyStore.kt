@@ -2,6 +2,7 @@ package app.homeydash.homey
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -99,12 +100,17 @@ class HomeyStore(
 
     suspend fun reload() {
         try {
-            val zones = client.zones()
-            val devices = client.devices()
-            // Moods need their own permission on the API key; the dashboard works without them.
-            val moods = runCatching { client.moods() }.getOrDefault(emptyMap())
-            val hiddenByUser = runCatching { hiddenDeviceIds(client.userMe()) }.getOrDefault(emptySet())
-            val deviceCards = runCatching { FlowCards.byDevice(client.flowCardActions()) }.getOrDefault(emptyMap())
+            // The five requests go out together, so a reconnect waits for one round trip instead of
+            // five. Failures are still reported in the same order: zones first, then devices.
+            val (zones, devices, moods, hiddenByUser, deviceCards) = coroutineScope {
+                val zones = async { runCatching { client.zones() } }
+                val devices = async { runCatching { client.devices() } }
+                // Moods need their own permission on the API key; the dashboard works without them.
+                val moods = async { runCatching { client.moods() }.getOrDefault(emptyMap()) }
+                val hiddenByUser = async { runCatching { hiddenDeviceIds(client.userMe()) }.getOrDefault(emptySet()) }
+                val deviceCards = async { runCatching { FlowCards.byDevice(client.flowCardActions()) }.getOrDefault(emptyMap()) }
+                Loaded(zones.await().getOrThrow(), devices.await().getOrThrow(), moods.await(), hiddenByUser.await(), deviceCards.await())
+            }
             devices.keys.forEach { realtime.subscribe(HomeyRealtime.deviceUri(it)) }
             _snapshot.value = HomeySnapshot(zones = zones, devices = devices.mapValues { noted(it.value) }, moods = moods, hiddenByUser = hiddenByUser, deviceCards = deviceCards, loaded = true)
             if (extraCards.isNotEmpty()) scope.launch { addExtraCards(deviceCards) }
@@ -112,6 +118,14 @@ class HomeyStore(
             _snapshot.update { it.copy(error = e.message ?: e.toString()) }
         }
     }
+
+    private data class Loaded(
+        val zones: Map<String, Zone>,
+        val devices: Map<String, Device>,
+        val moods: Map<String, Mood>,
+        val hiddenByUser: Set<String>,
+        val deviceCards: Map<String, List<FlowCardAction>>,
+    )
 
     /** Adds each [CardSource]'s cards to Homey's own, skipping any a device already has from Homey. */
     private suspend fun addExtraCards(homeyCards: Map<String, List<FlowCardAction>>) {

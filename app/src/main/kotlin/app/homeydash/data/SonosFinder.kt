@@ -1,7 +1,6 @@
 package app.homeydash.data
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import kotlinx.coroutines.Dispatchers
@@ -14,7 +13,6 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.net.Inet4Address
 import java.util.Collections
 import java.util.concurrent.TimeUnit
 
@@ -72,18 +70,8 @@ class SonosFinder(private val context: Context, http: OkHttpClient) {
     private suspend fun scanSubnet(): List<String> = withContext(Dispatchers.IO) {
         val gate = Semaphore(48)
         coroutineScope {
-            subnetHosts().map { host -> async { gate.withPermit { host.takeIf { isSonos(it) } } } }.awaitAll().filterNotNull()
+            subnetHosts(context).map { host -> async { gate.withPermit { host.takeIf { isSonos(it) } } } }.awaitAll().filterNotNull()
         }
-    }
-
-    private fun subnetHosts(): List<String> {
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
-        val link = cm.getLinkProperties(cm.activeNetwork) ?: return emptyList()
-        val address = link.linkAddresses.firstOrNull { it.address is Inet4Address } ?: return emptyList()
-        val bytes = address.address.address
-        val own = bytes[3].toInt() and 0xFF
-        val prefix = "${bytes[0].toInt() and 0xFF}.${bytes[1].toInt() and 0xFF}.${bytes[2].toInt() and 0xFF}"
-        return (1..254).filter { it != own }.map { "$prefix.$it" }
     }
 
     private fun isSonos(host: String): Boolean = runCatching {

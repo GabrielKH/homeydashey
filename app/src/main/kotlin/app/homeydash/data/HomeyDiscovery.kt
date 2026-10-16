@@ -66,22 +66,11 @@ class HomeyDiscovery(private val context: Context, http: OkHttpClient) {
 
     /** Pings every host in the tablet's /24 (or smaller) network, a few dozen at a time. */
     private suspend fun scanSubnet(report: suspend (FoundHomey) -> Unit) = coroutineScope {
-        val hosts = subnetHosts()
+        val hosts = subnetHosts(context)
         val gate = Semaphore(48)
         hosts.forEach { host ->
             launch(Dispatchers.IO) { gate.withPermit { ping(host)?.let { report(it) } } }
         }
-    }
-
-    private fun subnetHosts(): List<String> {
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
-        val link = cm.getLinkProperties(cm.activeNetwork) ?: return emptyList()
-        val address = link.linkAddresses.firstOrNull { it.address is Inet4Address } ?: return emptyList()
-        val bytes = address.address.address
-        val own = bytes[3].toInt() and 0xFF
-        val prefix = "${bytes[0].toInt() and 0xFF}.${bytes[1].toInt() and 0xFF}.${bytes[2].toInt() and 0xFF}"
-        // Larger networks are cut to the tablet's own /24; Homeys are almost always there.
-        return (1..254).filter { it != own }.map { "$prefix.$it" }
     }
 
     private fun ping(host: String): FoundHomey? = runCatching {
@@ -91,4 +80,16 @@ class HomeyDiscovery(private val context: Context, http: OkHttpClient) {
             FoundHomey(host, id)
         }
     }.getOrNull()
+}
+
+/** Every other address on the tablet's own /24, for when a search by name finds nothing. */
+internal fun subnetHosts(context: Context): List<String> {
+    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+    val link = cm.getLinkProperties(cm.activeNetwork) ?: return emptyList()
+    val address = link.linkAddresses.firstOrNull { it.address is Inet4Address } ?: return emptyList()
+    val bytes = address.address.address
+    val own = bytes[3].toInt() and 0xFF
+    val prefix = "${bytes[0].toInt() and 0xFF}.${bytes[1].toInt() and 0xFF}.${bytes[2].toInt() and 0xFF}"
+    // Larger networks are cut to the tablet's own /24; Homeys are almost always there.
+    return (1..254).filter { it != own }.map { "$prefix.$it" }
 }

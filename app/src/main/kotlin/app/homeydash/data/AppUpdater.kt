@@ -124,6 +124,7 @@ class AppUpdater(private val context: Context, private val http: OkHttpClient, p
             val body = response.body ?: error("Empty download")
             val total = body.contentLength().takeIf { it > 0 }
             var done = 0L
+            var shown = -1
             body.byteStream().use { input ->
                 part.outputStream().use { output ->
                     val buffer = ByteArray(64 * 1024)
@@ -132,7 +133,13 @@ class AppUpdater(private val context: Context, private val http: OkHttpClient, p
                         if (read < 0) break
                         output.write(buffer, 0, read)
                         done += read
-                        if (total != null) _state.value = State.Downloading(build, (done.toFloat() / total).coerceIn(0f, 1f))
+                        // The screen shows whole percents, so only those are sent to it.
+                        val progress = if (total != null) (done.toFloat() / total).coerceIn(0f, 1f) else continue
+                        val percent = (progress * 100).toInt()
+                        if (percent != shown) {
+                            shown = percent
+                            _state.value = State.Downloading(build, progress)
+                        }
                     }
                 }
             }

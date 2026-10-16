@@ -3,7 +3,6 @@ package app.homeydash.data
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.LruCache
 import android.webkit.WebView
@@ -106,19 +105,19 @@ class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
         photos.get(key)?.let { return it }
         return withContext(Dispatchers.IO) {
             val file = book.imageFile(recipe) ?: return@withContext null
-            decode(file.readBytes(), maxSide)?.asImageBitmap()
+            decodeScaled(file.readBytes(), maxSide)?.asImageBitmap()
         }?.also { photos.put(key, it) }
     }
 
     /** Downloads a photo for the preview before saving; the bytes are saved with the recipe so it isn't fetched twice. */
     suspend fun downloadPhoto(url: String): Pair<ByteArray, ImageBitmap>? = runCatching {
         val bytes = book.download(url)
-        val bitmap = withContext(Dispatchers.Default) { decode(bytes, 900) } ?: return@runCatching null
+        val bitmap = withContext(Dispatchers.Default) { decodeScaled(bytes, 900) } ?: return@runCatching null
         bytes to bitmap.asImageBitmap()
     }.getOrNull()
 
     /** A picked photo, decoded for the editor's preview. */
-    suspend fun previewPhoto(bytes: ByteArray): ImageBitmap? = withContext(Dispatchers.Default) { decode(bytes, 900)?.asImageBitmap() }
+    suspend fun previewPhoto(bytes: ByteArray): ImageBitmap? = withContext(Dispatchers.Default) { decodeScaled(bytes, 900)?.asImageBitmap() }
 
     @SuppressLint("SetJavaScriptEnabled")
     private suspend fun loadInBrowser(url: String): String? = withContext(Dispatchers.Main) {
@@ -159,22 +158,13 @@ class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
 
         /** Photos are kept at most [MAX_SIDE] px on the long side, as JPEG. */
         fun shrinkPhoto(bytes: ByteArray): ByteArray {
-            val bitmap = decode(bytes, MAX_SIDE) ?: throw IllegalArgumentException("That isn't a photo the tablet can read.")
+            val bitmap = decodeScaled(bytes, MAX_SIDE) ?: throw IllegalArgumentException("That isn't a photo the tablet can read.")
             val scale = MAX_SIDE.toFloat() / maxOf(bitmap.width, bitmap.height)
             val sized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
             return ByteArrayOutputStream().use { out ->
                 sized.compress(Bitmap.CompressFormat.JPEG, 85, out)
                 out.toByteArray()
             }
-        }
-
-        fun decode(bytes: ByteArray, maxSide: Int): Bitmap? {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            if (bounds.outWidth <= 0) return null
-            var sample = 1
-            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
         }
     }
 }
