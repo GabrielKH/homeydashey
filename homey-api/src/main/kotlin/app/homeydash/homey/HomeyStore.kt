@@ -2,7 +2,9 @@ package app.homeydash.homey
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +35,8 @@ class HomeyStore(
     private val client: HomeyClient,
     private val realtime: HomeyRealtime,
     private val scope: CoroutineScope,
+    /** Cards the app runs itself, e.g. Sonos favourites played straight on the speakers. */
+    private val extraCards: List<CardSource> = emptyList(),
 ) {
     private val _snapshot = MutableStateFlow(HomeySnapshot())
     val snapshot: StateFlow<HomeySnapshot> = _snapshot.asStateFlow()
@@ -40,9 +44,46 @@ class HomeyStore(
 
     private var eventsJob: Job? = null
 
+    /** What the owner set on this tablet per device: a class, other names, a card group. */
+    data class OwnerNotes(
+        val classes: Map<String, String> = emptyMap(),
+        val nicknames: Map<String, List<String>> = emptyMap(),
+        val groups: Map<String, String> = emptyMap(),
+    )
+
+    @Volatile private var notes = OwnerNotes()
+
+    /** Applies the owner's notes to every device, now and as Homey sends updates. */
+    fun setOwnerNotes(notes: OwnerNotes) {
+        if (notes == this.notes) return
+        this.notes = notes
+        _snapshot.update { s -> s.copy(devices = s.devices.mapValues { noted(it.value) }) }
+    }
+
+    private fun noted(d: Device): Device {
+        val cls = notes.classes[d.id]
+        val names = notes.nicknames[d.id].orEmpty()
+        val group = notes.groups[d.id]
+        // Unchanged devices stay the same object, so cards that didn't change don't redraw.
+        return if (cls == d.classOverride && names == d.nicknames && group == d.userGroup) d
+        else d.copy(classOverride = cls, nicknames = names, userGroup = group)
+    }
+
     fun start() {
         if (eventsJob != null) return
-        eventsJob = scope.launch { realtime.events.collect(::apply) }
+        eventsJob = scope.launch {
+            // Homey sends a burst of events at once (energy meters, a room switching), and each
+            // new snapshot redraws the dashboard. Events arriving close together become one update.
+            val queue = Channel<HomeyEvent>(Channel.UNLIMITED)
+            launch { realtime.events.collect { queue.send(it) } }
+            while (true) {
+                val first = queue.receive()
+                delay(BATCH_MS)
+                val batch = mutableListOf(first)
+                while (true) batch += queue.tryReceive().getOrNull() ?: break
+                applyAll(batch)
+            }
+        }
         realtime.subscribe(HomeyRealtime.DEVICES_URI)
         realtime.subscribe(HomeyRealtime.ZONES_URI)
         realtime.subscribe(HomeyRealtime.MOODS_URI)
@@ -65,14 +106,32 @@ class HomeyStore(
             val hiddenByUser = runCatching { hiddenDeviceIds(client.userMe()) }.getOrDefault(emptySet())
             val deviceCards = runCatching { FlowCards.byDevice(client.flowCardActions()) }.getOrDefault(emptyMap())
             devices.keys.forEach { realtime.subscribe(HomeyRealtime.deviceUri(it)) }
-            _snapshot.value = HomeySnapshot(zones = zones, devices = devices, moods = moods, hiddenByUser = hiddenByUser, deviceCards = deviceCards, loaded = true)
+            _snapshot.value = HomeySnapshot(zones = zones, devices = devices.mapValues { noted(it.value) }, moods = moods, hiddenByUser = hiddenByUser, deviceCards = deviceCards, loaded = true)
+            if (extraCards.isNotEmpty()) scope.launch { addExtraCards(deviceCards) }
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = e.message ?: e.toString()) }
         }
     }
 
-    /** Sets a capability, showing the new value at once and rolling back if Homey refuses. */
-    suspend fun setCapability(deviceId: String, capabilityId: String, value: JsonElement) {
+    /** Adds each [CardSource]'s cards to Homey's own, skipping any a device already has from Homey. */
+    private suspend fun addExtraCards(homeyCards: Map<String, List<FlowCardAction>>) {
+        val snapshot = _snapshot.value
+        val extra = extraCards.map { source -> runCatching { source.cards(snapshot) }.getOrDefault(emptyMap()) }
+        val merged = homeyCards.toMutableMap()
+        extra.forEach { cards ->
+            cards.forEach { (deviceId, list) ->
+                val own = merged[deviceId].orEmpty()
+                merged[deviceId] = own + list.filter { c -> own.none { it.cardId == c.cardId } }
+            }
+        }
+        _snapshot.update { it.copy(deviceCards = merged) }
+    }
+
+    /**
+     * Sets a capability, showing the new value at once and rolling back if Homey refuses.
+     * With [rethrow], the refusal is also thrown, so the assistant can say it failed.
+     */
+    suspend fun setCapability(deviceId: String, capabilityId: String, value: JsonElement, rethrow: Boolean = false) {
         val before = _snapshot.value.devices[deviceId]
         apply(HomeyEvent.CapabilityChanged(deviceId, capabilityId, value))
         try {
@@ -80,8 +139,19 @@ class HomeyStore(
         } catch (e: Exception) {
             if (before != null) apply(HomeyEvent.DeviceChanged(before))
             _snapshot.update { it.copy(error = "Couldn't change ${before?.name ?: "device"}: ${e.message}") }
+            if (rethrow) throw e
         }
     }
+
+    /**
+     * Asks Homey for [deviceId] again and shows what it says, so a change that was accepted
+     * but didn't happen (a lamp out of reach) stops showing as done. Returns [capabilityId]'s value.
+     */
+    suspend fun readBack(deviceId: String, capabilityId: String): JsonElement? = runCatching {
+        val device = client.device(deviceId)
+        apply(HomeyEvent.DeviceChanged(device))
+        device.capabilitiesObj[capabilityId]?.value
+    }.getOrNull()
 
     suspend fun setMood(mood: Mood) {
         try {
@@ -101,12 +171,14 @@ class HomeyStore(
     /** The Homey's own location, for the weather. */
     suspend fun location(): Pair<Double, Double>? = client.location()
 
-    /** Runs a Flow card; failures show in the error banner. */
-    suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
+    /** Runs a Flow card; failures show in the error banner, and with [rethrow] are thrown too. */
+    suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap()), rethrow: Boolean = false) {
         try {
-            client.runAction(card, args)
+            val source = extraCards.firstOrNull { it.owns(card) }
+            if (source != null) source.run(card, args) else client.runAction(card, args)
         } catch (e: Exception) {
             _snapshot.update { it.copy(error = "Couldn't run ${card.title ?: card.cardId}: ${e.message}") }
+            if (rethrow) throw e
         }
     }
 
@@ -126,12 +198,38 @@ class HomeyStore(
     }
 
     suspend fun autocomplete(card: FlowCardAction, arg: String, query: String = ""): List<AutocompleteItem> =
-        client.autocomplete(card, arg, query)
+        extraCards.firstOrNull { it.owns(card) }?.autocomplete(card, arg, query) ?: client.autocomplete(card, arg, query)
 
     fun clearError() = _snapshot.update { it.copy(error = null) }
 
     /** Shows a message from the app itself in the error banner. */
     fun reportError(message: String) = _snapshot.update { it.copy(error = message) }
+
+    /** Applies [events] in order; runs of capability changes become a single new snapshot. */
+    internal fun applyAll(events: List<HomeyEvent>) {
+        var i = 0
+        while (i < events.size) {
+            val event = events[i]
+            if (event !is HomeyEvent.CapabilityChanged) {
+                apply(event)
+                i++
+                continue
+            }
+            var end = i
+            while (end < events.size && events[end] is HomeyEvent.CapabilityChanged) end++
+            val run = events.subList(i, end).map { it as HomeyEvent.CapabilityChanged }
+            _snapshot.update { snap ->
+                var devices: MutableMap<String, Device>? = null
+                for (change in run) {
+                    val device = (devices ?: snap.devices)[change.deviceId] ?: continue
+                    val updated = device.withCapabilityValue(change.capabilityId, change.value)
+                    if (updated != device) (devices ?: snap.devices.toMutableMap().also { devices = it })[device.id] = updated
+                }
+                devices?.let { snap.copy(devices = it) } ?: snap
+            }
+            i = end
+        }
+    }
 
     internal fun apply(event: HomeyEvent) {
         when (event) {
@@ -142,7 +240,7 @@ class HomeyStore(
             }
             is HomeyEvent.DeviceChanged -> {
                 realtime.subscribe(HomeyRealtime.deviceUri(event.device.id))
-                _snapshot.update { it.copy(devices = it.devices + (event.device.id to event.device)) }
+                _snapshot.update { it.copy(devices = it.devices + (event.device.id to noted(event.device))) }
             }
             is HomeyEvent.DeviceDeleted -> _snapshot.update { it.copy(devices = it.devices - event.deviceId) }
             is HomeyEvent.ZoneChanged -> _snapshot.update { it.copy(zones = it.zones + (event.zone.id to event.zone)) }
@@ -151,5 +249,10 @@ class HomeyStore(
             is HomeyEvent.MoodDeleted -> _snapshot.update { it.copy(moods = it.moods - event.moodId) }
             HomeyEvent.Reconnected -> scope.launch { reload() }
         }
+    }
+
+    private companion object {
+        /** How long to gather realtime events before showing them; short enough to feel instant. */
+        const val BATCH_MS = 120L
     }
 }

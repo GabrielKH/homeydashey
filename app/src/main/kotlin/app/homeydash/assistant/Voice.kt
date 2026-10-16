@@ -17,6 +17,13 @@ import app.homeydash.agent.VoiceStyle
 import app.homeydash.agent.VoiceTrack
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.AudioFormat
+import android.media.AudioTrack
+import app.homeydash.agent.Pcm
+import kotlinx.coroutines.channels.produce
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +31,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.Inet4Address
 import java.net.ServerSocket
 import java.net.Socket
@@ -102,6 +111,16 @@ class SpeechInput(private val context: Context) {
             }
             override fun onError(error: Int) {
                 if (!current()) return
+                // The tablet's on-device recogniser drops the connection (error 11) when it can't
+                // serve this language; Google's online one can. Use it from now on.
+                if (a.onDevice && error in ON_DEVICE_GAVE_UP) {
+                    val online = attempts.indexOfFirst { !it.onDevice }
+                    if (online > index) {
+                        working[key] = online
+                        listenWith(attempts, online, key, listener, retries = 0)
+                        return
+                    }
+                }
                 // The recognition service hiccups (busy, restarting, dropped connection); try again quietly.
                 if (error in TRANSIENT && retries < MAX_RETRIES) {
                     main.postDelayed({ if (current()) listenWith(attempts, index, key, listener, retries + 1) }, RETRY_DELAY_MS * (retries + 1))
@@ -158,6 +177,11 @@ class SpeechInput(private val context: Context) {
             SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
             SpeechRecognizer.ERROR_TOO_MANY_REQUESTS,
         )
+        private val ON_DEVICE_GAVE_UP = setOf(
+            SpeechRecognizer.ERROR_SERVER,
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
+            SpeechRecognizer.ERROR_CLIENT,
+        )
         private val TRANSIENT = setOf(
             SpeechRecognizer.ERROR_CLIENT,
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
@@ -208,8 +232,20 @@ class SpeechInput(private val context: Context) {
 /** A spoken answer ready to play: the sound file and how loud it is moment by moment. */
 class Spoken(val file: File, val track: VoiceTrack)
 
-/** Speaks answers with Android's text-to-speech, in one of the voice styles, on the tablet or into a file for a speaker. */
-class SpeechOutput(context: Context) {
+/**
+ * Speaks answers with Android's text-to-speech, in one of the voice styles, on the tablet or into a file for a speaker.
+ * The [VoiceStyle.local] voices come from a voice model on your own computer, set in [settings].
+ */
+class SpeechOutput(
+    context: Context,
+    http: okhttp3.OkHttpClient,
+    private val tars: TarsVoice,
+    private val settings: () -> app.homeydash.agent.AgentSettings,
+) {
+    private val http = http.newBuilder()
+        .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private val appContext = context.applicationContext
     private var ready = false
     private val done = mutableMapOf<String, () -> Unit>()
@@ -245,7 +281,14 @@ class SpeechOutput(context: Context) {
      * level, low, mid and high (0..1) about 60 times a second while it plays.
      */
     suspend fun speak(text: String, language: Language, voice: VoiceStyle = VoiceStyle.Natural, onFrame: (FloatArray) -> Unit = {}) {
-        if (!ready || text.isBlank()) return
+        if (text.isBlank()) return
+        // TARS's voice is made on the tablet sentence by sentence: he starts on the first one
+        // while the rest is still being made, instead of after the whole answer.
+        if (voice == VoiceStyle.Tars && tars.isReady) {
+            val swedish = swedish(text, language)
+            if (stream(app.homeydash.agent.Sentences.split(text), { tars.speak(it, swedish) }, onFrame)) return
+        }
+        if (!ready) return
         val spoken = render(text, language, voice, File(appContext.cacheDir, "say.wav"))
         if (spoken == null) {
             plain(text, language, voice)
@@ -297,11 +340,90 @@ class SpeechOutput(context: Context) {
     fun stop() {
         tts.stop()
         player?.let { runCatching { it.stop() } }
+        track?.let { runCatching { it.pause(); it.flush() } }
+        track = null
+    }
+
+    @Volatile private var track: AudioTrack? = null
+
+    /** Gets TARS's voice ready before he has something to say. */
+    fun warm(voice: VoiceStyle) {
+        if (voice == VoiceStyle.Tars) tars.warm()
+    }
+
+    private fun swedish(text: String, language: Language) = when (language) {
+        Language.Swedish -> true
+        Language.English -> false
+        Language.Auto -> Confirmation.looksSwedish(text)
+    }
+
+    /**
+     * Plays [sentences] as they are made: the next one is made while the one before plays.
+     * False when not even the first could be made, so another voice can take over.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun stream(sentences: List<String>, make: suspend (String) -> Pcm?, onFrame: (FloatArray) -> Unit): Boolean = coroutineScope {
+        val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(it) } }
+        val first = made.receiveCatching().getOrNull() ?: return@coroutineScope false
+        val rate = first.sampleRate
+        val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val t = AudioTrack.Builder()
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+            .setBufferSizeInBytes(maxOf(min, rate / 5 * 2))
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        track = t
+        // Where each sentence starts, in frames, with its levels for the face.
+        val parts = java.util.concurrent.CopyOnWriteArrayList<Pair<Long, VoiceTrack>>()
+        var written = 0L
+        val meter = launch {
+            while (true) {
+                val head = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                val part = parts.lastOrNull { it.first <= head }
+                onFrame(part?.let { (start, levels) -> levels.at((head - start) * 1000 / rate) } ?: FloatArray(4))
+                delay(16)
+            }
+        }
+        try {
+            t.play()
+            var next: Pcm? = first
+            while (next != null && track === t) {
+                val pcm = next
+                if (pcm.sampleRate == rate) {
+                    parts += written to VoiceFx.analyse(pcm)
+                    withContext(Dispatchers.IO) {
+                        var offset = 0
+                        while (offset < pcm.samples.size && track === t) {
+                            ensureActive()
+                            val n = t.write(pcm.samples, offset, pcm.samples.size - offset)
+                            if (n <= 0) break
+                            offset += n
+                        }
+                    }
+                    written += pcm.samples.size
+                }
+                next = made.receiveCatching().getOrNull()
+            }
+            // Let the last of it play out.
+            while (track === t && (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) < written && t.playState == AudioTrack.PLAYSTATE_PLAYING) delay(20)
+        } finally {
+            meter.cancel()
+            made.cancel()
+            onFrame(FloatArray(4))
+            runCatching { t.stop() }
+            t.release()
+            if (track === t) track = null
+        }
+        true
     }
 
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
     suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
-        if (!ready || text.isBlank()) return null
+        if (text.isBlank()) return null
+        if (voice == VoiceStyle.Tars) tarsSpeaks(text, language, file)?.let { return it }
+        else if (voice.local) local(text, language, file)?.let { return it }
+        if (!ready) return null
         val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
         prepare(text, language, voice)
         val made = suspendCancellableCoroutine { cont ->
@@ -322,10 +444,65 @@ class SpeechOutput(context: Context) {
         }
     }
 
+    /** Until when the voice server is left alone after it didn't answer, so answers aren't held up. */
+    @Volatile private var serverDownUntil = 0L
+
+    /**
+     * The answer from the voice model on your own computer (mlx-audio's OpenAI-style speech
+     * endpoint), or null when it isn't set up or doesn't answer; the tablet's voice takes over.
+     */
+    private suspend fun local(text: String, language: Language, file: File): Spoken? {
+        val s = settings()
+        val url = s.voiceServerUrlOrGuess().trimEnd('/')
+        if (url.isEmpty() || android.os.SystemClock.elapsedRealtime() < serverDownUntil) return null
+        val swedish = when (language) {
+            Language.Swedish -> true
+            Language.English -> false
+            Language.Auto -> Confirmation.looksSwedish(text)
+        }
+        return withContext(Dispatchers.IO) {
+            val spoken = runCatching {
+                val body = kotlinx.serialization.json.buildJsonObject {
+                    put("model", kotlinx.serialization.json.JsonPrimitive(s.voiceServerModel.trim().ifBlank { app.homeydash.agent.DEFAULT_VOICE_MODEL }))
+                    put("input", kotlinx.serialization.json.JsonPrimitive(text))
+                    s.voiceServerVoice.trim().takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
+                    put("lang_code", kotlinx.serialization.json.JsonPrimitive(if (swedish) "sv" else "en"))
+                    put("response_format", kotlinx.serialization.json.JsonPrimitive("wav"))
+                }.toString()
+                val request = okhttp3.Request.Builder()
+                    .url("$url/v1/audio/speech")
+                    .post(body.toRequestBody("application/json".toMediaType()))
+                    .build()
+                val bytes = http.newCall(request).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } ?: return@runCatching null
+                val pcm = VoiceFx.readWav(bytes) ?: return@runCatching null
+                if (pcm.samples.isEmpty()) return@runCatching null
+                file.writeBytes(VoiceFx.writeWav(pcm))
+                Spoken(file, VoiceFx.analyse(pcm))
+            }.getOrNull()
+            if (spoken == null) serverDownUntil = android.os.SystemClock.elapsedRealtime() + SERVER_RETRY_MS
+            spoken
+        }
+    }
+
+    /** The answer in TARS's voice, made on the tablet; null until his voice is downloaded. */
+    private suspend fun tarsSpeaks(text: String, language: Language, file: File): Spoken? {
+        val swedish = when (language) {
+            Language.Swedish -> true
+            Language.English -> false
+            Language.Auto -> Confirmation.looksSwedish(text)
+        }
+        val pcm = tars.speak(text, swedish) ?: return null
+        return withContext(Dispatchers.IO) {
+            file.writeBytes(VoiceFx.writeWav(pcm))
+            Spoken(file, VoiceFx.analyse(pcm))
+        }
+    }
+
     fun shutdown() = tts.shutdown()
 
     private companion object {
         val SWEDISH: Locale = Locale.forLanguageTag("sv-SE")
+        const val SERVER_RETRY_MS = 120_000L
     }
 }
 

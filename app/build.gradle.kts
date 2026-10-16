@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
 
 plugins {
     alias(libs.plugins.android.application)
@@ -18,6 +19,9 @@ android {
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
         versionName = "0.2.$build"
+        // Only the kitchen tablet's 64-bit ARM chip: the speech, voiceprint and face libraries
+        // otherwise ship for four chip types and more than double the download.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     signingConfigs {
@@ -69,6 +73,21 @@ kotlin {
     }
 }
 
+/**
+ * sherpa-onnx (TARS's voice, spoken on the tablet) is only published as an .aar on GitHub, so
+ * it is fetched once into the build folder.
+ */
+val sherpaVersion = "1.13.5"
+val sherpaAar: File = rootProject.layout.buildDirectory.file("sherpa/sherpa-onnx-$sherpaVersion.aar").get().asFile.also { aar ->
+    if (!aar.exists()) {
+        aar.parentFile.mkdirs()
+        val part = File(aar.path + ".part")
+        URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/sherpa-onnx-$sherpaVersion.aar").toURL()
+            .openStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+        part.renameTo(aar)
+    }
+}
+
 dependencies {
     implementation(project(":homey-api"))
 
@@ -84,9 +103,16 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.mlkit.face.detection)
     implementation(libs.tensorflow.lite)
+    // Fridge: barcode and QR scanning on the camera, offline (the model is in the app).
+    implementation(libs.androidx.camera.view)
+    implementation(libs.mlkit.barcode.scanning)
     // Wake name and voice recognition, offline. Vosk calls its native library through JNA,
     // which must be the Android (aar) build.
     implementation(libs.vosk.android) { exclude(group = "net.java.dev.jna") }
+    // Runs the WeSpeaker voiceprint model that tells voices apart.
+    // TARS's voice: a Piper model run by sherpa-onnx, and the tar.bz2 of pronunciation rules it needs.
+    implementation(files(sherpaAar))
+    implementation(libs.commons.compress)
     implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
     implementation(platform(libs.androidx.compose.bom))

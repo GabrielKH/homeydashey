@@ -35,6 +35,8 @@ data class RoomSummary(
 )
 
 object DashboardLayout {
+    private val MEDIA_CLASSES = setOf("speaker", "tv", "amplifier", "mediaplayer", "settopbox", "remote")
+    private val MEDIA_CAPS = listOf("speaker_", "volume_", "channel_")
 
     fun cardKind(device: Device): CardKind {
         val caps = device.capabilities.toSet()
@@ -42,7 +44,9 @@ object DashboardLayout {
         return when {
             Vacuums.isVacuum(device) -> CardKind.Vacuum
             cls == "thermostat" || "target_temperature" in caps -> CardKind.Thermostat
-            cls == "light" || (cls != "socket" && "dim" in caps) -> CardKind.Light
+            cls == "light" -> CardKind.Light
+            // A dimmer Homey didn't call a light; not a TV or console that happens to have a brightness.
+            cls != "socket" && cls !in MEDIA_CLASSES && "dim" in caps && caps.none { c -> MEDIA_CAPS.any { c.startsWith(it) } } -> CardKind.Light
             cls == "speaker" || cls == "tv" || "speaker_playing" in caps -> CardKind.Media
             cls == "windowcoverings" || cls == "blinds" || cls == "curtain" || "windowcoverings_set" in caps -> CardKind.Blinds
             "locked" in caps -> CardKind.Lock

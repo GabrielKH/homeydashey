@@ -173,6 +173,35 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** What the owner says a device is, when Homey's class is wrong (e.g. a TV Homey calls a light). */
+    val deviceClasses: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
+        prefs.asMap().entries
+            .filter { it.key.name.startsWith(CLASS_PREFIX) }
+            .associate { it.key.name.removePrefix(CLASS_PREFIX) to it.value.toString() }
+    }
+
+    suspend fun setDeviceClass(deviceId: String, cls: String?) {
+        context.dataStore.edit {
+            val pref = stringPreferencesKey(CLASS_PREFIX + deviceId)
+            if (cls.isNullOrBlank()) it.remove(pref) else it[pref] = cls
+        }
+    }
+
+    /** Other names per device, for the assistant. */
+    val deviceNicknames: Flow<Map<String, List<String>>> = context.dataStore.data.map { prefs ->
+        prefs.asMap().entries
+            .filter { it.key.name.startsWith(NICKNAMES_PREFIX) }
+            .associate { it.key.name.removePrefix(NICKNAMES_PREFIX) to it.value.toString().split('\n').filter { n -> n.isNotBlank() } }
+    }
+
+    suspend fun setDeviceNicknames(deviceId: String, names: List<String>) {
+        context.dataStore.edit {
+            val pref = stringPreferencesKey(NICKNAMES_PREFIX + deviceId)
+            val clean = names.map { n -> n.trim() }.filter { n -> n.isNotEmpty() }.distinct()
+            if (clean.isEmpty()) it.remove(pref) else it[pref] = clean.joinToString("\n")
+        }
+    }
+
     /** Display size: 0 for automatic (fit the screen), otherwise a scale such as 0.9. */
     val uiScale: Flow<Float> = context.dataStore.data.map { it[UI_SCALE] ?: 0f }
 
@@ -283,6 +312,8 @@ class SettingsRepository(private val context: Context) {
         val CALENDAR_VIEW = stringPreferencesKey("calendar_view")
         const val BG_PREFIX = "bg_"
         const val APPS_PREFIX = "remote_apps_"
+        const val CLASS_PREFIX = "device_class_"
+        const val NICKNAMES_PREFIX = "device_nicknames_"
         val ACCENT = stringPreferencesKey("accent")
         val WEATHER_SOURCE = stringPreferencesKey("weather_source")
         val WEATHER_PLACE = stringPreferencesKey("weather_place")

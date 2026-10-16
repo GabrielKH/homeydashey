@@ -115,7 +115,8 @@ fun BoxScope.AssistantLayer(
         assistant.timers.forEach { TimerChip(it) { assistant.cancelTimer(it.label) } }
         Orb(
             state = assistant.state,
-            level = assistant.level,
+            // Read while drawing, so the voice level doesn't redraw the whole panel 60 times a second.
+            level = { assistant.level },
             onClick = talk,
             onLongClick = { assistant.open = !assistant.open },
         )
@@ -138,22 +139,26 @@ fun FaceWatch(services: app.homeydash.assistant.AssistantServices, settings: Age
 
 /** The round glass button: a sparkle at rest, a breathing waveform while listening. */
 @Composable
-private fun Orb(state: AssistantState, level: Float, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun Orb(state: AssistantState, level: () -> Float, onClick: () -> Unit, onLongClick: () -> Unit) {
     val g = GlassTheme.colors
     val active = state != AssistantState.Idle
     val pulse = rememberInfiniteTransition(label = "orb")
     val breathe by pulse.animateFloat(1f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
     val spin by pulse.animateFloat(0f, 360f, infiniteRepeatable(tween(2400)), label = "spin")
-    val voice by animateFloatAsState(level, spring(stiffness = 400f), label = "level")
-    val scale = when (state) {
-        AssistantState.Listening -> 1f + voice * 0.18f
-        AssistantState.Thinking, AssistantState.Speaking -> breathe
-        AssistantState.Idle -> 1f
-    }
+    // The level is read here, so only the orb recomposes as the voice changes.
+    val voice by animateFloatAsState(if (active) level() else 0f, spring(stiffness = 400f), label = "level")
     Box(
         Modifier
             .size(72.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .graphicsLayer {
+                val scale = when (state) {
+                    AssistantState.Listening -> 1f + voice * 0.18f
+                    AssistantState.Thinking, AssistantState.Speaking -> breathe
+                    AssistantState.Idle -> 1f
+                }
+                scaleX = scale
+                scaleY = scale
+            }
             .pressable(onClick, onLongClick)
             .drawBehind {
                 if (active) {
@@ -219,8 +224,9 @@ private fun Panel(
         SpeakerPicker(assistant, settings, onChooseSpeaker)
 
         val list = rememberLazyListState()
-        val count = assistant.lines.size + (if (assistant.partial.isNotBlank()) 1 else 0)
-        LaunchedEffect(count) { if (count > 0) list.animateScrollToItem(count - 1) }
+        val showSteps = assistant.state == AssistantState.Thinking && assistant.steps().isNotEmpty()
+        val count = assistant.lines.size + (if (assistant.partial.isNotBlank()) 1 else 0) + (if (showSteps) 1 else 0)
+        LaunchedEffect(count, assistant.activity.size) { if (count > 0) list.animateScrollToItem(count - 1) }
         if (assistant.lines.isEmpty() && assistant.partial.isBlank()) {
             Text(
                 "Tap the orb and speak, in Swedish or English. Try \"Släck i köket\", \"Sätt en timer på 10 minuter\" or \"What's the weather tomorrow?\"",
@@ -231,6 +237,9 @@ private fun Panel(
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp), state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(assistant.lines) { _, line -> Bubble(line) }
                 if (assistant.partial.isNotBlank()) item { Bubble(Line(true, assistant.partial), partial = true) }
+                if (showSteps) {
+                    item { StepList(assistant.steps(), Modifier.widthIn(max = 340.dp).glass(RoundedCornerShape(20.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) }
+                }
             }
         }
         assistant.pending?.let { p ->
@@ -323,6 +332,16 @@ private fun Bubble(line: Line, partial: Boolean = false) {
                 .then(if (line.fromUser) Modifier.background(g.fg.copy(alpha = if (partial) 0.55f else 0.9f), shape) else Modifier.glass(shape))
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         )
+        if (line.steps.isNotEmpty()) {
+            StepList(line.steps, Modifier.widthIn(max = 340.dp).padding(horizontal = 6.dp), max = 10, style = MaterialTheme.typography.bodySmall, icon = 14.dp)
+        } else if (line.actions.isNotEmpty()) {
+            Text(
+                line.actions.joinToString("\n"),
+                style = MaterialTheme.typography.bodySmall,
+                color = g.muted,
+                modifier = Modifier.widthIn(max = 340.dp).padding(horizontal = 6.dp),
+            )
+        }
         if (line.speechSettings) SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
     }
 }

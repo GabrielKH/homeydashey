@@ -60,6 +60,7 @@ fun AppRoot(container: AppContainer) {
                 weather = container.weather,
                 calendar = container.calendar,
                 assistantServices = container.assistant,
+                kitchen = container.kitchen,
                 onForget = container::forget,
             )
         }

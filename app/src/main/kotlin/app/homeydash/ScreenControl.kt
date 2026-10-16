@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 /**
  * The kitchen screen's power and kiosk behaviour.
  *
- * Dimming: after the chosen minutes without a touch the screen goes dark (brightness to
+ * Dimming: after the chosen minutes without a touch (on the dashboard or in a popup) the screen goes dark (brightness to
  * the minimum under a black overlay with the clock) instead of sleeping, so it can wake
  * at once: on a touch, or when the proximity sensor sees someone come close. The first
  * touch only wakes the screen; it doesn't press what is under the finger.
@@ -57,6 +57,8 @@ class ScreenControl(private val activity: Activity, private val display: Display
     }
 
     fun start() {
+        // Touches in popups (Settings and the like) are their own windows; they count too.
+        app.homeydash.ui.components.UserActivity.onTouch = { wake() }
         scope.launch {
             while (true) {
                 val minutes = display.dimAfter.value

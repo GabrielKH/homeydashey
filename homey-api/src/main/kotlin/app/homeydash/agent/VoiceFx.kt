@@ -20,11 +20,27 @@ enum class FaceStyle(val label: String, val detail: String) {
 }
 
 /** How the assistant sounds: the tablet's own voice, changed by pitch, speed and a filter. */
-enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, val rate: Float) {
+enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, val rate: Float, val local: Boolean = false) {
     Natural("Natural", "The tablet's own voice, clearest from across the room.", 1f, 1f),
     Cruiser("Cruiser", "Lower, calm and a bit quick, with a metallic shimmer, like KITT.", 0.82f, 1.08f),
     Robot("Robot", "A buzzing 70s android voice.", 0.9f, 1f),
     Calm("Calm lens", "Slow, low and even, with a little echo, like HAL.", 0.78f, 0.9f),
+    Warm(
+        "Warm",
+        "Soft, warm and a little playful, in the spirit of Samantha in the film Her. Spoken by a voice model on your own " +
+            "computer (mlx-audio); while it isn't running, by the tablet's own voice, a touch lower and slower.",
+        0.95f,
+        0.94f,
+        local = true,
+    ),
+    Tars(
+        "TARS",
+        "TARS from Interstellar: the voice the TARS-AI fan project trained on the film, spoken on the tablet " +
+            "(downloaded once, about 60 MB). He reads Swedish with his own accent.",
+        0.8f,
+        0.98f,
+        local = true,
+    ),
 }
 
 /** 16-bit mono speech, as Android text-to-speech writes it. */
@@ -44,6 +60,28 @@ class VoiceTrack(val level: FloatArray, val low: FloatArray, val mid: FloatArray
     }
 }
 
+/**
+ * An answer cut into sentences, so a voice made on the tablet can start speaking the first
+ * while the rest is still being made. Very short pieces ("Done.") ride along with the next.
+ */
+object Sentences {
+    private val END = Regex("""(?<=[.!?…:;])\s+""")
+
+    fun split(text: String, shortest: Int = 24): List<String> {
+        val parts = text.trim().split(END).map { it.trim() }.filter { it.isNotEmpty() }
+        val out = mutableListOf<String>()
+        var carry = ""
+        for (p in parts) {
+            val joined = if (carry.isEmpty()) p else "$carry $p"
+            if (joined.length < shortest) carry = joined else { out += joined; carry = "" }
+        }
+        if (carry.isNotEmpty()) {
+            if (out.isEmpty()) out += carry else out[out.lastIndex] = out.last() + " " + carry
+        }
+        return out
+    }
+}
+
 /** Reads and writes WAV files, gives voices their character, and measures them for the face. */
 object VoiceFx {
     const val FPS = 60
@@ -55,23 +93,33 @@ object VoiceFx {
         var rate = 0
         var channels = 1
         var bits = 16
+        var float = false
         while (pos + 8 <= bytes.size) {
             val id = String(bytes, pos, 4)
             val size = buf.getInt(pos + 4)
             val body = pos + 8
             when (id) {
                 "fmt " -> {
-                    if (buf.getShort(body).toInt() != 1) return null // only plain PCM
+                    // Plain 16-bit PCM, or 32-bit float as some voice servers write.
+                    float = when (buf.getShort(body).toInt()) {
+                        1 -> false
+                        3 -> true
+                        else -> return null
+                    }
                     channels = buf.getShort(body + 2).toInt()
                     rate = buf.getInt(body + 4)
                     bits = buf.getShort(body + 14).toInt()
                 }
                 "data" -> {
-                    if (rate == 0 || bits != 16 || channels < 1) return null
+                    if (rate == 0 || channels < 1 || (if (float) bits != 32 else bits != 16)) return null
                     // Some engines write a placeholder size while streaming; use what is there.
                     val end = if (size <= 0 || body + size > bytes.size) bytes.size else body + size
-                    val frames = (end - body) / (2 * channels)
-                    val out = ShortArray(frames) { i -> buf.getShort(body + i * 2 * channels) }
+                    val width = bits / 8
+                    val frames = (end - body) / (width * channels)
+                    val out = ShortArray(frames) { i ->
+                        if (float) (buf.getFloat(body + i * width * channels).coerceIn(-1f, 1f) * 32767).toInt().toShort()
+                        else buf.getShort(body + i * width * channels)
+                    }
                     return Pcm(rate, out)
                 }
             }
@@ -97,11 +145,11 @@ object VoiceFx {
 
     /** Gives the voice its character; pitch and speed are set on the speech engine itself. */
     fun apply(style: VoiceStyle, pcm: Pcm): Pcm {
-        if (style == VoiceStyle.Natural) return pcm
+        if (style == VoiceStyle.Natural || style == VoiceStyle.Warm || style == VoiceStyle.Tars) return pcm
         val rate = pcm.sampleRate
         val x = FloatArray(pcm.samples.size) { pcm.samples[it] / 32768f }
         val y = when (style) {
-            VoiceStyle.Natural -> x
+            VoiceStyle.Natural, VoiceStyle.Warm, VoiceStyle.Tars -> x
             // A short comb filter: a faint metallic ring on top of the voice.
             VoiceStyle.Cruiser -> {
                 val d = (rate * 0.0025).toInt().coerceAtLeast(1)

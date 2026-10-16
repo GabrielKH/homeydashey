@@ -1,5 +1,12 @@
 package app.homeydash.agent
 
+import app.homeydash.homey.FlowCardAction
+import app.homeydash.homey.FlowCards
+import app.homeydash.homey.RemoteAction
+import app.homeydash.homey.Remotes
+import app.homeydash.homey.VacuumCommand
+import app.homeydash.homey.VacuumRoom
+import app.homeydash.homey.Vacuums
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -11,6 +18,8 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import java.time.LocalDate
 
 /**
@@ -33,6 +42,12 @@ class AgentTools(
     private val today: () -> LocalDate = { LocalDate.now() },
     /** Looks things up on the internet; null when no internet AI is set up. */
     private val web: WebLookup? = null,
+    /** The recipes on the tablet and the one being cooked; null when the dashboard has none. */
+    private val recipes: RecipeTools? = null,
+    /** What is in the fridge, freezer and pantry; null when the dashboard has none. */
+    private val fridge: FridgeTools? = null,
+    /** The owner's routines and standing instructions; null when the dashboard has none. */
+    private val routines: RoutineTools? = null,
 ) {
     /**
      * Set once this conversation has seen something kept to the local AI; from then on
@@ -40,18 +55,21 @@ class AgentTools(
      */
     var privateContext = false
 
+    /** Hears each tool call as it starts and ends, to show on screen and keep in the logs. */
+    var listener: AgentListener? = null
+
     fun specs(): List<ToolSpec> = buildList {
-        add(tool("set_device", "Change one device: switch, dim, colour, temperature, volume, play/pause, blinds. Use the device alias and a capability marked [set].") {
+        add(tool("set_device", "Change one capability of one device: switch, dim, colour, temperature, volume, play/pause, blinds.") {
             string("device", "Device alias, e.g. light_3")
-            string("capability", "Capability id, e.g. onoff, dim, target_temperature, volume_set, speaker_playing")
-            string("value", "New value: true/false, a number within the range shown, or one of the listed choices")
+            string("capability", "Capability id, e.g. onoff, dim")
+            string("value", "true/false, a number, or a listed choice")
             required("device", "capability", "value")
         })
-        add(tool("set_room", "Change every device in a room that has the capability, e.g. all lights off in the kitchen.") {
-            string("room", "Room name exactly as listed")
+        add(tool("set_room", "Change a capability on every device in a room or group, e.g. all lights off in the kitchen.") {
+            string("room", "Room or group name")
             string("capability", "Capability id, usually onoff or dim")
             string("value", "New value")
-            string("device_class", "Optional: only this class, e.g. light")
+            string("device_class", "Optional, e.g. light")
             required("room", "capability", "value")
         })
         add(tool("get_device", "All details of one device, including ranges and choices.") {
@@ -67,18 +85,43 @@ class AgentTools(
             string("name", "Flow name")
             required("name")
         })
-        add(tool("play_music", "Play a favourite, playlist or radio station on a player (e.g. a Sonos).") {
+        add(tool("play_music", "Play a song, album, artist, playlist, favourite or radio station on a player (e.g. a Sonos); finds anything on Spotify when set up.") {
             string("player", "Player alias")
-            string("query", "What to play, e.g. a playlist or station name")
-            required("player", "query")
+            string("query", "Song, album, artist, playlist or station, with the artist if said, e.g. \"Dancing Queen ABBA\"; empty lets you choose")
+            required("player")
         })
-        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, or a room name.") {
-            string("page", "overview, moods, media, calendar, or a room name")
+        add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
+            string("device", "Device alias")
+            required("device")
+        })
+        add(tool("run_device_action", "Run an action from device_actions: channel, app, favourite, playlist.") {
+            string("device", "Device alias")
+            string("action", "Action id or title")
+            string("value", "What to pick or enter, e.g. Netflix; omit if nothing")
+            required("device", "action")
+        })
+        if (!guest && view.devices.any { it.deviceClass == "vacuumcleaner" && it.secret == null }) add(tool(
+            "vacuum",
+            "Control a robot vacuum: start, pause, resume, stop, dock (send home), clean_rooms (clean only the named rooms), " +
+                "go_to (drive to a room, e.g. so the user can empty it there), or rooms (list the rooms it knows).",
+        ) {
+            string("device", "Vacuum alias; may be left out when there is one")
+            string("action", "start, pause, resume, stop, dock, clean_rooms, go_to or rooms")
+            string("rooms", "For clean_rooms and go_to: room names, comma-separated, e.g. \"Kitchen, Hall\"")
+            required("action")
+        })
+        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, or a room name.") {
+            string("page", "overview, moods, media, calendar, recipes, fridge, or a room name")
             required("page")
         })
         add(tool("open_device", "Open a device's controls on the dashboard, e.g. a lamp's colour or a TV remote.") {
             string("device", "Device alias")
             required("device")
+        })
+        add(tool("press_remote", "Press TV or media box remote buttons in order.") {
+            string("device", "Device alias")
+            string("keys", "Comma-separated: up, down, left, right, ok, back, home, play, volume up/down, mute, power, channel up/down; repeat with x, e.g. \"down x3, ok\"")
+            required("device", "keys")
         })
         if (!guest) add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})
         add(tool("timer", "Kitchen timers on the tablet: start, cancel or list.") {
@@ -87,6 +130,7 @@ class AgentTools(
             string("label", "Optional name, e.g. pasta")
             required("action")
         })
+        if (recipes != null) add(tool("recipe_timers", "Start a kitchen timer for every step of the open recipe that names a time, all at once.") {})
         add(tool("weather", "Current weather and the next days' forecast.") {})
         if (!guest) add(tool("set_theme", "Switch the dashboard between light and dark.") {
             string("mode", "light, dark or auto")
@@ -106,13 +150,40 @@ class AgentTools(
             string("question", "A self-contained general question")
             required("question")
         })
+        recipes?.let { addAll(it.specs()) }
+        fridge?.let { addAll(it.specs()) }
+        routines?.let { r ->
+            if (r.data.routines.any { it.enabled }) add(tool("run_routine", "Run one of the owner's routines now, e.g. God morgon, and follow what it returns.") {
+                string("name", "The routine's name")
+                required("name")
+            })
+            if (!guest) addAll(r.specs())
+        }
     }
+
+    /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
+    fun cookingQuick(text: String): String? = recipes?.quick(text)
 
     private val guest get() = view.settings.guest
 
-    suspend fun run(call: ToolCall): ToolResult =
-        (if (guest && call.name in GUEST_BLOCKED) ok("Guests can't do that.") else runAllowed(call))
-            .also { if (it.localOnly) privateContext = true }
+    suspend fun run(call: ToolCall): ToolResult {
+        val l = listener
+        val id = StepIds.next()
+        val text = StepText.of(call, view)
+        l?.step(AgentStep(id, text, StepState.Running))
+        l?.trace("tool", "${call.name} ${call.arguments}")
+        val result = try {
+            (if (guest && call.name in GUEST_BLOCKED) ok("Guests can't do that.") else runAllowed(call))
+                .also { if (it.localOnly) privateContext = true }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            l?.step(AgentStep(id, text, StepState.Failed, "Stopped"))
+            throw e
+        }
+        val failed = StepText.failed(result.text)
+        l?.step(AgentStep(id, text, if (failed) StepState.Failed else StepState.Done, if (failed) view.named(result.text).take(160) else null))
+        l?.trace("result", result.text, result.localOnly)
+        return result
+    }
 
     private suspend fun runAllowed(call: ToolCall): ToolResult = try {
         val a = call.arguments
@@ -124,17 +195,25 @@ class AgentTools(
             "list_flows" -> ToolResult(home.flows().joinToString("\n") { it.name }.ifBlank { "No Flows can be started." })
             "run_flow" -> runFlow(a.str("name"))
             "play_music" -> playMusic(a.str("player"), a.str("query"))
+            "device_actions" -> deviceActions(a.str("device"))
+            "run_device_action" -> runDeviceAction(a.str("device"), a.str("action"), a.str("value").ifBlank { null })
             "open_page" -> openPage(a.str("page"))
             "open_device" -> view.device(a.str("device"))?.let { d -> ok(if (dashboard.openDevice(d.id)) "Opened ${d.name}." else "Can't open ${d.name}.") } ?: unknown(a.str("device"))
+            "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
+            "vacuum" -> vacuum(a.str("device"), a.str("action"), a.str("rooms"))
             "goodnight" -> goodnight()
             "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"))
+            "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
             "calendar" -> calendar(a.str("start_date"), a.num("days"))
             "who_is_home" -> whoIsHome()
             "variables" -> variables()
             "ask_internet" -> askInternet(a.str("question"))
-            else -> ok("There is no tool called ${call.name}.")
+            "run_routine" -> runRoutine(a.str("name"))
+            else -> recipes?.run(call) ?: fridge?.run(call)
+                ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
+                ?: ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
@@ -167,26 +246,54 @@ class AgentTools(
         if (capabilityId.startsWith("homealarm_state") && text(value) == "disarmed") {
             return ToolResult("The assistant may never disarm the alarm. Use the Homey app or the alarm's own keypad.", lo)
         }
+        if (device.unreachable) {
+            return ToolResult("Homey can't reach ${device.name} right now, so it can't be changed. Tell the user it may be unplugged, switched off at the wall or out of range.", lo)
+        }
         home.setCapability(device.id, capabilityId, value)
+        // Homey sometimes accepts a change the device never makes; check before saying it's done.
+        val now = home.readBack(device.id, capabilityId)
+        if (now != null && !same(now, value)) {
+            return ToolResult(
+                "Homey accepted it, but ${device.name} still reports $capabilityId = ${text(now)}, so it didn't change. " +
+                    "Tell the user plainly; it may be out of range or switched off at the wall.",
+                lo,
+            )
+        }
         return ToolResult("Done: ${device.name} $capabilityId = ${text(value)}.", lo)
     }
 
     private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String): ToolResult {
-        val roomId = view.room(room) ?: return ok("There's no room called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
+        // One of the owner's card groups ("Taklampor"), unless a room has exactly that name.
+        val group = view.group(room)?.takeIf { g -> view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) } || g.equals(room.trim(), ignoreCase = true) }
+        val roomId = if (group != null) null else view.room(room) ?: return ok("There's no room or group called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
+        val place = group ?: view.rooms[roomId].orEmpty()
         val wantedClass = classOf(cls)
         val targets = view.devices.mapNotNull { d ->
-            if (d.roomId != roomId || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
+            val inside = if (group != null) d.group == group else view.inRoom(d, roomId!!)
+            if (!inside || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
             // "Everything off in the kitchen" shouldn't reach a hidden fridge plug; name the class to include them.
             if (d.hiddenOnDashboard && wantedClass == null) return@mapNotNull null
             capabilityOf(d, capabilityId)?.takeIf { it.setable }?.let { d to it }
         }
-        if (targets.isEmpty()) return ok("Nothing in ${view.rooms[roomId]} has $capabilityId.")
-        val changed = targets.mapNotNull { (d, c) ->
+        if (targets.isEmpty()) return ok("Nothing in $place has $capabilityId.")
+        val (unreachable, reachable) = targets.partition { it.first.unreachable }
+        val missed = if (unreachable.isEmpty()) "" else " Homey can't reach ${unreachable.joinToString { it.first.name }}, so they weren't changed."
+        val sent = reachable.mapNotNull { (d, c) ->
             val value = coerce(c, raw) ?: return@mapNotNull null
             home.setCapability(d.id, c.id, value)
-            d.name
+            Triple(d, c, value)
         }
-        return ok("Changed ${changed.size}: ${changed.joinToString()}.")
+        // Homey sometimes accepts a change a lamp never makes; ask again before saying it's done.
+        val stuck = kotlinx.coroutines.coroutineScope {
+            sent.map { (d, c, value) ->
+                async { home.readBack(d.id, c.id)?.takeIf { !same(it, value) }?.let { d.name } }
+            }.awaitAll().filterNotNull()
+        }
+        val changed = sent.map { it.first.name } - stuck.toSet()
+        val notChanged = if (stuck.isEmpty()) "" else
+            " Homey accepted it, but ${stuck.joinToString()} still report the old value, so they didn't change; tell the user plainly."
+        if (changed.isEmpty() && stuck.isNotEmpty()) return ok("${QuickCommand.NOT_CHANGED_PREFIX} ${stuck.joinToString()} still report the old value, so nothing changed.$missed")
+        return ok("Changed ${changed.size}: ${changed.joinToString()}.$notChanged$missed")
     }
 
     private fun getDevice(alias: String): ToolResult {
@@ -242,8 +349,196 @@ class AgentTools(
 
     private suspend fun playMusic(alias: String, query: String): ToolResult {
         val d = view.device(alias) ?: return unknown(alias)
-        val played = home.playMusic(d.id, query) ?: return ok("Couldn't find \"$query\" on ${d.name}.")
+        val played = home.playMusic(d.id, query) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         return ok("Playing $played on ${d.name}.")
+    }
+
+    /** Some of what the player has, so a miss can be followed by a pick of the model's own. */
+    private suspend fun musicChoices(deviceId: String): String {
+        val lists = mutableListOf<String>()
+        for (source in FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }) {
+            if (lists.size == 2) break
+            val items = runCatching { home.choices(source.card, source.arg, "") }.getOrDefault(emptyList())
+            if (items.isNotEmpty()) lists += "${source.title}: " + items.take(12).joinToString { it.name } + "."
+        }
+        val names = lists.joinToString(" ")
+        return if (names.isEmpty()) "" else " It has $names Pick one of these if it fits."
+    }
+
+    /** A device's Flow cards the assistant may use: never on guarded devices, nor anything that unlocks or disarms. */
+    private fun actionsOf(d: AgentDevice): List<FlowCardAction>? {
+        if (d.secret != null) return null
+        if (guest && d.deviceClass !in GUEST_MEDIA) return null
+        return home.deviceActions(d.id).filter { card -> !SENSITIVE.containsMatchIn(card.cardId) && !SENSITIVE.containsMatchIn(card.title.orEmpty()) }
+    }
+
+    private fun deviceActions(alias: String): ToolResult {
+        val d = view.device(alias) ?: return unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name}'s actions can't be used here.")
+        if (cards.isEmpty()) return ok("${d.name} has no actions in Homey besides its capabilities.")
+        return ok(cards.take(MAX_ACTIONS).joinToString("\n") { card ->
+            val args = card.inputArgs.joinToString { arg ->
+                when (arg.type) {
+                    "dropdown" -> "${arg.name}: one of " + arg.values.orEmpty().take(12).joinToString("/") { it.label ?: it.id }
+                    "autocomplete" -> "${arg.name}: a name to search for"
+                    "range", "number" -> "${arg.name}: number ${arg.min ?: ""}..${arg.max ?: ""}"
+                    else -> "${arg.name}: ${arg.type}"
+                }
+            }
+            "${card.cardId} \"${card.title ?: card.cardId}\"" + if (args.isEmpty()) "" else " ($args)"
+        })
+    }
+
+    private suspend fun runDeviceAction(alias: String, action: String, value: String?): ToolResult {
+        val d = view.device(alias) ?: return unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name}'s actions can't be used here.")
+        val card = cards.firstOrNull { it.cardId.equals(action.trim(), ignoreCase = true) || it.title.equals(action.trim(), ignoreCase = true) }
+            ?: NameMatch.best(action, cards) { NameMatch.score(action, it.title ?: it.cardId) }
+            ?: return ok("${d.name} has no action \"$action\". Use device_actions to see what it has.")
+        val title = card.title ?: card.cardId
+        // One value per argument, separated by ";" when the card has several.
+        val values = value?.split(';')?.map { it.trim() }.orEmpty()
+        var picked: String? = null
+        val args = buildMap<String, JsonElement> {
+            card.inputArgs.forEachIndexed { i, arg ->
+                val v = values.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: run {
+                    // A play mode or a "shuffle" box left out takes its default, as in a Flow.
+                    when (arg.type) {
+                        "dropdown" -> arg.values?.firstOrNull()?.let { put(arg.name, JsonPrimitive(it.id)); return@forEachIndexed }
+                        "checkbox" -> { put(arg.name, JsonPrimitive(false)); return@forEachIndexed }
+                    }
+                    return ok("\"$title\" needs ${arg.title ?: arg.name}.")
+                }
+                val element: JsonElement = when (arg.type) {
+                    "autocomplete", "dropdown" -> {
+                        val items = home.choices(card, arg, v)
+                        val item = NameMatch.best(v, items) { NameMatch.score(v, it.name) }
+                            ?: items.takeIf { arg.type == "autocomplete" }?.firstOrNull { NameMatch.score(v, it.name) > 0 }
+                            ?: items.singleOrNull()
+                            ?: return ok("Couldn't find \"$v\" for $title. " + if (items.isEmpty()) "Nothing matched." else "Some choices: " + items.take(10).joinToString { it.name } + ".")
+                        picked = item.name
+                        FlowCards.argValue(arg, item)
+                    }
+                    "range", "number" -> JsonPrimitive(v.replace(',', '.').toDoubleOrNull() ?: return ok("\"$title\" needs a number for ${arg.name}."))
+                    "checkbox" -> JsonPrimitive(v.lowercase() in setOf("true", "yes", "ja", "on", "på", "1"))
+                    "device" -> {
+                        val other = view.device(v) ?: return unknown(v)
+                        buildJsonObject { put("id", other.id); put("name", other.name) }
+                    }
+                    else -> JsonPrimitive(v)
+                }
+                put(arg.name, element)
+            }
+        }
+        home.runAction(card, JsonObject(args))
+        return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}.")
+    }
+
+    /**
+     * A robot vacuum, whatever its brand: the same buttons and room cleaning the vacuum page
+     * finds in its Homey app's capabilities and Flow cards.
+     */
+    private suspend fun vacuum(alias: String, action: String, rooms: String): ToolResult {
+        val vacuums = view.devices.filter { it.deviceClass == "vacuumcleaner" }
+        val d = (if (alias.isBlank()) vacuums.singleOrNull() else view.device(alias))
+            ?: return if (alias.isBlank()) ok("Which vacuum? " + vacuums.joinToString { "${it.alias} \"${it.name}\"" }) else unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name} can't be used here.")
+        val device = home.device(d.id) ?: return ok("Homey hasn't said anything about ${d.name} yet; try again in a moment.")
+        if (!Vacuums.isVacuum(device)) return ok("${d.name} isn't a robot vacuum.")
+        val c = Vacuums.controls(device, cards)
+        suspend fun exec(cmd: VacuumCommand?, done: String): ToolResult {
+            cmd ?: return ok("${d.name}'s Homey app has no way to $action it.")
+            when (cmd) {
+                is VacuumCommand.Set -> home.setCapability(d.id, cmd.capability, cmd.value)
+                is VacuumCommand.Card -> home.runAction(cmd.card, cmd.args)
+            }
+            return ok(done)
+        }
+        val verb = action.trim().lowercase().replace(' ', '_')
+        return when (verb) {
+            "start" -> exec(c.start, "${d.name} started cleaning.")
+            "pause" -> exec(c.pause, "${d.name} paused.")
+            "resume", "continue" -> exec(c.resume, "${d.name} carries on.")
+            "stop" -> exec(c.stop, "${d.name} stopped.")
+            "dock", "home", "return" -> exec(c.dock, "${d.name} is going back to its dock.")
+            "rooms" -> vacuumRooms(c, cards).let { known ->
+                ok(if (known.isEmpty()) "${d.name} doesn't list its rooms in Homey." else "${d.name}'s rooms: " + known.joinToString { it.name } + ".")
+            }
+            "clean_rooms", "clean", "go_to", "goto" -> {
+                val wanted = rooms.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+                if (wanted.isEmpty()) return ok("Say which room.")
+                val goTo = verb.startsWith("go")
+                val goCard = if (goTo) Vacuums.goToCard(cards) else null
+                val goArg = goCard?.second
+                if (goCard != null && goArg != null && goArg.type != "text") {
+                    val items = home.choices(goCard.first, goArg, wanted[0])
+                    val item = NameMatch.best(wanted[0], items) { NameMatch.score(wanted[0], it.name) } ?: items.singleOrNull()
+                    if (item != null) {
+                        home.runAction(goCard.first, JsonObject(mapOf(goArg.name to FlowCards.argValue(goArg, item))))
+                        return ok("${d.name} is driving to ${item.name}.")
+                    }
+                } else if (goCard != null && goArg != null) {
+                    home.runAction(goCard.first, JsonObject(mapOf(goArg.name to JsonPrimitive(wanted[0]))))
+                    return ok("${d.name} is driving to ${wanted[0]}.")
+                }
+                val cleaning = c.roomCleaning ?: return ok("${d.name}'s Homey app can't send it to a room; it can only start, stop and dock.")
+                val known = vacuumRooms(c, cards)
+                val picked = wanted.map { w ->
+                    NameMatch.best(w, known) { NameMatch.score(w, it.name) }
+                        ?: return ok("${d.name} has no room \"$w\"." + if (known.isEmpty()) "" else " Its rooms: " + known.joinToString { it.name } + ". Use one of these.")
+                }.distinct()
+                if (goTo && picked.size > 1) return ok("${d.name} can only drive to one room at a time.")
+                val max = cleaning.maxRooms
+                if (max != null && picked.size > max) return ok("${d.name} can take at most $max room(s) at once.")
+                val names = picked.joinToString(" and ") { it.name }
+                // Without a go-to card, cleaning just that room is how the robot gets there.
+                exec(
+                    Vacuums.roomArgs(cleaning, picked),
+                    if (goTo) "${d.name} has no plain go-to in Homey, so it is cleaning $names, which takes it there. Tell the user, and that \"pause\" stops it when it arrives."
+                    else "${d.name} is cleaning $names.",
+                )
+            }
+            else -> ok("Use start, pause, resume, stop, dock, clean_rooms, go_to or rooms.")
+        }
+    }
+
+    private suspend fun vacuumRooms(c: app.homeydash.homey.VacuumControls, cards: List<FlowCardAction>): List<VacuumRoom> {
+        val listArg = Vacuums.roomListArg(c.roomCleaning, cards)
+        val fromCard = listArg?.let { (card, arg) -> runCatching { Vacuums.roomsFrom(home.choices(card, arg, "")) }.getOrDefault(emptyList()) }.orEmpty()
+        return fromCard.ifEmpty { c.pickerRooms }
+    }
+
+    /** Presses [keys] ("down x3, ok") on a remote, as the dashboard's remote sheet would. */
+    private suspend fun pressRemote(alias: String, keys: String): ToolResult {
+        val d = view.device(alias) ?: return unknown(alias)
+        val cards = actionsOf(d) ?: return ok("${d.name}'s remote can't be used here.")
+        val presses = RemoteKeys.parse(keys) ?: return ok("Name the buttons: ${RemoteKeys.NAMES}.")
+        val keyCard = Remotes.keyCard(cards)
+        val items = when (keyCard?.arg?.type) {
+            "dropdown" -> FlowCards.dropdownItems(keyCard.arg)
+            "autocomplete" -> home.choices(keyCard.card, keyCard.arg, "")
+            else -> emptyList()
+        }
+        val buttons = Remotes.actions(d.capabilities.map { it.id }, cards, keyCard, Remotes.keyItems(items))
+        val missing = presses.distinct().filter { it !in buttons }
+        if (missing.isNotEmpty()) {
+            return ok("${d.name} has no button for ${missing.joinToString { RemoteKeys.name(it) }}" +
+                (if (buttons.isEmpty()) ". Homey offers no remote buttons for it." else "; it has ${buttons.keys.joinToString { RemoteKeys.name(it) }}."))
+        }
+        for ((i, key) in presses.withIndex()) {
+            if (i > 0) kotlinx.coroutines.delay(REMOTE_GAP_MS)
+            when (val action = buttons.getValue(key)) {
+                is RemoteAction.Card -> home.runAction(action.card, action.args)
+                is RemoteAction.Capability -> {
+                    val value = if (action.toggle) {
+                        val now = home.readBack(d.id, action.capability) ?: d.capability(action.capability)?.value
+                        (now as? JsonPrimitive)?.booleanOrNull != true
+                    } else true
+                    home.setCapability(d.id, action.capability, JsonPrimitive(value))
+                }
+            }
+        }
+        return ok("Done: pressed ${presses.joinToString { RemoteKeys.name(it) }} on ${d.name}.")
     }
 
     private fun openPage(page: String): ToolResult {
@@ -252,10 +547,20 @@ class AgentTools(
             "overview" to "overview", "home" to "overview", "översikt" to "overview",
             "moods" to "moods", "media" to "media", "music" to "media", "musik" to "media",
             "calendar" to "calendar", "kalender" to "calendar",
+            "recipes" to "recipes", "recipe" to "recipes", "recept" to "recipes",
+            "fridge" to "fridge", "kylen" to "fridge", "kylskåp" to "fridge", "kylskåpet" to "fridge", "freezer" to "fridge", "frysen" to "fridge",
         )
         fixed[p]?.let { return ok(if (dashboard.openPage(it)) "Showing $it." else "Can't show $it.") }
         val roomId = view.room(page) ?: return ok("There's no page or room called $page.")
         return ok(if (dashboard.openPage("room", roomId)) "Showing ${view.rooms[roomId]}." else "Can't show that room.")
+    }
+
+    /** Runs a routine's steps now (the answer step doesn't wait) and returns what to tell the user. */
+    private suspend fun runRoutine(name: String): ToolResult {
+        val data = routines?.data ?: return ok("There are no routines.")
+        val routine = data.named(name)?.takeIf { it.enabled } ?: return ok("There's no routine called $name. ${RoutineTools.describe(data)}")
+        val run = RoutineRunner(this, view, today(), Routines.defaultPlayer(view)).run(routine.steps)
+        return ToolResult(RoutineText.forBrain(routine, run, emptyList()), localOnly = run.localOnly)
     }
 
     private fun goodnight(): ToolResult {
@@ -280,6 +585,13 @@ class AgentTools(
         }
         "cancel", "stop" -> ok(if (dashboard.cancelTimer(label.ifBlank { null })) "Timer cancelled." else "No timer like that is running.")
         else -> ok(dashboard.timers().joinToString("\n").ifBlank { "No timers are running." })
+    }
+
+    private fun recipeTimers(): ToolResult {
+        val timers = recipes?.stepTimers().orEmpty()
+        if (timers.isEmpty()) return ok("No recipe is open, or its steps name no times.")
+        timers.forEach { (step, t) -> dashboard.startTimer(t.seconds, "Steg $step · ${t.label}") }
+        return ok("Started: " + timers.joinToString { (step, t) -> "step $step ${t.label}" } + ".")
     }
 
     private suspend fun calendar(start: String, days: Double?): ToolResult {
@@ -315,7 +627,7 @@ class AgentTools(
             return ok("This conversation includes private things, so nothing is looked up on the internet now. Answer from what you know.")
         }
         if (mentionsHome(question)) return ok("Leave this home's devices, rooms and people out of internet questions; ask a general question instead.")
-        return ok(lookup.answer(question, view.settings.language))
+        return ok(lookup.answer(question, view.settings.answers))
     }
 
     /** Whether a question names a device alias or a guarded device, which must stay home. */
@@ -338,7 +650,12 @@ class AgentTools(
 
     companion object {
         private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)_\d+\b""")
-        private val GUEST_BLOCKED = setOf("list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
+        /** Guests may use the actions of TVs and speakers, nothing else's. */
+        private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")
+        private const val MAX_ACTIONS = 40
+
+        private const val REMOTE_GAP_MS = 350L
+        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */
         private val SENSITIVE = Regex("""\b(un)?lock\w*|\blås\w*|\b(dis)?arm\w*|\b(av)?larm\w*|\balarm\w*|\bgarage\w*|\bdoor\w*|\bdörr\w*""", RegexOption.IGNORE_CASE)
@@ -350,8 +667,8 @@ class AgentTools(
             val s = p.contentOrNull?.trim() ?: return null
             return when (c.type) {
                 "boolean" -> (p.booleanOrNull ?: when (s.lowercase()) {
-                    "on", "1", "yes", "ja", "på" -> true
-                    "off", "0", "no", "nej", "av" -> false
+                    "on", "1", "yes", "ja", "på", "tänd", "tänt", "tända", "turn_on" -> true
+                    "off", "0", "no", "nej", "av", "släck", "släckt", "släckta", "turn_off" -> false
                     else -> null
                 })?.let(::JsonPrimitive)
                 "number" -> {
@@ -397,6 +714,17 @@ class AgentTools(
             }
         }
 
+        /** Whether Homey's [now] is the [wanted] value, allowing for a lamp rounding 30 % to 31 %. */
+        internal fun same(now: JsonElement, wanted: JsonElement): Boolean {
+            val a = now as? JsonPrimitive ?: return now == wanted
+            val b = wanted as? JsonPrimitive ?: return false
+            a.booleanOrNull?.let { return it == b.booleanOrNull }
+            val x = a.doubleOrNull
+            val y = b.doubleOrNull
+            if (x != null && y != null) return kotlin.math.abs(x - y) <= 0.03 * maxOf(1.0, kotlin.math.abs(y))
+            return a.contentOrNull == b.contentOrNull
+        }
+
         private fun text(v: JsonElement): String = (v as? JsonPrimitive)?.contentOrNull ?: v.toString()
 
         private fun JsonObject.str(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
@@ -406,7 +734,7 @@ class AgentTools(
 }
 
 /** Builds a tool's JSON-schema parameters. */
-private class ParamsBuilder {
+internal class ParamsBuilder {
     val properties = linkedMapOf<String, JsonObject>()
     var required = emptyList<String>()
 
@@ -423,7 +751,7 @@ private class ParamsBuilder {
     }
 }
 
-private fun tool(name: String, description: String, params: ParamsBuilder.() -> Unit): ToolSpec {
+internal fun tool(name: String, description: String, params: ParamsBuilder.() -> Unit): ToolSpec {
     val b = ParamsBuilder().apply(params)
     return ToolSpec(name, description, buildJsonObject {
         put("type", "object")

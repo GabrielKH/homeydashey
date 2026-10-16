@@ -54,6 +54,28 @@ The look is iOS-style glass in light and dark (Settings → Appearance: Auto, Li
 - Overview: a weather card (Open-Meteo, no account) for the Homey's location, the tablet's GPS, the internet address or a city you search for; tap it to change. Tap the weather for the full forecast and location. Below it, a Today, Week or Month view of the calendars synced on the tablet (for example a Google family calendar), read through Android's calendar provider; the sliders icon picks which calendars show.
 - Settings: hide rooms and change their order (per tablet); highlight colour (gradients) and its opacity, and a background for the home; each room's header has a picture button for its own background (preset or photo).
 
+### Recipes
+
+The Recipes page (side menu) is the kitchen's recipe book, kept on the tablet (`files/recipes`: one JSON file and a folder of photos shrunk to 1600 px).
+
+- **Add from a link**, like Recipe Keeper: paste the address of any recipe page (or share it from the browser to the dashboard) and it reads the name, photo, ingredients, steps, times and servings. It reads schema.org `Recipe` data in JSON-LD, which nearly every recipe site publishes for Google (ICA, Arla, Köket, Coop, Matprat, BBC Good Food, WordPress recipe plugins…), then schema.org microdata, then the lists under headings like "Ingredienser" and "Gör så här" on plain blogs. Sites that turn away apps or build the page with JavaScript are loaded in a hidden browser instead. Before saving, pick its categories; the ones you already use that the site also names are picked for you.
+- **Import from Recipe Keeper**: in Recipe Keeper, Settings → Export, then pick the .zip (or `recipes.html`) on the Recipes page. Courses, categories, collections, favourites, ratings, notes, nutrition and photos come along. Importing a newer export updates the recipes already imported instead of adding copies.
+- Recipes can be written or changed by hand: one ingredient or step per line, and a line like `# Sauce` starts a section.
+- Filter by course, category or favourites, and search by name or ingredient.
+- A recipe's page has the photo, ingredients to tick off and the steps; tap a step to mark where you are. **Start cooking** shows one step at a time in big type, with Back and Next (or swipe), a timer button for times in the step ("bake 25–30 minutes" starts a 30 minute timer), and the ingredients alongside.
+- The voice assistant knows which recipe is open and which step you are on, so "what's next?", "nästa steg", "go back", "step 4" or "how much flour?" just work. Step commands are answered at once without the AI and move the screen along; it can also find and open a saved recipe ("open the lasagne").
+
+### Fridge
+
+The Fridge page (side menu) and the overview's fridge card track what is in the fridge, freezer and pantry, kept on the tablet (`files/fridge/fridge.json`). Homey has nowhere to keep a food list, so it lives on the tablet like the recipes. Research and the shelf-life table: `plan/fridge-research.md` in the project files.
+
+- **Scan** with the front camera (or the back one): hold the barcode 15 to 25 cm in front of the camera above the screen. Google ML Kit reads EAN/UPC barcodes, QR codes and Data Matrix offline. The product's name, brand, size and kind come from [Open Food Facts](https://world.openfoodfacts.org) (open data, ODbL); you confirm them once and the tablet remembers that barcode, so the next scan adds it at once (with an undo).
+- **Weighed packs** from the meat, fish and cheese counter carry an in-store barcode (starting with 2) that no database knows: name it once and the tablet remembers it by the store's item number.
+- **GS1 2D codes** (Data Matrix, GS1 QR, GS1 Digital Link) on fresh food can carry the use-by or best-before date and weight; those are filled in from the scan.
+- **Shelf life**: the date printed on the pack when known, otherwise the purchase date plus how long that kind of food keeps (mince 2 days, chicken 2, fish 1, milk 7, hard cheese 2 months…); once opened, the shorter of that and the opened shelf life (milk 5 days, yoghurt 7, cold cuts 4). The freezer stops the clock; taking it out gives thawed food a day or two. Meat, fish, mince, cold cuts, ready meals and leftovers are "use by": past it they're marked Expired. Everything else is "best before": past it, look, smell and taste.
+- The kind is guessed from Open Food Facts' categories, then Swedish and English words in the name ("kycklingfärs" is mince, "prästost" is cheese), and can be changed.
+- The voice assistant can list what's there and what goes off first, add things ("lägg till två paket köttfärs i kylen"), mark them opened or frozen, and take them out ("we finished the milk"). Its instructions include the few things to eat first, so "what should we cook tonight?" can use them.
+
 Type is Inter (OFL), the closest open typeface to Apple's SF Pro. Icons are [Phosphor](https://phosphoricons.com) (MIT): each icon's Regular and Fill SVGs from `@phosphor-icons/core` are converted to vector drawables `res/drawable/ph_<name>.xml` and `ph_<name>_fill.xml`, and listed in `Sym` in `ui/components/Icons.kt`.
 
 ## How it talks to Homey

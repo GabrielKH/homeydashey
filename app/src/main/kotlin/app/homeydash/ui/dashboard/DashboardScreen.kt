@@ -178,7 +178,9 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
         }
     }
 
-    fun musicSources(deviceId: String): List<MusicSource> = FlowCards.musicSources(cards(deviceId))
+    /** Includes the albums and favourites of the same speaker added by another app (Sonos and Sonos LocalAPI). */
+    fun musicSources(deviceId: String): List<MusicSource> =
+        FlowCards.musicSources(FlowCards.withTwins(store.snapshot.value.devices, deviceCards, deviceId))
 
     fun grouping(deviceId: String): SpeakerGrouping? = FlowCards.grouping(cards(deviceId))
 
@@ -195,6 +197,31 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
             store.reportError("Couldn't load the list: ${e.message}")
             emptyList()
         }
+
+    /**
+     * What a music tab lists: from its own card, or else from the next card of the same kind
+     * (a speaker's copy in another app may be out of reach). Only says so when none could answer.
+     */
+    suspend fun musicItems(source: MusicSource, query: String): List<Pair<MusicSource, AutocompleteItem>> {
+        var failure: Exception? = null
+        for (s in source.all) {
+            val items = if (s.arg.type == "dropdown") {
+                FlowCards.dropdownItems(s.arg).filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            } else {
+                try {
+                    store.autocomplete(s.card, s.arg.name, query)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failure = e
+                    continue
+                }
+            }
+            if (items.isNotEmpty()) return items.map { s to it }
+        }
+        failure?.let { store.reportError("Couldn't load the list: ${it.message}") }
+        return emptyList()
+    }
 
     fun reportError(message: String) = store.reportError(message)
 
@@ -255,6 +282,8 @@ private const val OVERVIEW = "overview"
 private const val MOODS = "moods"
 private const val MEDIA = "media"
 private const val CALENDAR = "calendar"
+private const val RECIPES = "recipes"
+private const val FRIDGE = "fridge"
 private const val ROOM = "room:"
 
 @Composable
@@ -266,9 +295,17 @@ fun DashboardScreen(
     weather: WeatherRepository,
     calendar: CalendarRepository,
     assistantServices: AssistantServices,
+    kitchen: app.homeydash.data.Kitchen,
     onForget: () -> Unit,
 ) {
     val update by updater.state.collectAsStateWithLifecycle()
+    val screenContext = androidx.compose.ui.platform.LocalContext.current
+    // The installer opens from this screen, which is visible, so Android lets it through.
+    LaunchedEffect(update) { if (update is AppUpdater.State.ReadyToInstall) updater.openInstaller(screenContext) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(updater) {
+        updater.onResume(screenContext)
+        onPauseOrDispose { }
+    }
     val weatherState by weather.state.collectAsStateWithLifecycle()
     val weatherSource by weather.source.collectAsStateWithLifecycle()
     val weatherPlace by weather.place.collectAsStateWithLifecycle()
@@ -291,6 +328,12 @@ fun DashboardScreen(
     val backgrounds by display.backgrounds.collectAsStateWithLifecycle()
     val remoteApps by display.remoteApps.collectAsStateWithLifecycle()
     val arrangement by display.cardArrangement.collectAsStateWithLifecycle()
+    val deviceClasses by display.deviceClasses.collectAsStateWithLifecycle()
+    val deviceNicknames by display.deviceNicknames.collectAsStateWithLifecycle()
+    // What the owner set per device on this tablet reaches the cards and the assistant alike.
+    LaunchedEffect(store, deviceClasses, deviceNicknames, arrangement) {
+        store.setOwnerNotes(HomeyStore.OwnerNotes(deviceClasses, deviceNicknames, arrangement.groups))
+    }
     val calendarView by display.calendarView.collectAsStateWithLifecycle()
     val uiScale by display.uiScale.collectAsStateWithLifecycle()
     val weatherDays by display.weatherDays.collectAsStateWithLifecycle()
@@ -341,15 +384,24 @@ fun DashboardScreen(
     val assistantSettings by assistantServices.settings.collectAsStateWithLifecycle()
     var showAssistantSettings by rememberSaveable { mutableStateOf(false) }
     var showFaces by rememberSaveable { mutableStateOf(false) }
+    var assistantPage by rememberSaveable { mutableStateOf("main") }
+    // Something opened from Settings goes back to Settings when it closes.
+    var backToSettings by rememberSaveable { mutableStateOf(false) }
     val assistant = remember(store) { Assistant(assistantServices, store, scope) }
     val currentHidden by rememberUpdatedState(hidden)
     remember(assistant) {
         AssistantBridge(assistant, store, actions, display, weather, calendar, hiddenDevices = { currentHidden }, navigate = { destination = it })
     }.also { assistant.bridge = it }
+    // A recipe link shared from the browser opens the recipe page to import it.
+    val sharedLink by kitchen.sharedLink.collectAsStateWithLifecycle()
+    LaunchedEffect(sharedLink) { if (sharedLink != null) destination = RECIPES }
     FaceWatch(assistantServices, assistantSettings)
     WakeWatch(assistant, assistantServices, assistantSettings)
 
-    LaunchedEffect(destination) { actions.rearrange.done() }
+    LaunchedEffect(destination) {
+        actions.rearrange.done()
+        if (destination == OVERVIEW) assistant.compact = assistantSettings.view != app.homeydash.agent.AssistantView.Full
+    }
     val roomId = destination.takeIf { it.startsWith(ROOM) }?.removePrefix(ROOM)
     val (backgroundKey, backgroundSpec) = backgroundFor(backgrounds, roomId)
     Crossfade(targetState = backgroundKey to backgroundSpec, animationSpec = tween(400), label = "backdrop") { (key, spec) ->
@@ -390,6 +442,8 @@ fun DashboardScreen(
                     when {
                         target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
                         target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
+                        target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label) })
+                        target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
                         target == CALENDAR -> CalendarScreen(
                             hasPermission = hasCalendar,
                             events = events,
@@ -425,6 +479,11 @@ fun DashboardScreen(
                             order = overviewOrder,
                             onOrder = display::setOverviewOrder,
                             widget = { key ->
+                                if (key == "fridge") FridgeCard(
+                                    kitchen,
+                                    onOpen = { destination = FRIDGE },
+                                    onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
+                                )
                                 if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                 if (key == "calendar") CalendarCard(
                                     hasPermission = hasCalendar,
@@ -440,7 +499,7 @@ fun DashboardScreen(
                     }
                 }
             }
-            UpdateBanner(update, onInstall = { scope.launch { updater.install() } }, modifier = Modifier.align(Alignment.TopEnd))
+            UpdateBanner(update, onInstall = { updater.install(screenContext) }, modifier = Modifier.align(Alignment.TopEnd))
             AssistantLayer(
                 assistant,
                 assistantSettings,
@@ -464,10 +523,10 @@ fun DashboardScreen(
             onAccent = display::setAccent,
             accentOpacity = accentOpacity,
             onAccentOpacity = display::setAccentOpacity,
-            onHomeBackground = { showSettings = false; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
-            onChooseDevices = { showSettings = false; showDevices = true },
-            onChooseRooms = { showSettings = false; actions.open(Sheet.Rooms) },
-            onWeather = { showSettings = false; actions.open(Sheet.Weather) },
+            onHomeBackground = { showSettings = false; backToSettings = true; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
+            onChooseDevices = { showSettings = false; backToSettings = true; showDevices = true },
+            onChooseRooms = { showSettings = false; backToSettings = true; actions.open(Sheet.Rooms) },
+            onWeather = { showSettings = false; backToSettings = true; actions.open(Sheet.Weather) },
             uiScale = uiScale,
             onUiScale = display::setUiScale,
             palette = Palette.of(palette),
@@ -480,14 +539,14 @@ fun DashboardScreen(
             onWakeOnProximity = display::setWakeOnProximity,
             kiosk = kiosk,
             onKiosk = display::setKiosk,
-            onCalendars = { showSettings = false; actions.open(Sheet.Calendars) },
-            onAssistant = { showSettings = false; showAssistantSettings = true },
+            onCalendars = { showSettings = false; backToSettings = true; actions.open(Sheet.Calendars) },
+            onAssistant = { showSettings = false; backToSettings = true; assistantPage = "main"; showAssistantSettings = true },
             version = updater.currentVersion,
             update = update,
             onCheckUpdate = { scope.launch { updater.check() } },
-            onInstallUpdate = { scope.launch { updater.install() } },
+            onInstallUpdate = { updater.install(screenContext) },
             onForget = { showSettings = false; onForget() },
-            onDismiss = { showSettings = false },
+            onDismiss = { showSettings = false; backToSettings = false },
         )
     }
     if (showAssistantSettings) {
@@ -498,12 +557,30 @@ fun DashboardScreen(
             devices = snapshot.devices,
             hidden = hidden,
             preview = assistant::preview,
+            initialPage = assistantPage,
+            onPage = { assistantPage = it },
+            onBack = { showAssistantSettings = false },
             onFaces = { showAssistantSettings = false; showFaces = true },
-            onDismiss = { showAssistantSettings = false },
+            onDismiss = { showAssistantSettings = false; backToSettings = false },
+            moods = snapshot.moods,
+            flows = { actions.flows().map { it.name } },
+            onRunRoutine = { showAssistantSettings = false; backToSettings = false; assistant.runRoutine(it) },
         )
     }
     if (showFaces) {
-        FacesDialog(assistantServices, assistantSettings, onDismiss = { showFaces = false; showAssistantSettings = true })
+        FacesDialog(
+            assistantServices,
+            assistantSettings,
+            onDismiss = { showFaces = false; assistantPage = "privacy"; showAssistantSettings = true },
+            onClose = { showFaces = false; backToSettings = false },
+        )
+    }
+    // Closing what Settings opened shows Settings again, like a back button.
+    LaunchedEffect(actions.sheet, showDevices, showAssistantSettings, showFaces, showSettings) {
+        if (backToSettings && actions.sheet == null && !showDevices && !showAssistantSettings && !showFaces && !showSettings) {
+            backToSettings = false
+            showSettings = true
+        }
     }
     if (showDevices) {
         DevicePickerDialog(
@@ -558,6 +635,8 @@ fun DashboardScreen(
                 actions = actions,
                 onOrder = display::setCardOrder,
                 onGroup = { display.setCardGroup(device.id, it) },
+                onClass = { display.setDeviceClass(device.id, it) },
+                onNicknames = { display.setDeviceNicknames(device.id, it) },
                 onHide = { display.setHidden(device.id, true) },
                 pinned = device.id in overviewDevices,
                 onPin = { display.pinToOverview(device.id, it) },
@@ -661,6 +740,8 @@ private fun Sidebar(
         if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS, compact = compact) { onNavigate(MOODS) }
         if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA, compact = compact) { onNavigate(MEDIA) }
         if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
+        NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
+        NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {
@@ -750,12 +831,13 @@ private fun UpdateBanner(state: AppUpdater.State, onInstall: () -> Unit, modifie
         AppUpdater.State.UpToDate -> return
         is AppUpdater.State.Available -> "New version ready · Install"
         is AppUpdater.State.Downloading -> "Downloading update… ${(state.progress * 100).toInt()}%"
+        is AppUpdater.State.ReadyToInstall -> "Opening the installer…"
         is AppUpdater.State.Failed -> "Update failed · Try again"
     }
     Row(
         modifier
             .padding(4.dp)
-            .pressable(onInstall.takeIf { state !is AppUpdater.State.Downloading })
+            .pressable(onInstall.takeIf { state is AppUpdater.State.Available || state is AppUpdater.State.Failed })
             .background(g.wallBase, PillShape)
             .glass(PillShape)
             .padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),

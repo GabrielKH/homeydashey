@@ -108,6 +108,17 @@ class DisplaySettings(
         scope.launch { settings.setCardOrder(zoneId, order) }
     }
 
+    val deviceClasses: StateFlow<Map<String, String>> = settings.deviceClasses.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+    val deviceNicknames: StateFlow<Map<String, List<String>>> = settings.deviceNicknames.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    fun setDeviceClass(deviceId: String, cls: String?) {
+        scope.launch { settings.setDeviceClass(deviceId, cls) }
+    }
+
+    fun setDeviceNicknames(deviceId: String, names: List<String>) {
+        scope.launch { settings.setDeviceNicknames(deviceId, names) }
+    }
+
     fun setCardGroup(deviceId: String, title: String?) {
         scope.launch { settings.setCardGroup(deviceId, title) }
     }

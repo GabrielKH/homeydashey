@@ -204,4 +204,22 @@ object Sym {
     val refresh = Ic(R.drawable.ph_arrow_clockwise, R.drawable.ph_arrow_clockwise_fill)
     val clock = Ic(R.drawable.ph_clock, R.drawable.ph_clock_fill)
     val filter = Ic(R.drawable.ph_funnel, R.drawable.ph_funnel_fill)
+
+    // Recipes
+    val chefHat = Ic(R.drawable.ph_chef_hat, R.drawable.ph_chef_hat_fill)
+    val bowl = Ic(R.drawable.ph_bowl_food, R.drawable.ph_bowl_food_fill)
+    val edit = Ic(R.drawable.ph_pencil_simple, R.drawable.ph_pencil_simple_fill)
+    val heart = Ic(R.drawable.ph_heart, R.drawable.ph_heart_fill)
+    val timer = Ic(R.drawable.ph_timer, R.drawable.ph_timer_fill)
+    val link = Ic(R.drawable.ph_link, R.drawable.ph_link_fill)
+    val people = Ic(R.drawable.ph_users, R.drawable.ph_users_fill)
+    val tag = Ic(R.drawable.ph_tag, R.drawable.ph_tag_fill)
+    val download = Ic(R.drawable.ph_download_simple, R.drawable.ph_download_simple_fill)
+    val steps = Ic(R.drawable.ph_list_numbers, R.drawable.ph_list_numbers_fill)
+
+    // Fridge
+    val fridge = Ic(R.drawable.ph_fridge, R.drawable.ph_fridge_fill)
+    val barcode = Ic(R.drawable.ph_barcode, R.drawable.ph_barcode_fill)
+    val pantry = Ic(R.drawable.ph_package, R.drawable.ph_package_fill)
+    val hourglass = Ic(R.drawable.ph_hourglass_medium, R.drawable.ph_hourglass_medium_fill)
 }

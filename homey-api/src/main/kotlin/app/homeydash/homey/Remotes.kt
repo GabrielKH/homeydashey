@@ -53,8 +53,10 @@ object Remotes {
     }
 
     /** Buttons from Homey's standard capabilities. */
-    fun capabilityKeys(device: Device): Map<RemoteKey, RemoteAction> {
-        val caps = device.capabilities.toSet()
+    fun capabilityKeys(device: Device): Map<RemoteKey, RemoteAction> = capabilityKeys(device.capabilities)
+
+    fun capabilityKeys(capabilities: Collection<String>): Map<RemoteKey, RemoteAction> {
+        val caps = capabilities.toSet()
         val result = linkedMapOf<RemoteKey, RemoteAction>()
         fun button(key: RemoteKey, id: String) {
             if (id in caps) result[key] = RemoteAction.Capability(id, toggle = false)
@@ -74,6 +76,13 @@ object Remotes {
         cards: List<FlowCardAction>,
         keyCard: KeyCard?,
         keyItems: Map<RemoteKey, AutocompleteItem>,
+    ): Map<RemoteKey, RemoteAction> = actions(device.capabilities, cards, keyCard, keyItems)
+
+    fun actions(
+        capabilities: Collection<String>,
+        cards: List<FlowCardAction>,
+        keyCard: KeyCard?,
+        keyItems: Map<RemoteKey, AutocompleteItem>,
     ): Map<RemoteKey, RemoteAction> {
         val result = linkedMapOf<RemoteKey, RemoteAction>()
         FlowCards.cardKeys(cards).forEach { (key, card) -> result[key] = RemoteAction.Card(card) }
@@ -83,7 +92,7 @@ object Remotes {
                 result.putIfAbsent(key, RemoteAction.Card(keyCard.card, args))
             }
         }
-        capabilityKeys(device).forEach { (key, action) -> result.putIfAbsent(key, action) }
+        capabilityKeys(capabilities).forEach { (key, action) -> result.putIfAbsent(key, action) }
         return result
     }
 
