@@ -88,7 +88,7 @@ fun SettingsDialog(
     AppDialog(onDismiss) {
         Column(
             Modifier
-                .dialogSize(740.dp)
+                .dialogSize(560.dp, tall = true)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .verticalScroll(rememberScrollState())

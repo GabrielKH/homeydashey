@@ -74,7 +74,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
     AppDialog(onDismiss) {
         Column(
             Modifier
-                .dialogSize(740.dp)
+                .dialogSize(560.dp, tall = true)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .padding(vertical = 20.dp),
