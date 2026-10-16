@@ -407,7 +407,10 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val set
             val spoken = runCatching {
                 val body = kotlinx.serialization.json.buildJsonObject {
                     put("text", kotlinx.serialization.json.JsonPrimitive(text))
-                    put("voice", kotlinx.serialization.json.JsonPrimitive(if (swedish) app.homeydash.agent.PIPER_SWEDISH_VOICE else app.homeydash.agent.PIPER_ENGLISH_VOICE))
+                    val english = settings().piperEnglishVoice.trim().ifBlank { app.homeydash.agent.PIPER_ENGLISH_VOICE }
+                    put("voice", kotlinx.serialization.json.JsonPrimitive(if (swedish) app.homeydash.agent.PIPER_SWEDISH_VOICE else english))
+                    // TARS-AI's model has a speaker per mood, and the calm one is most like the film; one-voice models ignore it.
+                    put("speaker", kotlinx.serialization.json.JsonPrimitive("neutral"))
                 }.toString().toRequestBody("application/json".toMediaType())
                 // Newer Piper servers answer on /synthesize, older ones on /.
                 val bytes = listOf("$url/synthesize", "$url/").firstNotNullOfOrNull { endpoint ->

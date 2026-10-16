@@ -618,6 +618,13 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
+        Field("English voice", settings.piperEnglishVoice) { v -> update { it.copy(piperEnglishVoice = v) } }
+        Text(
+            "For TARS's own voice from the film, put TARS.onnx and TARS.onnx.json from huggingface.co/olivierdion007/TARS-AI in that folder " +
+                "and write TARS here. It's a fan-made copy of Bill Irwin's voice, licensed for non-commercial use only, so keep it for home use.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
     } else if (settings.voice.local) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }

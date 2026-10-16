@@ -154,6 +154,8 @@ data class AgentSettings(
     val humor: Int = 75,
     /** Piper's server on your own computer for the TARS voice; empty means the Ollama computer on port 5000. */
     val piperUrl: String = "",
+    /** The Piper voice for English answers: a stock one, or TARS-AI's TARS model if you've put it on the computer. */
+    val piperEnglishVoice: String = PIPER_ENGLISH_VOICE,
     /** The scanner in KITT's red instead of the theme's accent. */
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
