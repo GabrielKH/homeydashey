@@ -680,6 +680,12 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
     }
     Text(settings.face.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
 
+    Text("Starts as", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        app.homeydash.agent.AssistantView.entries.forEach { v -> Chip(v.label, v == settings.view) { update { it.copy(view = v) } } }
+    }
+    Text(settings.view.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+
     Text("Voice", style = MaterialTheme.typography.labelLarge, color = g.fg)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         VoiceStyle.entries.forEach { v ->

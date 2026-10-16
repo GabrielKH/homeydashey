@@ -26,6 +26,13 @@ enum class BrainMode(val label: String) { Local("Local only"), Internet("Interne
 enum class Language(val label: String) { Auto("Svenska + English"), Swedish("Svenska"), English("English") }
 
 /** How long the assistant keeps listening after an answer, for the next question. */
+/** How the assistant's window shows up when someone starts talking to it. */
+enum class AssistantView(val label: String, val detail: String) {
+    Full("Full screen", "The face fills the screen. Tap the minus to make it small."),
+    Island("Island", "A small glass island at the top, with three lines of what it's doing. Tap it for full screen."),
+    Side("Side window", "A small window on the left with the face and the text. Tap it for full screen."),
+}
+
 enum class FollowUp(val label: String, val detail: String, val ms: Long) {
     Off("Off", "Say the wake name before every question.", 0),
     Short("8 s", "Listens 8 seconds for the next question, then goes quiet.", 8_000),
@@ -146,6 +153,8 @@ data class AgentSettings(
     val micSensitivity: Int = MicSensitivity.DEFAULT,
     /** How the assistant looks and sounds. */
     val face: FaceStyle = FaceStyle.Orb,
+    /** How the face shows up when someone starts talking to it. */
+    val view: AssistantView = AssistantView.Full,
     val voice: VoiceStyle = VoiceStyle.Natural,
     /** The little sound when the wake name is heard, before it listens. */
     val wakeSound: WakeSound = WakeSound.Hum,

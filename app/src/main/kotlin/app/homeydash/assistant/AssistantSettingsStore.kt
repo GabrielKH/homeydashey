@@ -60,6 +60,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         micSensitivity = p[MIC_SENSITIVITY]?.toIntOrNull() ?: MicSensitivity.DEFAULT,
         seeHiddenDevices = p[SEE_HIDDEN] != "false",
         face = enumOr(p[FACE], FaceStyle.Orb),
+        view = enumOr(p[VIEW], app.homeydash.agent.AssistantView.Full),
         voice = enumOr(p[VOICE], VoiceStyle.Natural),
         wakeSound = enumOr(p[WAKE_SOUND], app.homeydash.agent.WakeSound.Hum),
         persona = enumOr(p[PERSONA], app.homeydash.agent.Persona.Nova),
@@ -100,6 +101,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[MIC_SENSITIVITY] = s.micSensitivity.toString()
         p[SEE_HIDDEN] = s.seeHiddenDevices.toString()
         p[FACE] = s.face.name
+        p[VIEW] = s.view.name
         p[VOICE] = s.voice.name
         p[WAKE_SOUND] = s.wakeSound.name
         p[PERSONA] = s.persona.name
@@ -158,6 +160,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val MIC_SENSITIVITY = stringPreferencesKey("mic_sensitivity")
         val SEE_HIDDEN = stringPreferencesKey("see_hidden_devices")
         val FACE = stringPreferencesKey("face")
+        val VIEW = stringPreferencesKey("assistant_view")
         val VOICE = stringPreferencesKey("voice")
         val WAKE_SOUND = stringPreferencesKey("wake_sound")
         val PERSONA = stringPreferencesKey("persona")

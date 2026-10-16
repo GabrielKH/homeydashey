@@ -228,7 +228,9 @@ class Assistant(
 
     /** Talking by voice right now: the face fills the screen. */
     val voiceActive: Boolean
-        get() = state == AssistantState.Listening || conversing || (lastByVoice && state != AssistantState.Idle)
+        get() = waking || state == AssistantState.Listening || conversing || (lastByVoice && state != AssistantState.Idle)
+    /** The wake name was just heard: the face shows while the wake sound plays. */
+    private var waking by mutableStateOf(false)
     /**
      * The face is a small window instead of the whole screen, so the page it opened (a recipe,
      * a room) can be used while it keeps talking. It stays small, also for the next question
@@ -296,6 +298,8 @@ class Assistant(
         job?.cancel()
         services.onActive?.invoke()
         warmUp()
+        showAsChosen()
+        waking = false
         open = true
         partial = ""
         scene = null
@@ -482,17 +486,27 @@ class Assistant(
     /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
     fun wake(person: KnownPerson?) {
         voice = Seen(person, SystemClock.elapsedRealtime())
-        // The "mm?" first, then the microphone, so the question doesn't start with the sound.
-        val ms = services.playWakeSound(settings.wakeSound)
-        if (ms == 0L) {
+        if (settings.wakeSound == app.homeydash.agent.WakeSound.Off) {
             listen()
             return
         }
+        // The face first, then the "mm?" as it appears, then the microphone, so the question
+        // doesn't start with the sound.
         services.onActive?.invoke()
+        showAsChosen()
+        waking = true
         scope.launch {
+            delay(WAKE_SOUND_AFTER_MS)
+            if (!waking) return@launch
+            val ms = services.playWakeSound(settings.wakeSound)
             delay(ms + 60)
-            if (state == AssistantState.Idle) listen()
+            if (waking && state == AssistantState.Idle) listen() else waking = false
         }
+    }
+
+    /** Small from the start when the island or side window was chosen; never forces full screen. */
+    private fun showAsChosen() {
+        if (!voiceActive && settings.view != app.homeydash.agent.AssistantView.Full) compact = true
     }
 
     fun stopListening() {
@@ -513,6 +527,7 @@ class Assistant(
 
     /** Stops whatever the assistant is doing, and ends the conversation. */
     fun stop() {
+        waking = false
         stopListening()
         job?.cancel()
         services.output.stop()
@@ -780,6 +795,8 @@ class Assistant(
     private companion object {
         const val SPEAKER_DELAY_MS = 800L
         const val RELISTEN_GAP_MS = 300L
+        /** Long enough for the face to fade in before the wake sound plays. */
+        const val WAKE_SOUND_AFTER_MS = 200L
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
         const val HINT_CHARS = 400

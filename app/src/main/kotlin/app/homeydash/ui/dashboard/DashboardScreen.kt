@@ -400,7 +400,7 @@ fun DashboardScreen(
 
     LaunchedEffect(destination) {
         actions.rearrange.done()
-        if (destination == OVERVIEW) assistant.compact = false
+        if (destination == OVERVIEW) assistant.compact = assistantSettings.view != app.homeydash.agent.AssistantView.Full
     }
     val roomId = destination.takeIf { it.startsWith(ROOM) }?.removePrefix(ROOM)
     val (backgroundKey, backgroundSpec) = backgroundFor(backgrounds, roomId)

@@ -90,8 +90,9 @@ import app.homeydash.ui.theme.GlassTheme
  * The chosen face over the whole screen while someone talks to the assistant, with what
  * was heard or is being said underneath. Tapping anywhere ends the conversation.
  * Drawn over everything on the dashboard, sidebar included. When the assistant opens a
- * page, or the minus is tapped, it shrinks to a small glass island at the top instead,
- * which can be moved left or right and tapped to grow again; the page under it stays usable.
+ * page, or the minus is tapped, it shrinks to a small glass island at the top (or the side
+ * window, if chosen) instead, which can be moved and tapped to grow again; the page under it
+ * stays usable.
  */
 @Composable
 fun VoiceOverlay(assistant: Assistant, settings: AgentSettings) {
@@ -149,7 +150,9 @@ fun VoiceOverlay(assistant: Assistant, settings: AgentSettings) {
                 )
             }
         }
-        CompactVoice(assistant, settings, visible = assistant.voiceActive && compact)
+        val side = settings.view == app.homeydash.agent.AssistantView.Side
+        CompactVoice(assistant, settings, visible = assistant.voiceActive && compact && !side)
+        SideVoice(assistant, settings, visible = assistant.voiceActive && compact && side)
     }
 }
 
@@ -362,6 +365,113 @@ private fun TickerLines(ticker: Ticker, rollKey: String, align: TextAlign) {
             )
         }
     }
+}
+
+/** Where the side window sits; it snaps to the corner nearest to where it was dropped. */
+private enum class Corner { TopStart, TopEnd, BottomStart, BottomEnd }
+
+/**
+ * The side window: the face and what was said in a small card, starting on the left. It can
+ * be dragged to another corner and tapped to grow to full screen.
+ */
+@Composable
+private fun BoxScope.SideVoice(assistant: Assistant, settings: AgentSettings, visible: Boolean) {
+    val g = GlassTheme.colors
+    var corner by rememberSaveable { mutableStateOf(Corner.TopStart) }
+    val drag = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val scope = rememberCoroutineScope()
+    var area by remember { mutableStateOf(IntSize.Zero) }
+    var window by remember { mutableStateOf(IntSize.Zero) }
+    Box(Modifier.matchParentSize().onSizeChanged { area = it })
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.85f),
+        exit = fadeOut(tween(200)) + scaleOut(targetScale = 0.85f),
+        modifier = Modifier
+            .align(
+                when (corner) {
+                    Corner.TopStart -> Alignment.TopStart
+                    Corner.TopEnd -> Alignment.TopEnd
+                    Corner.BottomStart -> Alignment.BottomStart
+                    // Above the orb and the timers.
+                    Corner.BottomEnd -> Alignment.BottomEnd
+                },
+            )
+            .padding(
+                start = 20.dp, end = 20.dp, top = 20.dp,
+                bottom = if (corner == Corner.BottomEnd) 110.dp else 20.dp,
+            )
+            .offset { IntOffset(drag.value.x.roundToInt(), drag.value.y.roundToInt()) }
+            .onSizeChanged { window = it }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDrag = { change, amount ->
+                        change.consume()
+                        scope.launch { drag.snapTo(drag.value + amount) }
+                    },
+                    onDragEnd = {
+                        // The window's centre, measured from the top left of the screen.
+                        val cornerX = if (corner == Corner.TopStart || corner == Corner.BottomStart) 0f else area.width - window.width.toFloat()
+                        val cornerY = if (corner == Corner.TopStart || corner == Corner.TopEnd) 0f else area.height - window.height.toFloat()
+                        val cx = cornerX + drag.value.x + window.width / 2f
+                        val cy = cornerY + drag.value.y + window.height / 2f
+                        val left = cx < area.width / 2f
+                        val top = cy < area.height / 2f
+                        corner = when {
+                            top && left -> Corner.TopStart
+                            top -> Corner.TopEnd
+                            left -> Corner.BottomStart
+                            else -> Corner.BottomEnd
+                        }
+                        scope.launch { drag.snapTo(Offset.Zero) }
+                    },
+                )
+            },
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 380.dp)
+                .clip(RoundedCornerShape(28.dp))
+                .background(g.wallBase.copy(alpha = if (g.isDark) 0.88f else 0.9f), RoundedCornerShape(28.dp))
+                .glass(RoundedCornerShape(28.dp))
+                .pressable({ assistant.compact = false }),
+        ) {
+            Box {
+                assistant.scene?.let { AnswerScene(it.kind, Modifier.matchParentSize(), intensity = 0.8f) }
+                Row(
+                    Modifier.padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    VoiceFace(
+                        settings.face,
+                        assistant.state,
+                        levels = { VoiceLevels(assistant.level, assistant.low, assistant.mid, assistant.high) },
+                        modifier = Modifier.size(64.dp),
+                        classicRed = settings.classicRed,
+                    )
+                    Text(
+                        caption(assistant),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = g.fg,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false).widthIn(min = 160.dp),
+                    )
+                    RoundButton(Sym.close, { assistant.stop() }, size = 40.dp, filledIcon = false)
+                }
+            }
+            val working = assistant.state == AssistantState.Thinking || assistant.state == AssistantState.Speaking
+            assistant.steps().lastOrNull()?.takeIf { working }?.let { step ->
+                StepList(listOf(step), Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp).widthIn(max = 340.dp))
+            }
+            if (assistant.pending != null) {
+                Box(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp)) { Confirm(assistant, big = false) }
+            }
+        }
+    }
+    // Back in a corner whenever it is shown again.
+    LaunchedEffect(visible) { if (!visible) drag.snapTo(Offset.Zero) }
 }
 
 /** Yes and No for a step that needs saying yes to, and a note when it needs a tap. */
