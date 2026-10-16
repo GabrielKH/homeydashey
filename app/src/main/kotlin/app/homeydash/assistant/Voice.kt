@@ -392,8 +392,8 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val set
     @Volatile private var piperDownUntil = 0L
 
     /**
-     * The answer in TARS's voice from Piper's web server on your own computer: the TARS model
-     * for English, Piper's Swedish voice for Swedish. Null when it isn't running; the tablet speaks.
+     * The answer in the TARS voice from Piper's web server on your own computer, in its English
+     * or Swedish stock voice. Null when it isn't running; the tablet speaks.
      */
     private suspend fun piper(text: String, language: Language, file: File): Spoken? {
         val url = settings().piperUrlOrGuess().trimEnd('/')
@@ -407,9 +407,7 @@ class SpeechOutput(context: Context, http: okhttp3.OkHttpClient, private val set
             val spoken = runCatching {
                 val body = kotlinx.serialization.json.buildJsonObject {
                     put("text", kotlinx.serialization.json.JsonPrimitive(text))
-                    if (swedish) put("voice", kotlinx.serialization.json.JsonPrimitive(app.homeydash.agent.PIPER_SWEDISH_VOICE))
-                    // The TARS model has a speaker per mood; the calm one sounds most like the film.
-                    else put("speaker", kotlinx.serialization.json.JsonPrimitive("neutral"))
+                    put("voice", kotlinx.serialization.json.JsonPrimitive(if (swedish) app.homeydash.agent.PIPER_SWEDISH_VOICE else app.homeydash.agent.PIPER_ENGLISH_VOICE))
                 }.toString().toRequestBody("application/json".toMediaType())
                 // Newer Piper servers answer on /synthesize, older ones on /.
                 val bytes = listOf("$url/synthesize", "$url/").firstNotNullOfOrNull { endpoint ->

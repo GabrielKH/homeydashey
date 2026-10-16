@@ -35,8 +35,8 @@ enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, v
     ),
     Tars(
         "TARS",
-        "TARS from Interstellar: the voice model the TARS-AI project trained on the film, spoken by Piper on your own computer. " +
-            "TARS only speaks English, so Swedish answers use Piper's Swedish voice; while the computer isn't running it, the tablet's voice, low and even.",
+        "Low, calm and deadpan, for the TARS personality: Piper's stock voices on your own computer, English and Swedish " +
+            "(not a copy of the film's actor). While the computer isn't running it, the tablet's voice, low and even.",
         0.8f,
         0.98f,
         local = true,

@@ -42,6 +42,7 @@ import androidx.compose.ui.window.DialogProperties
 import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
+import app.homeydash.agent.PIPER_ENGLISH_VOICE
 import app.homeydash.agent.PIPER_SERVER_PORT
 import app.homeydash.agent.PIPER_SWEDISH_VOICE
 import app.homeydash.agent.Persona
@@ -611,8 +612,8 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
     if (settings.voice == VoiceStyle.Tars) {
         Field("Address", settings.piperUrl.ifBlank { settings.piperUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(piperUrl = url) } }
         Text(
-            "On the Mac: \"pip install 'piper-tts[http]'\", then \"python3 -m piper.download_voices $PIPER_SWEDISH_VOICE\", put TARS.onnx and " +
-                "TARS.onnx.json from the TARS-AI project in the same folder, and run \"python3 -m piper.http_server -m TARS.onnx --port $PIPER_SERVER_PORT\" there. " +
+            "On the Mac, in a folder of its own: \"pip install 'piper-tts[http]'\", then \"python3 -m piper.download_voices $PIPER_ENGLISH_VOICE $PIPER_SWEDISH_VOICE\", " +
+                "and run \"python3 -m piper.http_server -m $PIPER_ENGLISH_VOICE --port $PIPER_SERVER_PORT\" there. " +
                 "Piper is light and quick; if the computer doesn't answer, the tablet's voice speaks.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,

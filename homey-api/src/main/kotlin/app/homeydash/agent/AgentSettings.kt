@@ -108,7 +108,8 @@ enum class Persona(val label: String, val detail: String) {
 
 /** Piper's own web server (`python3 -m piper.http_server`), for the TARS voice. */
 const val PIPER_SERVER_PORT = 5000
-/** The Piper voice for Swedish answers, next to TARS (who only speaks English). */
+/** Piper's stock voices for the TARS voice: a low, even English one and a Swedish one. */
+const val PIPER_ENGLISH_VOICE = "en_US-ryan-medium"
 const val PIPER_SWEDISH_VOICE = "sv_SE-nst-medium"
 
 /** mlx-audio's multilingual Chatterbox: natural Swedish and English on a Mac. */
