@@ -79,14 +79,17 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
     val context = LocalContext.current
     val wake = services.wake
     val enabled = settings.enabled && settings.wake && WakeName.clean(settings.wakeName).isNotEmpty() && models == VoiceModels.State.Ready
-    val on = enabled && micGranted(context) && lifecycle.isAtLeast(Lifecycle.State.RESUMED) &&
-        assistant.state == AssistantState.Idle && !assistant.conversing && !wake.enrolling
+    // While it thinks or talks the wake name still works, to cut in like with a person.
+    val busy = assistant.state == AssistantState.Thinking || assistant.state == AssistantState.Speaking
+    val speaking = assistant.state == AssistantState.Speaking
+    val on = enabled && micGranted(context) && lifecycle.isAtLeast(Lifecycle.State.RESUMED) && !wake.enrolling &&
+        (busy || (assistant.state == AssistantState.Idle && !assistant.conversing))
     // The voiceprint model comes once wake by name is on; until then the older voice match is used.
     if (enabled) LaunchedEffect(Unit) { services.prints.download() }
     if (on) {
-        LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, settings.micSensitivity, people) {
+        LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, settings.micSensitivity, people, busy, speaking) {
             // Give the speech recogniser or text-to-speech a moment to let go of the audio.
-            delay(600)
+            delay(if (busy) 250 else 600)
             // Each character's name is taught on its own; match against the name in use.
             val known = people.map { it.forWake(settings.wakeName) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
             var token: Int? = null
@@ -100,7 +103,11 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                             val print = sound?.let { services.prints.of(it) }
                             val who = whoSpoke(services, settings.wakeName, known, vector, print)
                             services.trace("wake", who.log, localOnly = true)
-                            if (!settings.onlyKnownVoices || known.isEmpty() || who.person != null) {
+                            // Over its own voice, only someone it knows can cut in, so TARS saying
+                            // "TARS" doesn't interrupt himself.
+                            val selfHeard = speaking && known.isNotEmpty() && who.person == null
+                            if (selfHeard) services.trace("wake", "Ignored a wake while talking: no known voice.", localOnly = true)
+                            if (!selfHeard && (!settings.onlyKnownVoices || known.isEmpty() || who.person != null)) {
                                 wake.stop(token)
                                 assistant.wake(who.person)
                             }
@@ -110,6 +117,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                 },
                 onError = {},
                 sensitivity = settings.micSensitivity,
+                echo = speaking,
             )
             try {
                 awaitCancellation()

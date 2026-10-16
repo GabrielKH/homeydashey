@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.homeydash.agent.TurnEnd
 import app.homeydash.agent.Agent
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentListener
@@ -295,6 +296,8 @@ class Assistant(
 
     fun listen() {
         services.output.stop()
+        // The wake name may have been listened for while it talked; the question gets the microphone.
+        if (!services.wake.enrolling) services.wake.stop()
         job?.cancel()
         services.onActive?.invoke()
         warmUp()
@@ -340,25 +343,56 @@ class Assistant(
     private fun listenRecorded(language: app.homeydash.agent.Language) {
         recording = true
         val s = settings
+        val code = when (language) {
+            app.homeydash.agent.Language.Swedish -> "sv"
+            app.homeydash.agent.Language.English -> "en"
+            else -> null
+        }
+        val hint = hint(s)
+        // What Whisper made of the question up to the latest pause, while recording goes on.
+        var early: Pair<Int, String>? = null
         services.recorder.record(
             gain = app.homeydash.agent.MicSensitivity.gain(s.micSensitivity),
             onLevel = { l -> meter(floatArrayOf(l, l, l * 0.8f, l * 0.6f)) },
+            onPause = { wav, pause, held ->
+                // A pause: answer now if what was said reads as finished, else wait for the rest,
+                // like a person would through an "öhh" or "and…".
+                scope.launch {
+                    val text = try {
+                        services.transcriber.transcribe(s, wav, code, hint).text
+                    } catch (e: java.io.IOException) {
+                        return@launch
+                    }
+                    if (!recording || state != AssistantState.Listening || services.recorder.pausedAt != pause) return@launch
+                    early = pause to text
+                    TurnEnd.clean(text).takeIf { it.isNotEmpty() }?.let { partial = it }
+                    if (TurnEnd.complete(text, s.wakeName, held)) {
+                        recording = false
+                        services.recorder.stop()
+                        heard(text)
+                    } else {
+                        services.trace("listen", "Waiting for the rest: \"$text\"" + if (held) " (a held sound before the pause)" else "", true)
+                    }
+                }
+            },
             onDone = done@{ wav ->
                 recording = false
                 if (wav == null) {
                     heard("")
                     return@done
                 }
-                partial = "…"
-                val code = when (language) {
-                    app.homeydash.agent.Language.Swedish -> "sv"
-                    app.homeydash.agent.Language.English -> "en"
-                    else -> null
+                // Nothing more was said after the last pause: what was heard then is the question.
+                early?.let { (pause, text) ->
+                    if (services.recorder.pausedAt == pause) {
+                        heard(text)
+                        return@done
+                    }
                 }
+                partial = "…"
                 job?.cancel()
                 job = scope.launch {
                     val text = try {
-                        services.transcriber.transcribe(s, wav, code, hint(s)).text
+                        services.transcriber.transcribe(s, wav, code, hint).text
                     } catch (e: java.io.IOException) {
                         if (state != AssistantState.Listening) return@launch
                         hearersDownUntil = SystemClock.elapsedRealtime() + OFFLINE_FOR_MS
@@ -377,8 +411,10 @@ class Assistant(
 
     /** Names worth expecting in a question: the wake name, rooms and devices. */
     private fun hint(s: AgentSettings): String {
-        val v = runCatching { view(s, true) }.getOrNull() ?: return s.wakeName
-        return (listOf(s.wakeName) + v.rooms.values + v.devices.map { it.name }).distinct().joinToString(", ").take(HINT_CHARS)
+        val v = runCatching { view(s, true) }.getOrNull() ?: return FILLER_HINT + s.wakeName
+        // The hesitation sounds up front make Whisper write them down, so a pause after
+        // one can be told from the end of the question.
+        return FILLER_HINT + (listOf(s.wakeName) + v.rooms.values + v.devices.map { it.name }).distinct().joinToString(", ").take(HINT_CHARS)
     }
 
     /** Listens with the offline model (English only) when it's downloaded; false when it isn't. */
@@ -396,7 +432,9 @@ class Assistant(
         return true
     }
 
-    private fun heard(text: String) {
+    private fun heard(said: String) {
+        // "Öh" and "ehm" are for knowing when the question ends, not for the AI.
+        val text = TurnEnd.clean(said)
         meter(FloatArray(4))
         partial = ""
         when {
@@ -486,6 +524,15 @@ class Assistant(
     /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
     fun wake(person: KnownPerson?) {
         voice = Seen(person, SystemClock.elapsedRealtime())
+        // Said while it was thinking or talking: like a person, it stops and listens.
+        if (state == AssistantState.Thinking || state == AssistantState.Speaking) {
+            services.trace("wake", "Interrupted while ${state.name.lowercase()}.", false)
+            services.output.stop()
+            job?.cancel()
+            pending = null
+            scene = null
+            state = AssistantState.Idle
+        }
         if (settings.wakeSound == app.homeydash.agent.WakeSound.Off) {
             listen()
             return
@@ -800,6 +847,7 @@ class Assistant(
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
         const val HINT_CHARS = 400
+        const val FILLER_HINT = "Öh, ehm, hmm… "
         val WEATHER_WORDS = Regex("väder|vädr|regn|snö|soligt|solen|prognos|temperatur|grader ute|weather|rain|snow|sunny|forecast", RegexOption.IGNORE_CASE)
         val TOMORROW = Regex("tomorrow|imorgon|i morgon", RegexOption.IGNORE_CASE)
     }

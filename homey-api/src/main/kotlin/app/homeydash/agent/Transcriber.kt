@@ -137,27 +137,42 @@ class Transcriber(http: OkHttpClient, private val openAiUrl: String = "https://a
 }
 
 /**
- * Hears when a question starts and ends from the microphone's loudness, so the recording can
- * be sent the moment someone stops talking. Feed it 16-bit frames in order.
+ * Hears when a question starts and pauses from the microphone's loudness. A pause isn't the
+ * end yet: the recording so far is checked ([TurnEnd]) and the question is sent the moment it
+ * reads as finished, while a "so I want…" keeps it listening until [patienceMs] of quiet.
+ * Feed it 16-bit frames in order.
  */
 class Endpointer(
     private val sampleRate: Int,
-    private val silenceMs: Int = 800,
+    private val silenceMs: Int = 700,
     private val noSpeechMs: Int = 7000,
-    private val maxMs: Int = 15000,
+    private val maxMs: Int = 30000,
+    private val patienceMs: Int = 3000,
 ) {
-    enum class State { Waiting, Speaking, Done, NoSpeech }
+    enum class State { Waiting, Speaking, Paused, Done, NoSpeech }
 
     var state = State.Waiting
         private set
     /** Loudness of the last frame, 0..1, for the face. */
     var level = 0f
         private set
+    /** Counts the pauses, so a check of an older pause can tell it is out of date. */
+    var pauses = 0
+        private set
+    /**
+     * The sound just before the pause was long and even: a drawn-out "ööhh" or "mmm" rather
+     * than words, whose loudness rises and falls with every syllable.
+     */
+    var held = false
+        private set
 
     private var elapsedMs = 0.0
     private var speechMs = 0.0
     private var quietMs = 0.0
     private var floor = -1.0
+    /** Loudness of each frame of the sound going on now. */
+    private val run = ArrayList<Double>()
+    private var runMs = 0.0
 
     fun feed(buf: ShortArray, n: Int): State {
         if (n <= 0 || state == State.Done || state == State.NoSpeech) return state
@@ -174,6 +189,11 @@ class Endpointer(
             else -> floor * 0.995 + rms * 0.005
         }
         val loud = rms > maxOf(floor * 2.5, MIN_SPEECH_RMS)
+        if (loud) {
+            if (quietMs > GAP_MS) { run.clear(); runMs = 0.0 }
+            run += rms
+            runMs += ms
+        }
         when (state) {
             State.Waiting -> {
                 speechMs = if (loud) speechMs + ms else (speechMs - ms).coerceAtLeast(0.0)
@@ -182,7 +202,25 @@ class Endpointer(
             }
             State.Speaking -> {
                 quietMs = if (loud) 0.0 else quietMs + ms
-                if (quietMs >= silenceMs) state = State.Done
+                if (quietMs >= silenceMs) {
+                    held = isHeld()
+                    pauses++
+                    state = State.Paused
+                }
+            }
+            State.Paused -> {
+                if (loud) {
+                    // Talking again: the pause was a breath, not the end.
+                    speechMs += ms
+                    if (speechMs >= START_MS) {
+                        state = State.Speaking
+                        quietMs = 0.0
+                    }
+                } else {
+                    speechMs = 0.0
+                    quietMs += ms
+                    if (quietMs >= patienceMs) state = State.Done
+                }
             }
             else -> {}
         }
@@ -190,8 +228,23 @@ class Endpointer(
         return state
     }
 
+    /** The last sound lasted a while and its loudness hardly moved. */
+    private fun isHeld(): Boolean {
+        if (runMs < HELD_MS || run.size < 4) return false
+        val tail = run.takeLast(maxOf(4, (HELD_MS / (runMs / run.size)).toInt()))
+        val mean = tail.average()
+        if (mean <= 0) return false
+        val sd = sqrt(tail.sumOf { (it - mean) * (it - mean) } / tail.size)
+        return sd / mean < HELD_EVENNESS
+    }
+
     private companion object {
         const val START_MS = 120.0
         const val MIN_SPEECH_RMS = 350.0
+        /** Quiet longer than this starts a new sound. */
+        const val GAP_MS = 150.0
+        const val HELD_MS = 450.0
+        /** Words swing far more than this from syllable to syllable; a held "öhh" doesn't. */
+        const val HELD_EVENNESS = 0.2
     }
 }

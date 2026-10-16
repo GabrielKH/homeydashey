@@ -269,13 +269,22 @@ class AgentTest {
     }
 
     @Test fun `the endpointer hears a question start and stop`() {
-        val e = Endpointer(16000, silenceMs = 500, noSpeechMs = 3000)
+        val e = Endpointer(16000, silenceMs = 500, noSpeechMs = 3000, patienceMs = 1500)
         val quiet = ShortArray(1600) { ((it % 7) - 3).toShort() }
         val loud = ShortArray(1600) { if (it % 2 == 0) 4000 else -4000 }
         repeat(5) { assertEquals(Endpointer.State.Waiting, e.feed(quiet, quiet.size)) }
         repeat(10) { e.feed(loud, loud.size) }
         assertEquals(Endpointer.State.Speaking, e.state)
         repeat(6) { e.feed(quiet, quiet.size) }
+        assertEquals(Endpointer.State.Paused, e.state)
+        assertEquals(1, e.pauses)
+        // Talking again after the pause carries on the same question.
+        repeat(3) { e.feed(loud, loud.size) }
+        assertEquals(Endpointer.State.Speaking, e.state)
+        repeat(6) { e.feed(quiet, quiet.size) }
+        assertEquals(Endpointer.State.Paused, e.state)
+        assertEquals(2, e.pauses)
+        repeat(10) { e.feed(quiet, quiet.size) }
         assertEquals(Endpointer.State.Done, e.state)
 
         val silent = Endpointer(16000, noSpeechMs = 1000)

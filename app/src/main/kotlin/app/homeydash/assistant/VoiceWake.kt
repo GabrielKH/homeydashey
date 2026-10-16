@@ -170,6 +170,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         onHeard: (text: String, voice: FloatArray?, sound: ShortArray?) -> Unit,
         onError: (String) -> Unit,
         sensitivity: Int = MicSensitivity.DEFAULT,
+        echo: Boolean = false,
     ): Int {
         stop()
         val gen = generation
@@ -190,7 +191,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             val gain = MicSensitivity.gain(sensitivity)
             val main = Handler(Looper.getMainLooper())
             reader = thread(name = "wake-mic") {
-                read(rec, gain, isLive = { gen == generation }) { result, failure, recent ->
+                read(rec, gain, isLive = { gen == generation }, echo = echo) { result, failure, recent ->
                     main.post {
                         if (gen != generation) return@post
                         if (failure != null) {
@@ -250,13 +251,16 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
     /**
      * Reads the microphone into [rec] until [isLive] turns false. Uses the voice recognition
      * input, which on tablets with several microphones is the tuned (beam-formed) mix, asks
-     * for a wide pickup so the whole kitchen is heard, and applies [gain].
+     * for a wide pickup so the whole kitchen is heard, and applies [gain]. With [echo] (while
+     * the assistant talks) it uses the call input with the tablet's echo canceller instead, so
+     * its own voice is mostly taken out and someone saying the wake name over it is heard.
      */
     @SuppressLint("MissingPermission") // WakeWatch only starts with the microphone permission.
-    private fun read(rec: Recognizer, gain: Float, isLive: () -> Boolean, emit: (String?, String?, Recent?) -> Unit) {
+    private fun read(rec: Recognizer, gain: Float, isLive: () -> Boolean, echo: Boolean = false, emit: (String?, String?, Recent?) -> Unit) {
         val size = maxOf(AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), RATE / 5 * 2)
+        val source = if (echo) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val record = try {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
+            AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
         } catch (e: Exception) {
             rec.close()
             emit(null, "The microphone isn't available: ${e.message}", null)
@@ -269,6 +273,11 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             }
             // Far-field (-1 is the widest): hear the room, not just someone right in front of the tablet.
             runCatching { record.setPreferredMicrophoneFieldDimension(-1f) }
+            val canceller = if (echo && android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+                runCatching { android.media.audiofx.AcousticEchoCanceler.create(record.audioSessionId)?.apply { enabled = true } }.getOrNull()
+            } else {
+                null
+            }
             record.startRecording()
             val buf = ShortArray(RATE / 10)
             // The last few seconds the recogniser heard, to cut the wake name out of.
@@ -288,6 +297,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
                 fed += n
                 if (rec.acceptWaveForm(buf, n)) emit(rec.result, null, Recent.of(ring, fed))
             }
+            canceller?.release()
         } finally {
             runCatching { record.stop() }
             record.release()
