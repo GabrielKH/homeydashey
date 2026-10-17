@@ -32,10 +32,15 @@ class SonosCards(
     @Volatile private var spotifyService: Int? = null
     @Volatile private var spotifyAccount: SpotifyOnSonos.Account? = null
 
+    /** Whether the cards last handed out had "Play from Spotify"; null before the first time. */
+    @Volatile var spotifyShown: Boolean? = null
+        private set
+
     override suspend fun cards(snapshot: HomeySnapshot): Map<String, List<FlowCardAction>> {
         speakers = household()
         rooms = match(snapshot.devices.values, snapshot.zones, speakers)
         val withSpotify = spotify?.configured == true
+        spotifyShown = withSpotify
         return rooms.mapValues { (deviceId, _) ->
             listOfNotNull(
                 card(deviceId, FAVOURITE, "Play Sonos favourite"),
