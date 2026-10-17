@@ -519,7 +519,9 @@ class Agent(
         warmed = key
         warmedAt = System.currentTimeMillis()
         // Logged either way, so a slow first question shows whether the warm-up ran.
-        val st = chat.prefill(brain, messages, specs)
+        // With a user line after the rules: Qwen's chat template refuses a request without one,
+        // which is why oMLX turned every warm-up away.
+        val st = chat.prefill(brain, messages + ChatMessage.user(WARM_UP), specs)
         listener?.trace("speed", st?.let { "warm-up (rules and devices read ahead): ${it.text()}" } ?: "warm-up didn't work (the server refused it or didn't answer)")
     }
 
@@ -739,6 +741,7 @@ class Agent(
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val REWARM_AFTER_MS = 10 * 60 * 1000L
+        const val WARM_UP = "(From the app: a warm-up, no answer needed.)"
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
     }

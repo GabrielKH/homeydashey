@@ -364,7 +364,9 @@ class AgentTools(
             if (items.isNotEmpty()) lists += "${source.title}: " + items.take(12).joinToString { it.name } + "."
         }
         val names = lists.joinToString(" ")
-        return if (names.isEmpty()) "" else " It has $names Pick one of these if it fits."
+        val noSpotify = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }.none { it.catalogue }
+        return (if (names.isEmpty()) "" else " It has $names Pick one of these if it fits.") +
+            (if (noSpotify) " Spotify search isn't set up on this speaker, so only these can be played." else "")
     }
 
     /** A device's Flow cards the assistant may use: never on guarded devices, nor anything that unlocks or disarms. */

@@ -118,8 +118,10 @@ class StoreHomeControl(
         // The home's own favourites, playlists and radio first; a catalogue like Spotify when
         // none of them is clearly what was asked for.
         val (catalogues, own) = sources.partition { it.catalogue }
+        // Why a search failed (Spotify refusing the keys, say), so a miss can say so instead of "couldn't find".
+        var trouble: Throwable? = null
         suspend fun look(list: List<MusicSource>): List<Pair<MusicSource, AutocompleteItem>> = list.flatMap { source ->
-            runCatching { choices(source.card, source.arg, query) }.getOrDefault(emptyList()).map { source to it }
+            runCatching { choices(source.card, source.arg, query) }.onFailure { trouble = it }.getOrDefault(emptyList()).map { source to it }
         }
         // The artist is often only in the description ("Abbey Road" · "The Beatles").
         fun score(item: AutocompleteItem): Double =
@@ -131,7 +133,9 @@ class StoreHomeControl(
             val hits = look(catalogues)
             best = NameMatch.best(query, hits) { score(it.second) } ?: hits.firstOrNull()
         }
-        best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" } ?: return null
+        best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" }
+            ?: trouble?.let { throw java.io.IOException("Searching for \"$query\" failed: ${it.message}", it) }
+            ?: return null
         runAction(best.first.card, FlowCards.musicArgs(best.first, best.second))
         // "Dancing Queen (Song · ABBA)", so the answer says what was found.
         return if (best.first.catalogue) listOfNotNull(best.second.name, best.second.description?.let { "($it)" }).joinToString(" ") else best.second.name

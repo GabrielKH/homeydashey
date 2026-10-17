@@ -709,7 +709,9 @@ class AgentTest {
         agent.ask("vad är klockan", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(person = "Gabriel"))
         val first = sent()
         // The warm-up is the start of the question, word for word: the rules and the devices without their values.
-        assertEquals(1, warm.size)
+        // A user line follows, because Qwen's template refuses a request with none.
+        assertEquals(2, warm.size)
+        assertEquals("user", warm[1]["role"]!!.jsonPrimitive.content)
         assertEquals(warm[0], first[0])
         assertTrue(first[0].text().contains("""light_1 "Kitchen lamp" light: onoff dim
 """))
