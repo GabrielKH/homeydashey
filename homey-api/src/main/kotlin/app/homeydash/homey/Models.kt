@@ -66,6 +66,7 @@ data class Device(
     /** Returns a copy with one capability value replaced, as a realtime update does. */
     fun withCapabilityValue(capabilityId: String, value: JsonElement): Device {
         val current = capabilitiesObj[capabilityId] ?: return this
+        if (current.value == value) return this
         return copy(capabilitiesObj = capabilitiesObj + (capabilityId to current.copy(value = value)))
     }
 }

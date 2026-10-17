@@ -240,6 +240,7 @@ class SpeechOutput(
     context: Context,
     http: okhttp3.OkHttpClient,
     private val tars: TarsVoice,
+    private val scope: kotlinx.coroutines.CoroutineScope,
     private val settings: () -> app.homeydash.agent.AgentSettings,
 ) {
     private val http = http.newBuilder()
@@ -286,7 +287,7 @@ class SpeechOutput(
         // while the rest is still being made, instead of after the whole answer.
         if (voice == VoiceStyle.Tars && tars.isReady) {
             val swedish = swedish(text, language)
-            if (stream(app.homeydash.agent.Sentences.split(text), { tars.speak(it, swedish) }, onFrame)) return
+            if (stream(channelOf(app.homeydash.agent.Sentences.split(text)), { tars.speak(it, swedish) }, onFrame)) return
         }
         if (!ready) return
         val spoken = render(text, language, voice, File(appContext.cacheDir, "say.wav"))
@@ -351,6 +352,79 @@ class SpeechOutput(
         if (voice == VoiceStyle.Tars) tars.warm()
     }
 
+    /**
+     * Speaks an answer that is still being written: each piece from [pieces] is spoken as soon as
+     * it arrives, the next one made while the one before plays, until [pieces] is closed.
+     * [onStart] is called when the first sound is about to play. False when nothing was spoken.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    suspend fun speakLive(
+        pieces: kotlinx.coroutines.channels.ReceiveChannel<String>,
+        swedish: Boolean,
+        voice: VoiceStyle,
+        onStart: () -> Unit,
+        onFrame: (FloatArray) -> Unit,
+    ): Boolean = coroutineScope {
+        // Long pieces are cut into sentences, so the first one starts sooner.
+        val sentences = produce(capacity = kotlinx.coroutines.channels.Channel.UNLIMITED) {
+            for (piece in pieces) app.homeydash.agent.Sentences.split(piece).forEach { send(it) }
+        }
+        val live = File(appContext.cacheDir, "live.wav")
+        stream(sentences, { sentence -> phrase(sentence, swedish, voice) ?: pcmOf(sentence, swedish, voice, live) }, onFrame, onStart)
+    }
+
+    /** Short sounds made ahead of time, like the "hmm" while it thinks, per voice and language. */
+    private val phrases = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
+
+    private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) = "${voice.name}|$swedish|$text"
+
+    private fun phrase(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrases[phraseKey(text, swedish, voice)]
+
+    /** Whether [text] is made ahead of time in [voice], so it can be said without waiting. */
+    fun hasSound(text: String, swedish: Boolean, voice: VoiceStyle): Boolean = phrases.containsKey(phraseKey(text, swedish, voice))
+
+    /** Makes [texts] in [voice] ahead of time, so saying them later is instant. */
+    fun prepareSounds(texts: List<String>, swedish: Boolean, voice: VoiceStyle) {
+        scope.launch(Dispatchers.Default) {
+            val file = File(appContext.cacheDir, "phrase.wav")
+            for (t in texts) {
+                val key = phraseKey(t, swedish, voice)
+                if (phrases.containsKey(key)) continue
+                pcmOf(t, swedish, voice, file)?.let { phrases[key] = it }
+            }
+        }
+    }
+
+    /** [text] in [voice] as sound, from whichever voice can make it; null when none can. */
+    private suspend fun pcmOf(text: String, swedish: Boolean, voice: VoiceStyle, scratch: File): Pcm? {
+        if (voice == VoiceStyle.Tars && tars.isReady) tars.speak(text, swedish)?.let { return it }
+        if (voice.local) localPcm(text, swedish)?.let { return it }
+        return tabletPcm(text, if (swedish) Language.Swedish else Language.English, voice, scratch)
+    }
+
+    /** The tablet's own text-to-speech in [voice], as sound; null when it can't. */
+    private suspend fun tabletPcm(text: String, language: Language, voice: VoiceStyle, raw: File): Pcm? {
+        if (!ready) return null
+        val made = synchronized(tts) {
+            prepare(text, language, voice)
+            CompletableDeferred<Boolean>().also { result ->
+                val id = UUID.randomUUID().toString()
+                synchronized(done) { done[id] = { result.complete(raw.length() > 0) } }
+                if (tts.synthesizeToFile(text, Bundle(), raw, id) != TextToSpeech.SUCCESS) {
+                    synchronized(done) { done.remove(id) }
+                    result.complete(false)
+                }
+            }
+        }
+        if (!made.await()) return null
+        return withContext(Dispatchers.Default) { VoiceFx.readWav(raw.readBytes())?.let { VoiceFx.apply(voice, it) } }
+    }
+
+    private fun <T> channelOf(items: List<T>) = kotlinx.coroutines.channels.Channel<T>(kotlinx.coroutines.channels.Channel.UNLIMITED).also { c ->
+        items.forEach { c.trySend(it) }
+        c.close()
+    }
+
     private fun swedish(text: String, language: Language) = when (language) {
         Language.Swedish -> true
         Language.English -> false
@@ -362,9 +436,15 @@ class SpeechOutput(
      * False when not even the first could be made, so another voice can take over.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private suspend fun stream(sentences: List<String>, make: suspend (String) -> Pcm?, onFrame: (FloatArray) -> Unit): Boolean = coroutineScope {
+    private suspend fun stream(
+        sentences: kotlinx.coroutines.channels.ReceiveChannel<String>,
+        make: suspend (String) -> Pcm?,
+        onFrame: (FloatArray) -> Unit,
+        onStart: () -> Unit = {},
+    ): Boolean = coroutineScope {
         val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(it) } }
         val first = made.receiveCatching().getOrNull() ?: return@coroutineScope false
+        onStart()
         val rate = first.sampleRate
         val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val t = AudioTrack.Builder()
@@ -389,20 +469,19 @@ class SpeechOutput(
             t.play()
             var next: Pcm? = first
             while (next != null && track === t) {
-                val pcm = next
-                if (pcm.sampleRate == rate) {
-                    parts += written to VoiceFx.analyse(pcm)
-                    withContext(Dispatchers.IO) {
-                        var offset = 0
-                        while (offset < pcm.samples.size && track === t) {
-                            ensureActive()
-                            val n = t.write(pcm.samples, offset, pcm.samples.size - offset)
-                            if (n <= 0) break
-                            offset += n
-                        }
+                // A sentence from another voice (the computer's voice server went quiet) is made to fit.
+                val pcm = VoiceFx.resample(next, rate)
+                parts += written to VoiceFx.analyse(pcm)
+                withContext(Dispatchers.IO) {
+                    var offset = 0
+                    while (offset < pcm.samples.size && track === t) {
+                        ensureActive()
+                        val n = t.write(pcm.samples, offset, pcm.samples.size - offset)
+                        if (n <= 0) break
+                        offset += n
                     }
-                    written += pcm.samples.size
                 }
+                written += pcm.samples.size
                 next = made.receiveCatching().getOrNull()
             }
             // Let the last of it play out.
@@ -452,16 +531,25 @@ class SpeechOutput(
      * endpoint), or null when it isn't set up or doesn't answer; the tablet's voice takes over.
      */
     private suspend fun local(text: String, language: Language, file: File): Spoken? {
-        val s = settings()
-        val url = s.voiceServerUrlOrGuess().trimEnd('/')
-        if (url.isEmpty() || android.os.SystemClock.elapsedRealtime() < serverDownUntil) return null
         val swedish = when (language) {
             Language.Swedish -> true
             Language.English -> false
             Language.Auto -> Confirmation.looksSwedish(text)
         }
+        val pcm = localPcm(text, swedish) ?: return null
         return withContext(Dispatchers.IO) {
-            val spoken = runCatching {
+            file.writeBytes(VoiceFx.writeWav(pcm))
+            Spoken(file, VoiceFx.analyse(pcm))
+        }
+    }
+
+    /** [text] from the voice model on your own computer, or null when it isn't set up or doesn't answer. */
+    private suspend fun localPcm(text: String, swedish: Boolean): Pcm? {
+        val s = settings()
+        val url = s.voiceServerUrlOrGuess().trimEnd('/')
+        if (url.isEmpty() || android.os.SystemClock.elapsedRealtime() < serverDownUntil) return null
+        return withContext(Dispatchers.IO) {
+            val made = runCatching {
                 val body = kotlinx.serialization.json.buildJsonObject {
                     put("model", kotlinx.serialization.json.JsonPrimitive(s.voiceServerModel.trim().ifBlank { app.homeydash.agent.DEFAULT_VOICE_MODEL }))
                     put("input", kotlinx.serialization.json.JsonPrimitive(text))
@@ -474,13 +562,10 @@ class SpeechOutput(
                     .post(body.toRequestBody("application/json".toMediaType()))
                     .build()
                 val bytes = http.newCall(request).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } ?: return@runCatching null
-                val pcm = VoiceFx.readWav(bytes) ?: return@runCatching null
-                if (pcm.samples.isEmpty()) return@runCatching null
-                file.writeBytes(VoiceFx.writeWav(pcm))
-                Spoken(file, VoiceFx.analyse(pcm))
+                VoiceFx.readWav(bytes)?.takeIf { it.samples.isNotEmpty() }
             }.getOrNull()
-            if (spoken == null) serverDownUntil = android.os.SystemClock.elapsedRealtime() + SERVER_RETRY_MS
-            spoken
+            if (made == null) serverDownUntil = android.os.SystemClock.elapsedRealtime() + SERVER_RETRY_MS
+            made
         }
     }
 

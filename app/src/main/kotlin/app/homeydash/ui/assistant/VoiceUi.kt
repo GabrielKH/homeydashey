@@ -38,6 +38,8 @@ import androidx.lifecycle.compose.currentStateAsState
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.FaceMatcher
 import app.homeydash.agent.KnownPerson
+import app.homeydash.agent.Interrupt
+import app.homeydash.agent.TalkOver
 import app.homeydash.agent.VoiceId
 import app.homeydash.agent.WakeSound
 import kotlinx.coroutines.launch
@@ -87,13 +89,39 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
     // The voiceprint model comes once wake by name is on; until then the older voice match is used.
     if (enabled) LaunchedEffect(Unit) { services.prints.download() }
     if (on) {
-        LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, settings.micSensitivity, people, busy, speaking) {
+        LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, settings.micSensitivity, settings.interrupt, people, busy, speaking) {
             // Give the speech recogniser or text-to-speech a moment to let go of the audio.
             delay(if (busy) 250 else 600)
             // Each character's name is taught on its own; match against the name in use.
             val known = people.map { it.forWake(settings.wakeName) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
             var token: Int? = null
             var deciding = false
+            // Talking over the answer works for voices it knows, so its own voice can't cut itself off.
+            val withPrints = known.filter { it.print.isNotEmpty() }
+            var checking = false
+            val easy = settings.interrupt == Interrupt.Easy
+            val need = if (easy) TalkOver.EASY_MARGIN else TalkOver.MARGIN
+            val talked: (ShortArray) -> Unit = { sound ->
+                // A thinking sound playing doesn't count: only the answer itself can be talked over.
+                if (!checking && assistant.answering) {
+                    checking = true
+                    launch {
+                        val print = services.prints.of(sound)
+                        val best = print?.let { p -> withPrints.maxByOrNull { VoiceId.margin(p, it) } }
+                        val margin = if (print != null && best != null) VoiceId.margin(print, best) else -1f
+                        val person = best?.takeIf { margin >= need }
+                        if (person != null && assistant.answering) {
+                            services.trace("wake", "Someone talked over the answer; voiceprint matched someone taught.", localOnly = true)
+                            wake.stop(token)
+                            assistant.talkOver(person, sound)
+                        } else if (print != null) {
+                            services.trace("wake", "Sound over the answer, not clearly a known voice (%.2f, needs %.2f).".format(margin, need), localOnly = true)
+                        }
+                        checking = false
+                    }
+                }
+            }
+            val onTalk = talked.takeIf { speaking && settings.interrupt != Interrupt.Off && withPrints.isNotEmpty() }
             token = wake.start(
                 settings.wakeName,
                 onHeard = { _, vector, sound ->
@@ -118,6 +146,8 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                 onError = {},
                 sensitivity = settings.micSensitivity,
                 echo = speaking,
+                onTalk = onTalk,
+                talkEasy = easy,
             )
             try {
                 awaitCancellation()

@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -88,7 +89,8 @@ class CalendarRepository(
     private var job: Job? = null
 
     init {
-        scope.launch { settings.calendars.collect { refresh() } }
+        // The settings store emits on every write to any setting; only a new choice of calendars matters here.
+        scope.launch { settings.calendars.distinctUntilChanged().collect { refresh() } }
         scope.launch {
             while (true) {
                 delay(5 * 60 * 1000L)

@@ -261,6 +261,12 @@ private fun TarsVoiceState(services: AssistantServices) {
 private fun VoicePage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
     SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
+    SwitchRow(
+        "Talk like a person",
+        "Starts saying the answer while the AI is still writing it, and says a short \"hmm\" when an answer takes a moment. " +
+            "On the tablet's own speaker; a Sonos gets the whole answer at once.",
+        settings.liveSpeech,
+    ) { on -> update { it.copy(liveSpeech = on) } }
     LookAndVoice(services, settings, update)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Speaker volume", style = MaterialTheme.typography.labelLarge, color = g.fg)
@@ -284,6 +290,13 @@ private fun ListenPage(services: AssistantServices, settings: AgentSettings, upd
     Segmented(FollowUp.entries, settings.followUp, { it.label }) { f -> update { it.copy(followUp = f) } }
     Text(
         settings.followUp.detail + " Say \"stop\", \"thanks\" or \"tack\" to end early.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    Text("Talk over the answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Segmented(app.homeydash.agent.Interrupt.entries, settings.interrupt, { it.label }) { i -> update { it.copy(interrupt = i) } }
+    Text(
+        settings.interrupt.detail + if (settings.interrupt != app.homeydash.agent.Interrupt.Off) " It stops and listens to what you say, like a person would." else "",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )

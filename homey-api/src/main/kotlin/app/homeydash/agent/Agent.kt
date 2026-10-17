@@ -18,6 +18,8 @@ data class AgentReply(
     val ignored: Boolean = false,
     /** Routine steps that wait until the answer has been spoken, like starting the radio; returns what they did. */
     val then: (suspend () -> List<String>)? = null,
+    /** The whole answer was already handed to the voice while it was written (see [Agent.ask]'s speech). */
+    val spoken: Boolean = false,
 )
 
 /** Context for one question that isn't about the home itself. */
@@ -71,7 +73,9 @@ class Agent(
 
     /**
      * Answers [text]. [view] builds what the assistant may see for a local (true) or
-     * internet (false) brain; [tools] makes the tools for that view.
+     * internet (false) brain; [tools] makes the tools for that view. With [speech], the answer
+     * is handed to it sentence by sentence while the AI is still writing, so it can be spoken
+     * straight away; [AgentReply.spoken] then says it all went that way.
      */
     suspend fun ask(
         text: String,
@@ -79,10 +83,11 @@ class Agent(
         view: (local: Boolean) -> HomeView,
         tools: (HomeView) -> AgentTools,
         context: AskContext = AskContext(),
+        speech: ((String) -> Unit)? = null,
     ): AgentReply {
         val heard = Watch(listener)
         heard.trace("question", text)
-        val reply = answer(text, settings, view, heard.tools(tools), context, heard)
+        val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech)
         heard.trace(
             when {
                 reply.ignored -> "ignored"
@@ -101,6 +106,7 @@ class Agent(
         tools: (HomeView) -> AgentTools,
         context: AskContext,
         heard: Watch,
+        speech: ((String) -> Unit)?,
     ): AgentReply {
         val clock = System.currentTimeMillis()
         if (clock - lastActivity > FORGET_AFTER_MS) reset()
@@ -135,6 +141,11 @@ class Agent(
             return AgentReply("Set up the assistant first: Settings, then Assistant.", error = true)
         }
         var lastError: String? = null
+        // A request to change something isn't answered out loud before a tool has done it, so
+        // Nova never says "the light is on" for a change that then fails.
+        val command = COMMAND.containsMatchIn(text) && !STATUS_QUESTION.containsMatchIn(text)
+        // Routines put their own sentences before the answer, so they're spoken whole.
+        val voice = speech?.takeIf { context.routine == null }
         for ((index, brain) in brains.withIndex()) {
             val homeView = view(brain.local)
             val toolbox = tools(homeView)
@@ -153,6 +164,7 @@ class Agent(
             val actions = mutableListOf<String>()
             // What each call did this turn, so the same change asked for twice isn't done twice.
             val done = mutableMapOf<String, ToolResult>()
+            val out = voice?.let { SpeechStream(it, homeView::named) }
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
                 repeat(MAX_ROUNDS) {
@@ -160,8 +172,11 @@ class Agent(
                     val step = StepIds.next()
                     val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
+                    out?.next()
+                    val live = out?.takeIf { !command || changed }
                     val answer = try {
-                        chat.complete(brain, messages, tools.sent, requireTool = nudged && !acted)
+                        if (live != null) chat.stream(brain, messages, tools.sent, requireTool = nudged && !acted, onText = live::feed)
+                        else chat.complete(brain, messages, tools.sent, requireTool = nudged && !acted)
                     } catch (e: IOException) {
                         heard.step(AgentStep(step, thinking, StepState.Failed, e.message, thinking = true))
                         throw e
@@ -193,7 +208,6 @@ class Agent(
                         // "I'll turn on the light", or "the light is on" without doing it: small models
                         // sometimes stop at the promise, or claim it's done.
                         val said = answer.content.orEmpty()
-                        val command = COMMAND.containsMatchIn(text) && !STATUS_QUESTION.containsMatchIn(text)
                         val claims = PROMISE.containsMatchIn(said) || (command && CLAIM.containsMatchIn(said))
                         if (!changed && !nudged && claims) {
                             nudged = true
@@ -210,7 +224,8 @@ class Agent(
                         }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
-                        return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions)
+                        live?.finish()
+                        return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
                     }
                     for (call in answer.toolCalls) {
                         acted = true
@@ -237,8 +252,8 @@ class Agent(
                 return AgentReply("Sorry, that took too many steps.", brain, pending, error = true, actions = actions)
             } catch (e: IOException) {
                 lastError = e.message ?: e.toString()
-                // Try the next connection, unless this one already changed something.
-                if (acted || index == brains.lastIndex) {
+                // Try the next connection, unless this one already changed something or started talking.
+                if (acted || out?.started == true || index == brains.lastIndex) {
                     if (acted) remember(turn, localOnly)
                     return AgentReply(failure(brain, lastError), brain, pending, error = true, actions = actions)
                 }
@@ -469,6 +484,9 @@ class Agent(
             },
         )
         append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
+        append("Talk like a person in a conversation, not like a screen: put the answer itself in a short first sentence, use everyday spoken words, ")
+        append("react to what they just said, and remember what was said earlier. Ask a short question back only when you really need to know something.\n")
+        if (settings.persona == Persona.Nova) append("Personality: warm, quick and a little playful, like a friend in the kitchen; never stiff, never \"as an AI\".\n")
         if (settings.persona == Persona.Tars) append(tarsPersona(settings.humor))
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
         append("The home's devices are listed at the end of these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")

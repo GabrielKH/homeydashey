@@ -42,6 +42,7 @@ import app.homeydash.homey.HomeyStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -60,7 +61,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val input = SpeechInput(appContext)
     /** TARS's voice, downloaded to the tablet when TARS is chosen. */
     val tars = TarsVoice(appContext, http, scope)
-    val output = SpeechOutput(appContext, http, tars) { settings.value }
+    val output = SpeechOutput(appContext, http, tars, scope) { settings.value }
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
     val web = WebSearch(http)
@@ -73,6 +74,8 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val transcriber = app.homeydash.agent.Transcriber(http)
     /** Called when the assistant starts listening or ringing, so a dimmed screen lights up. */
     var onActive: (() -> Unit)? = null
+    /** Whether the assistant is listening, thinking, speaking or waiting for a follow-up; the screen doesn't dim meanwhile. */
+    var busy: () -> Boolean = { false }
     /** The recipes and the one being cooked, so the assistant can follow along. */
     var kitchen: app.homeydash.data.Kitchen? = null
 
@@ -267,6 +270,7 @@ class Assistant(
     private val home = StoreHomeControl(store) { store.snapshot.value.deviceCards }
 
     init {
+        services.busy = { voiceActive || state != AssistantState.Idle }
         services.agent.listener = object : AgentListener {
             override fun step(step: AgentStep) {
                 val i = activity.indexOfFirst { it.id == step.id }
@@ -294,7 +298,8 @@ class Assistant(
         if (state == AssistantState.Listening) stopListening() else listen()
     }
 
-    fun listen() {
+    /** Listens for a question; [heard] is sound already heard of it (someone talked over the answer). */
+    fun listen(heard: ShortArray? = null) {
         services.output.stop()
         // The wake name may have been listened for while it talked; the question gets the microphone.
         if (!services.wake.enrolling) services.wake.stop()
@@ -318,7 +323,7 @@ class Assistant(
         }
         val swedish = language == app.homeydash.agent.Language.Swedish
         if (settings.hearers().isNotEmpty() && SystemClock.elapsedRealtime() >= hearersDownUntil) {
-            listenRecorded(language)
+            listenRecorded(language, heard)
             return
         }
         if (!swedish && SystemClock.elapsedRealtime() < offlineUntil && listenOffline()) return
@@ -340,7 +345,7 @@ class Assistant(
      * instead of Android's speech recognition. When neither answers, Google hears the next
      * questions for a couple of minutes.
      */
-    private fun listenRecorded(language: app.homeydash.agent.Language) {
+    private fun listenRecorded(language: app.homeydash.agent.Language, heard: ShortArray? = null) {
         recording = true
         val s = settings
         val code = when (language) {
@@ -353,6 +358,7 @@ class Assistant(
         var early: Pair<Int, String>? = null
         services.recorder.record(
             gain = app.homeydash.agent.MicSensitivity.gain(s.micSensitivity),
+            start = heard,
             onLevel = { l -> meter(floatArrayOf(l, l, l * 0.8f, l * 0.6f)) },
             onPause = { wav, pause, held ->
                 // A pause: answer now if what was said reads as finished, else wait for the rest,
@@ -551,6 +557,24 @@ class Assistant(
         }
     }
 
+    /**
+     * Someone it knows started talking while it spoke: like a person, it stops mid-sentence and
+     * listens, keeping what they already said ([heard]) as the start of the question.
+     */
+    fun talkOver(person: KnownPerson, heard: ShortArray) {
+        if (state != AssistantState.Speaking || !answering) return
+        answering = false
+        voice = Seen(person, SystemClock.elapsedRealtime())
+        services.trace("wake", "Stopped talking: ${person.name} talked over the answer.", true)
+        services.output.stop()
+        job?.cancel()
+        pending = null
+        scene = null
+        state = AssistantState.Idle
+        keepConversation()
+        listen(heard)
+    }
+
     /** Small from the start when the island or side window was chosen; never forces full screen. */
     private fun showAsChosen() {
         if (!voiceActive && settings.view != app.homeydash.agent.AssistantView.Full) compact = true
@@ -597,8 +621,37 @@ class Assistant(
         // Rain on screen while it says it rains.
         if (WEATHER_WORDS.containsMatchIn(text)) scene = bridge.weatherScene(TOMORROW.containsMatchIn(text))
         job?.cancel()
+        answering = false
         job = scope.launch {
             state = AssistantState.Thinking
+            // Talking like a person: the answer is spoken while the AI still writes it, and a
+            // short "hmm" fills the silence when it takes a moment.
+            val live = if (byVoice && talksLive(settings)) Channel<String>(Channel.UNLIMITED) else null
+            val swedish = when (settings.answers) {
+                app.homeydash.agent.Language.Swedish -> true
+                app.homeydash.agent.Language.English -> false
+                app.homeydash.agent.Language.Auto -> app.homeydash.agent.Confirmation.looksSwedish(text)
+            }
+            val begun = java.util.concurrent.atomic.AtomicBoolean(false)
+            val speaking = live?.let { pieces ->
+                launch {
+                    services.output.speakLive(pieces, swedish, settings.voice, onStart = { state = AssistantState.Speaking }, onFrame = ::meter)
+                }
+            }
+            // Not for follow-ups: those may turn out to be people talking to each other.
+            val hmm = live?.takeIf { !followUp }?.let { pieces ->
+                launch {
+                    delay(app.homeydash.agent.ThinkingSounds.AFTER_MS)
+                    // Only one made ahead of time: making it now would come too late.
+                    val ready = app.homeydash.agent.ThinkingSounds.all(settings.persona, swedish).filter { services.output.hasSound(it, swedish, settings.voice) }
+                    val sound = app.homeydash.agent.ThinkingSounds.pick(ready, lastHmm)
+                    if (!begun.get() && sound != null) {
+                        lastHmm = sound
+                        services.trace("voice", "Said \"$sound\" while the answer took a moment.", false)
+                        pieces.trySend(sound)
+                    }
+                }
+            }
             val reply = try {
                 val (s, person) = forWhoIsHere(settings)
                 services.agent.ask(
@@ -606,15 +659,36 @@ class Assistant(
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
                     context = askContext(s, person, followUp),
+                    speech = live?.let { pieces -> { sentence: String -> begun.set(true); answering = true; pieces.trySend(sentence); Unit } },
                 )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 AgentReply("Something went wrong: ${e.message}", error = true)
             }
+            hmm?.cancel()
+            live?.close()
+            // Whatever was handed over finishes playing before anything else is said.
+            speaking?.join()
             show(reply)
+            // The "hmm" sounds for next time, made in this voice once the answer is done, so making
+            // them never holds up a question on the computer's voice server.
+            if (live != null) services.output.prepareSounds(app.homeydash.agent.ThinkingSounds.all(settings.persona, swedish), swedish, settings.voice)
         }
     }
+
+    /**
+     * The answer itself is being said, not a thinking sound: only then can someone talk over it,
+     * so the echo of a "hmm" never cancels the question it's thinking about.
+     */
+    @Volatile var answering = false
+        private set
+
+    /** The last thinking sound, so the next one is different. */
+    private var lastHmm: String? = null
+
+    /** Answers are spoken while they're written: on the tablet only, since a speaker gets one clip. */
+    private fun talksLive(s: AgentSettings) = s.speak && s.liveSpeech && s.speakerId == null
 
     /** Runs [routine] now, as if its phrase was said (Settings → Assistant → Routines → Run). */
     fun runRoutine(routine: app.homeydash.agent.Routine) {
@@ -722,7 +796,7 @@ class Assistant(
         pending = services.agent.pending
         val brain: Connection? = reply.brain
         lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions, steps = steps())
-        if (settings.speak && !reply.error) say(reply.text)
+        if (settings.speak && !reply.error && !reply.spoken) say(reply.text)
         // A routine's last steps, like starting the radio, wait until the answer has been said.
         reply.then?.let { then ->
             val done = try { then() } catch (e: CancellationException) { throw e } catch (e: Exception) { listOf("That failed: ${e.message}") }
@@ -743,6 +817,7 @@ class Assistant(
     /** Says [text] on the chosen speaker, or on the tablet when there is none or it fails. */
     private suspend fun say(text: String) {
         state = AssistantState.Speaking
+        answering = true
         val s = settings
         val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
         if (speaker != null && sayOn(speaker.second, text, s)) return

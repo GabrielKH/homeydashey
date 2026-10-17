@@ -127,13 +127,14 @@ class SonosCards(
 
     /** Every room, asked of the speakers we already know first, then of any that can be found. */
     private suspend fun household(): List<SonosSpeaker> {
-        val known = speakers.map { it.host }
-        for (host in (known + find()).distinct()) {
-            val found = runCatching { client.speakers(host) }.getOrNull()
-            if (!found.isNullOrEmpty()) return found
-        }
-        return emptyList()
+        // Searching the Wi-Fi takes seconds, so it only runs when no known speaker answers.
+        val known = speakers.map { it.host }.distinct()
+        known.firstNotNullOfOrNull { ask(it) }?.let { return it }
+        return (find().distinct() - known.toSet()).firstNotNullOfOrNull { ask(it) }.orEmpty()
     }
+
+    private suspend fun ask(host: String): List<SonosSpeaker>? =
+        runCatching { client.speakers(host) }.getOrNull()?.takeIf { it.isNotEmpty() }
 
     private fun card(deviceId: String, cardId: String, title: String) = FlowCardAction(
         id = "$OWNER:$deviceId:$cardId",

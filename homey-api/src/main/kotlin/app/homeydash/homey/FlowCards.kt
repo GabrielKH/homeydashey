@@ -111,14 +111,20 @@ object FlowCards {
      */
     fun twinsOf(devices: Map<String, Device>, deviceId: String): List<String> {
         val d = devices[deviceId] ?: return emptyList()
-        val name = NameMatch.normalize(d.name)
         val app = d.driverUri?.substringBeforeLast(':') ?: return emptyList()
+        val name = normalized(d.name)
         return devices.values.filter { o ->
             // A copy Homey can't reach right now only fails; the speaker itself still works.
             if (o.id == d.id || !o.available || o.homeyClass != d.homeyClass || o.driverUri?.substringBeforeLast(':') == app) return@filter false
-            val other = NameMatch.normalize(o.name)
+            val other = normalized(o.name)
             other == name || (o.zone == d.zone && other.length >= 3 && name.length >= 3 && (other.contains(name) || name.contains(other)))
         }.map { it.id }
+    }
+
+    /** [NameMatch.normalize], remembered: [twinsOf] compares every pair of devices on each update. */
+    private fun normalized(name: String): String = NAMES[name] ?: run {
+        if (NAMES.size > 4096) NAMES.clear()
+        NameMatch.normalize(name).also { NAMES[name] = it }
     }
 
     /** A device's cards, and those of its [twinsOf] that it doesn't have itself (albums on a hidden Sonos LocalAPI copy). */
@@ -128,7 +134,7 @@ object FlowCards {
     }
 
     fun byDevice(cards: List<FlowCardAction>): Map<String, List<FlowCardAction>> =
-        cards.filter { it.deviceId != null }.groupBy { it.deviceId!! }
+        cards.mapNotNull { c -> c.deviceId?.let { it to c } }.groupBy({ it.first }, { it.second })
 
     /**
      * Maps a device's argument-free cards to remote keys by their card ids
@@ -155,9 +161,15 @@ object FlowCards {
     internal fun navigation(keys: Set<RemoteKey>) =
         listOf(RemoteKey.Up, RemoteKey.Down, RemoteKey.Left, RemoteKey.Right, RemoteKey.Select).count { it in keys }
 
-    /** The words of a card id, from snake_case, kebab-case or camelCase. */
-    internal fun tokens(cardId: String): Set<String> =
-        cardId.replace(Regex("([a-z0-9])([A-Z])"), "$1_$2").lowercase().split('_', '-', '.', ' ').filter { it.isNotEmpty() }.toSet()
+    /**
+     * The words of a card id, from snake_case, kebab-case or camelCase. Remembered, as the same ids are
+     * read again on every device update; they come from the Homey, so there are only so many.
+     */
+    internal fun tokens(cardId: String): Set<String> = TOKENS[cardId] ?: run {
+        if (TOKENS.size > 4096) TOKENS.clear()
+        cardId.replace(CAMEL, "$1_$2").lowercase().split('_', '-', '.', ' ').filter { it.isNotEmpty() }.toSet()
+            .also { TOKENS[cardId] = it }
+    }
 
     internal fun remoteKey(cardId: String): RemoteKey? {
         val tokens = tokens(cardId)
@@ -197,16 +209,22 @@ object FlowCards {
             val args = card.inputArgs
             when {
                 ("ungroup" in t || ("leave" in t && "group" in t) || "standalone" in t) && args.isEmpty() -> if (leave == null) leave = card
-                "group" in t && "volume" in t && t.none { it in setOf("adjust", "relative") } && args.size == 1 &&
-                    args[0].type in setOf("range", "number") -> if (volume == null) { volume = card; volumeArg = args[0] }
+                "group" in t && "volume" in t && t.none { it in RELATIVE } && args.size == 1 &&
+                    args[0].type in NUMBER_TYPES -> if (volume == null) { volume = card; volumeArg = args[0] }
                 ("group" in t || "join" in t) && "volume" !in t && args.size == 1 &&
-                    args[0].type in setOf("device", "autocomplete", "dropdown") -> if (join == null) { join = card; joinArg = args[0] }
+                    args[0].type in PICK_TYPES -> if (join == null) { join = card; joinArg = args[0] }
             }
         }
         return if (join == null && leave == null) null else SpeakerGrouping(join, joinArg, leave, volume, volumeArg)
     }
 
     private val GROUP_NOISE = setOf("tv", "autoplay", "membership", "changed")
+    private val CAMEL = Regex("([a-z0-9])([A-Z])")
+    private val TOKENS = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
+    private val NAMES = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val RELATIVE = setOf("adjust", "relative")
+    private val NUMBER_TYPES = setOf("range", "number")
+    private val PICK_TYPES = setOf("device", "autocomplete", "dropdown")
 
     /** A card that opens an app chosen from a list, like the Apple TV's "Launch App". */
     fun appLauncher(cards: List<FlowCardAction>): MusicSource? = cards.firstNotNullOfOrNull { card ->

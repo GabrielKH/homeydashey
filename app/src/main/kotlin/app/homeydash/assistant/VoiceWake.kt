@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.homeydash.agent.MicSensitivity
+import app.homeydash.agent.TalkOver
 import app.homeydash.agent.WakeName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -163,7 +164,8 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
      * the phrase was too short to tell) and the sound of the name being said, for a voiceprint
      * (see [VoicePrints]). Callbacks come on the main thread. Returns a token
      * for [stop], so one user can't stop another's listening. [sensitivity] (0–100) sets the
-     * microphone gain and how sure the match must be.
+     * microphone gain and how sure the match must be. With [onTalk] (while the assistant talks),
+     * someone talking over it for a moment is handed over too, with the last of what was heard.
      */
     fun start(
         name: String,
@@ -171,6 +173,8 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         onError: (String) -> Unit,
         sensitivity: Int = MicSensitivity.DEFAULT,
         echo: Boolean = false,
+        onTalk: ((sound: ShortArray) -> Unit)? = null,
+        talkEasy: Boolean = false,
     ): Int {
         stop()
         val gen = generation
@@ -191,7 +195,8 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             val gain = MicSensitivity.gain(sensitivity)
             val main = Handler(Looper.getMainLooper())
             reader = thread(name = "wake-mic") {
-                read(rec, gain, isLive = { gen == generation }, echo = echo) { result, failure, recent ->
+                val talk: ((ShortArray) -> Unit)? = onTalk?.let { handler -> { sound -> main.post { if (gen == generation) handler(sound) } } }
+                read(rec, gain, isLive = { gen == generation }, echo = echo, onTalk = talk, talkEasy = talkEasy) { result, failure, recent ->
                     main.post {
                         if (gen != generation) return@post
                         if (failure != null) {
@@ -256,7 +261,15 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
      * its own voice is mostly taken out and someone saying the wake name over it is heard.
      */
     @SuppressLint("MissingPermission") // WakeWatch only starts with the microphone permission.
-    private fun read(rec: Recognizer, gain: Float, isLive: () -> Boolean, echo: Boolean = false, emit: (String?, String?, Recent?) -> Unit) {
+    private fun read(
+        rec: Recognizer,
+        gain: Float,
+        isLive: () -> Boolean,
+        echo: Boolean = false,
+        onTalk: ((ShortArray) -> Unit)? = null,
+        talkEasy: Boolean = false,
+        emit: (String?, String?, Recent?) -> Unit,
+    ) {
         val size = maxOf(AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), RATE / 5 * 2)
         val source = if (echo) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val record = try {
@@ -283,6 +296,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             // The last few seconds the recogniser heard, to cut the wake name out of.
             val ring = ShortArray(RATE * RECENT_SECONDS)
             var fed = 0L
+            val talk = onTalk?.let { TalkOver(RATE, talkEasy) }
             while (isLive()) {
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) {
@@ -295,6 +309,10 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
                 }
                 for (i in 0 until n) ring[((fed + i) % ring.size).toInt()] = buf[i]
                 fed += n
+                if (talk != null && talk.feed(buf, n)) {
+                    val keep = minOf(fed, RATE * TalkOver.SOUND_MS / 1000L).toInt()
+                    onTalk?.invoke(ShortArray(keep) { ring[((fed - keep + it) % ring.size).toInt()] })
+                }
                 if (rec.acceptWaveForm(buf, n)) emit(rec.result, null, Recent.of(ring, fed))
             }
             canceller?.release()
