@@ -518,9 +518,9 @@ class Agent(
         if (key == warmed && !quiet) return
         warmed = key
         warmedAt = System.currentTimeMillis()
-        chat.prefill(brain, messages, specs)?.let { st ->
-            listener?.trace("speed", "warm-up (rules and devices read ahead): ${st.text()}")
-        }
+        // Logged either way, so a slow first question shows whether the warm-up ran.
+        val st = chat.prefill(brain, messages, specs)
+        listener?.trace("speed", st?.let { "warm-up (rules and devices read ahead): ${it.text()}" } ?: "warm-up didn't work (the server refused it or didn't answer)")
     }
 
     /**

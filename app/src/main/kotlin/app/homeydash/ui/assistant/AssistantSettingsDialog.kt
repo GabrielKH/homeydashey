@@ -337,7 +337,7 @@ private fun BrainPage(
     )
     Label("Local AI on your computer")
     val local = settings.local ?: Connection(Provider.Ollama)
-    ConnectionFields(services, local, keyLabel = "API key (if the server asks for one)") { c -> update { it.copy(local = c) } }
+    ConnectionFields(services, local, keyHint = "Only if the server asks for one") { c -> update { it.copy(local = c) } }
     SwitchRow(
         "Short tool list",
         "The local AI gets its tools as a few lines of text and writes its calls itself. A much shorter prompt, so faster answers, " +
@@ -349,7 +349,7 @@ private fun BrainPage(
     Segmented(listOf(Provider.Gemini, Provider.OpenAI), internet.provider, { it.label }) { p ->
         update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
     }
-    ConnectionFields(services, internet, keyLabel = "API key") { c -> update { it.copy(internet = c) } }
+    ConnectionFields(services, internet) { c -> update { it.copy(internet = c) } }
     SpeedTest(services, settings, preview)
 }
 
@@ -560,14 +560,14 @@ private fun HearingTest(
 }
 
 @Composable
-private fun ConnectionFields(services: AssistantServices, connection: Connection, keyLabel: String, onChange: (Connection) -> Unit) {
+private fun ConnectionFields(services: AssistantServices, connection: Connection, keyHint: String = "", onChange: (Connection) -> Unit) {
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
     var result by remember(connection.provider) { mutableStateOf<String?>(null) }
     // The fields keep their own text while typing; switching provider starts them afresh.
     key(connection.provider) {
         Field("Address", connection.baseUrl, keyboard = KeyboardType.Uri) { onChange(connection.copy(baseUrl = it)) }
-        Field(keyLabel, connection.apiKey, secret = true) { onChange(connection.copy(apiKey = it)) }
+        Field("API key", connection.apiKey, secret = true, hint = keyHint) { onChange(connection.copy(apiKey = it)) }
         Field("Model", connection.model) { onChange(connection.copy(model = it)) }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -590,7 +590,7 @@ private fun ConnectionFields(services: AssistantServices, connection: Connection
         )
         Text(
             result ?: when (connection.provider) {
-                Provider.Ollama -> "On the computer: install Ollama, run \"ollama pull ${connection.model}\", and on a Mac run \"launchctl setenv OLLAMA_HOST 0.0.0.0\", \"launchctl setenv OLLAMA_CONTEXT_LENGTH 16384\" (room for all your devices) and \"launchctl setenv OLLAMA_KEEP_ALIVE 2h\" (stays loaded, answers faster), then restart Ollama."
+                Provider.Ollama -> "Any server on your computer that speaks the OpenAI format: oMLX, LM Studio or Ollama. Give its address with /v1 at the end and the model's name as the server shows it."
                 Provider.Gemini -> "Get a key at aistudio.google.com."
                 Provider.OpenAI -> "Get a key at platform.openai.com."
             },
@@ -681,7 +681,7 @@ internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, 
 }
 
 @Composable
-private fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, onChange: (String) -> Unit) {
+private fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, hint: String = "", onChange: (String) -> Unit) {
     val g = GlassTheme.colors
     var text by remember { mutableStateOf(value) }
     var reveal by remember { mutableStateOf(false) }
@@ -699,6 +699,12 @@ private fun Field(label: String, value: String, secret: Boolean = false, keyboar
             visualTransformation = if (secret && !reveal) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else keyboard, autoCorrectEnabled = false),
             modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+            decorationBox = { inner ->
+                Box {
+                    if (text.isEmpty() && hint.isNotEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = g.muted, maxLines = 1)
+                    inner()
+                }
+            },
         )
         if (secret) RoundButton(Sym.visibilityOff, { reveal = !reveal }, size = 36.dp, filledIcon = reveal)
     }
