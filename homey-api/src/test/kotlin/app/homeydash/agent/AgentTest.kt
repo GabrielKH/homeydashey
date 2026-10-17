@@ -244,6 +244,7 @@ class AgentTest {
             args = listOf(FlowCardArg("device", "device"), FlowCardArg("channel", "autocomplete")),
         )
         private val unlock = FlowCardAction("homey:device:d-atv:unlock_parental", title = "Unlock")
+        private val favorite = FlowCardAction("homey:device:d-sonos:sonos_play_favorite", title = "Play Sonos favorite", args = listOf(FlowCardArg("favorite", "autocomplete")))
         override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) {}
         override suspend fun setMood(mood: Mood) {}
         override suspend fun flows() = emptyList<HomeyFlow>()
@@ -251,7 +252,11 @@ class AgentTest {
         override suspend fun people() = emptyList<HomeyPerson>()
         override suspend fun variables() = emptyList<LogicVariable>()
         override suspend fun playMusic(deviceId: String, query: String): String? = null
-        override fun deviceActions(deviceId: String) = if (deviceId == "d-atv") listOf(channel, unlock) else emptyList()
+        override fun deviceActions(deviceId: String) = when (deviceId) {
+            "d-atv" -> listOf(channel, unlock)
+            "d-sonos" -> listOf(favorite)
+            else -> emptyList()
+        }
         override suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String) =
             listOf("SVT1", "SVT2", "TV4").map { AutocompleteItem(it, null, null, JsonObject(mapOf("name" to JsonPrimitive(it)))) }
         override suspend fun runAction(card: FlowCardAction, args: JsonObject) { ran += card.cardId to args }
@@ -275,6 +280,9 @@ class AgentTest {
         assertEquals("Done: Change channel (TV4) on Vardagsrum.", done)
         assertEquals("TV4", home.ran.single().second["channel"]!!.jsonObject["name"]!!.jsonPrimitive.content)
         assertTrue(tools.run(call("run_device_action", "device" to "Vardagsrum", "action" to "unlock_parental")).text.contains("no action"))
+        // A guessed "favourite" or "radio" finds Sonos's "Play Sonos favorite".
+        assertTrue(tools.run(call("run_device_action", "device" to "Kök", "action" to "radio", "value" to "SVT2")).text.startsWith("Done"))
+        assertEquals("sonos_play_favorite", home.ran.last().first)
     }
 
     @Test fun `the endpointer hears a question start and stop`() {

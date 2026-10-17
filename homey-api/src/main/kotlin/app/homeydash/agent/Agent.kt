@@ -246,8 +246,12 @@ class Agent(
                     for (call in answer.toolCalls) {
                         acted = true
                         val key = "${call.name} ${call.arguments}"
-                        val before = done[key]?.takeIf { call.name !in LOOKS && !StepText.failed(it.text) }
-                        val result = if (before != null) {
+                        val before = done[key]?.takeIf { call.name !in LOOKS }
+                        val result = if (before != null && StepText.failed(before.text)) {
+                            // The same failing call over and over only made the user wait (P1 radio: four times).
+                            heard.trace("guard", "Asked for $key again after it failed; not tried again.")
+                            ToolResult("That exact call just failed: ${before.text} Don't try it again; try another way or tell the user what went wrong.", before.localOnly)
+                        } else if (before != null) {
                             heard.trace("guard", "Asked for $key again; not done twice.")
                             ToolResult("Already done a moment ago: ${before.text} Don't do it again; answer the user.", before.localOnly)
                         } else {
@@ -584,7 +588,8 @@ class Agent(
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
         append("use one of the devices it suggests or ask which one. ")
         append("A device may be named by its room or app rather than what it is: the app is shown in brackets, e.g. a TV called \"Vardagsrum\" (apple tv) is the Apple TV. ")
-        append("For TV channels, opening an app, Sonos favourites, playlists, radio and remote buttons, call device_actions and then run_device_action; play_music is a shortcut for music and also plays any song, album or artist asked for (\"spela Dancing Queen\"). ")
+        append("For music, radio stations (\"P1\", \"P3\"), Sonos favourites and playlists, call play_music with the name: it searches the speaker's favourites, playlists and radio, and also plays any song, album or artist asked for (\"spela Dancing Queen\"). ")
+        append("For TV channels, opening an app and remote buttons, call device_actions and then run_device_action. Never make up a stream URL. ")
         append("Only use devices, rooms and moods in the home list; ")
         append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")

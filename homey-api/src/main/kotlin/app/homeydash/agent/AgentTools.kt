@@ -396,6 +396,8 @@ class AgentTools(
         val cards = actionsOf(d) ?: return ok("${d.name}'s actions can't be used here.")
         val card = cards.firstOrNull { it.cardId.equals(action.trim(), ignoreCase = true) || it.title.equals(action.trim(), ignoreCase = true) }
             ?: NameMatch.best(action, cards) { NameMatch.score(action, it.title ?: it.cardId) }
+            // "favourite" or "radio" for Sonos's "Play Sonos favorite", which the model guesses before looking.
+            ?: FAVOURITE.takeIf { it.matches(action.trim()) }?.let { cards.firstOrNull { c -> c.cardId.contains("favorite", ignoreCase = true) } }
             ?: return ok("${d.name} has no action \"$action\". Use device_actions to see what it has.")
         val title = card.title ?: card.cardId
         // One value per argument, separated by ";" when the card has several.
@@ -651,6 +653,9 @@ class AgentTools(
     private fun ok(text: String) = ToolResult(text)
 
     companion object {
+        /** What a model calls a speaker's favourites when it guesses an action name. */
+        private val FAVOURITE = Regex("""(?i)(play_?)?(favou?rites?|favorit(er)?|radio|station|kanal)""")
+
         /** "all", "the whole house", "hela huset": set_room for every room at once. */
         private val WHOLE_HOUSE = Regex("""(?i)(all|alla|everything|everywhere|allt|överallt|((the )?whole )?(house|home)|hela (huset|hemmet)|hemma|alla rum|all rooms)""")
 
