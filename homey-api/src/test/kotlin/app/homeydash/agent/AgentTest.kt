@@ -678,7 +678,7 @@ class AgentTest {
         assertEquals(Triple("d-lamp", "dim", JsonPrimitive(0.3)), home.sets.single())
         // Unclear names come back with suggestions instead of a guess.
         val r = tools.run(call("set_device", "device" to "kitchen spot lamp", "capability" to "onoff", "value" to "on"))
-        assertTrue(r.text, r.text.contains("light_1") && r.text.contains("light_2"))
+        assertTrue(r.text, r.text.contains("Kitchen lamp") && r.text.contains("Spots"))
         assertEquals(1, home.sets.size)
         // Room-wide changes leave dashboard-hidden devices alone unless their class is named.
         home.sets.clear()
@@ -1026,5 +1026,30 @@ class AgentTest {
         val note = agent.situation(AgentSettings(), view(), AskContext(weather = "Stockholm: Rain, 9 °C"))
         assertTrue(note.contains("Weather (the dashboard's weather card):\nStockholm: Rain, 9 °C"))
         assertTrue(agent.rules(AgentSettings()).contains("never ask the same question twice"))
+    }
+
+    @Test
+    fun `devices are named by name and room, and a wrong alias with a name follows the name`() {
+        val z: Map<String, Zone> = HomeyJson.decodeFromString(
+            """{"z-home":{"id":"z-home","name":"Hem"},"z-bed":{"id":"z-bed","name":"Sovrum","parent":"z-home"},"z-office":{"id":"z-office","name":"Kontor","parent":"z-home"},"z-maja":{"id":"z-maja","name":"Majas rum","parent":"z-home"}}""",
+        )
+        fun light(id: String, name: String, zone: String) =
+            """"$id":{"id":"$id","name":"$name","zone":"$zone","class":"light","capabilities":["onoff"],"capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}}"""
+        val raw: Map<String, Device> = HomeyJson.decodeFromString(
+            "{" + listOf(
+                light("d-bed", "Taklampa", "z-bed"),
+                light("d-office", "Taklampa", "z-office"),
+                light("d-gabriel", "Nattlampa Gabriel", "z-bed"),
+                light("d-maja", "Nattlampa Maja", "z-maja"),
+            ).joinToString(",") + "}",
+        )
+        val v = HomeView.build(z, raw, emptyMap(), emptySet(), AgentSettings(), true)
+        assertNull("a shared name needs its room", v.device("Taklampa"))
+        assertEquals("d-bed", v.device("Taklampa, Sovrum")?.id)
+        assertEquals("d-office", v.device("Taklampa (Kontor)")?.id)
+        assertEquals("d-gabriel", v.device("\"Nattlampa Gabriel\"")?.id)
+        val maja = v.device("Nattlampa Maja")!!.alias
+        assertEquals("d-gabriel", v.device("$maja Nattlampa Gabriel")?.id)
+        assertEquals("d-maja", v.device(maja)?.id)
     }
 }

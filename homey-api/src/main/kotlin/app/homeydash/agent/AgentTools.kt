@@ -60,7 +60,7 @@ class AgentTools(
 
     fun specs(): List<ToolSpec> = buildList {
         add(tool("set_device", "Change one capability of one device: switch, dim, colour, temperature, volume, play/pause, blinds.") {
-            string("device", "Device alias, e.g. light_3")
+            string("device", DEVICE)
             string("capability", "Capability id, e.g. onoff, dim")
             string("value", "true/false, a number, or a listed choice")
             required("device", "capability", "value")
@@ -73,7 +73,7 @@ class AgentTools(
             required("room", "capability", "value")
         })
         add(tool("get_device", "All details of one device, including ranges and choices.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             required("device")
         })
         if (view.moods.isNotEmpty()) add(tool("set_mood", "Turn on a Homey mood (scene).") {
@@ -92,11 +92,11 @@ class AgentTools(
             required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             required("device")
         })
         add(tool("run_device_action", "Run an action from device_actions: channel, app, favourite, playlist.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             string("action", "Action id or title")
             string("value", "What to pick or enter, e.g. Netflix; omit if nothing")
             required("device", "action")
@@ -116,11 +116,11 @@ class AgentTools(
             required("page")
         })
         add(tool("open_device", "Open a device's controls on the dashboard, e.g. a lamp's colour or a TV remote.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             required("device")
         })
         add(tool("press_remote", "Press TV or media box remote buttons in order.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             string("keys", "Comma-separated: up, down, left, right, ok, back, home, play, volume up/down, mute, power, channel up/down; repeat with x, e.g. \"down x3, ok\"")
             required("device", "keys")
         })
@@ -671,8 +671,8 @@ class AgentTools(
     private fun unknown(alias: String): ToolResult {
         val near = view.similarDevices(alias)
         return ok(
-            if (near.isEmpty()) "I can't see a device called $alias. Use an alias from the list."
-            else "\"$alias\" could be: " + near.joinToString { "${it.alias} \"${it.name}\"" + (it.room?.let { r -> " ($r)" } ?: "") } +
+            if (near.isEmpty()) "I can't see a device called $alias. Use a name from the list."
+            else "\"$alias\" could be: " + near.joinToString { "\"${it.name}" + (it.room?.let { r -> ", $r" } ?: "") + "\"" } +
                 ". Pick one, or ask the user which they mean.",
         )
     }
@@ -680,6 +680,9 @@ class AgentTools(
     private fun ok(text: String) = ToolResult(text)
 
     companion object {
+        /** How a tool asks for a device: by name, since small models mix up alias numbers. */
+        private const val DEVICE = "The device's name as listed, with its room after a comma when several share the name, e.g. \"Taklampa, Sovrum\""
+
         /** What a model calls a speaker's favourites when it guesses an action name. */
         private val FAVOURITE = Regex("""(?i)(play_?)?(favou?rites?|favorit(er)?|radio|station|kanal)""")
 
