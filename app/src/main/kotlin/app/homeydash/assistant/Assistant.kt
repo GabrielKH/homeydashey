@@ -74,6 +74,8 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val transcriber = app.homeydash.agent.Transcriber(http)
     /** Called when the assistant starts listening or ringing, so a dimmed screen lights up. */
     var onActive: (() -> Unit)? = null
+    /** Whether the assistant is listening, thinking, speaking or waiting for a follow-up; the screen doesn't dim meanwhile. */
+    var busy: () -> Boolean = { false }
     /** The recipes and the one being cooked, so the assistant can follow along. */
     var kitchen: app.homeydash.data.Kitchen? = null
 
@@ -268,6 +270,7 @@ class Assistant(
     private val home = StoreHomeControl(store) { store.snapshot.value.deviceCards }
 
     init {
+        services.busy = { voiceActive || state != AssistantState.Idle }
         services.agent.listener = object : AgentListener {
             override fun step(step: AgentStep) {
                 val i = activity.indexOfFirst { it.id == step.id }

@@ -47,6 +47,8 @@ class MainActivity : ComponentActivity() {
         container.assistant.faces.onFace = { screen.wake() }
         // So does the assistant starting to listen (the wake name) or a timer ringing.
         container.assistant.onActive = { screen.wake() }
+        // And it stays lit for the whole conversation, follow-up listening included.
+        screen.busy = { container.assistant.busy() }
         handleShare(intent)
         setContent {
             val themeMode by container.display.themeMode.collectAsStateWithLifecycle()
