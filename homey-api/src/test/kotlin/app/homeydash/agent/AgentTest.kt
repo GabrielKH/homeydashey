@@ -719,13 +719,15 @@ class AgentTest {
         // A user line follows, because Qwen's template refuses a request with none.
         assertEquals(2, warm.size)
         assertEquals("user", warm[1]["role"]!!.jsonPrimitive.content)
-        assertEquals(warm[0], first[0])
+        assertEquals(warm, first.take(2))
         assertTrue(first[0].text().contains("""light_1 "Kitchen lamp" light: onoff dim
 """))
         assertFalse(first[0].text().contains("dim=0.4"))
         // What is on now comes with the question.
-        assertTrue(first[1].text(), first[1].text().contains("""light_1 "Kitchen lamp": on dim=0.4"""))
-        assertTrue(first[1].text().endsWith("The user said: vad är klockan"))
+        assertTrue(first[2].text(), first[2].text().contains("""light_1 "Kitchen lamp": on dim=0.4"""))
+        // Written as a tool response, so Qwen's template keeps the answers before it exactly as sent.
+        assertTrue(first[2].text().startsWith("<tool_response>\n"))
+        assertTrue(first[2].text().endsWith("The user said: vad är klockan\n</tool_response>"))
         minute = 7
         agent.ask("tack", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
         val second = sent()

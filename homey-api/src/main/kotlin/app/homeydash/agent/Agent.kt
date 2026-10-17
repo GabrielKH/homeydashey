@@ -432,8 +432,9 @@ class Agent(
         turn: List<ChatMessage>,
         tools: Tools,
     ): List<ChatMessage> {
-        val all = listOf(ChatMessage.system(fixed(settings, view, tools.core))) + earlier + turn
-        return if (tools.compact) ToolText.written(all) else all
+        val start = listOf(ChatMessage.system(fixed(settings, view, tools.core)))
+        // Written tools: one fixed user line after the rules, the same one the warm-up sends (see ToolText.written).
+        return if (tools.compact) ToolText.written(start + ChatMessage.user(ToolText.START) + earlier + turn) else start + earlier + turn
     }
 
     /**
@@ -741,7 +742,7 @@ class Agent(
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val REWARM_AFTER_MS = 10 * 60 * 1000L
-        const val WARM_UP = "(From the app: a warm-up, no answer needed.)"
+        const val WARM_UP = ToolText.START
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
     }
