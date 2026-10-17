@@ -129,13 +129,13 @@ class Agent(
         }
 
         // "Next step" while cooking is answered straight away, without the AI.
-        if (context.routine == null && context.kitchen != null) tools(view(true)).cookingQuick(text)?.let { reply ->
+        if (context.routine == null && context.kitchen != null) tools(view(true)).cookingQuick(text, answersSwedish(settings))?.let { reply ->
             remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
             return AgentReply(reply, actions = listOf("recipe step (without the AI)"))
         }
 
         // Plain on, off and dim commands are done straight away, without the AI.
-        if (context.routine == null) quick(text, view(true), tools)?.let { return it }
+        if (context.routine == null) quick(text, view(true), tools, answersSwedish(settings))?.let { return it }
 
         // What a routine read for a local brain never goes to the internet one.
         val brains = settings.brains().filter { it.local || !context.routineLocalOnly }
@@ -268,8 +268,9 @@ class Agent(
         return AgentReply(lastError ?: "No connection answered.", error = true)
     }
 
-    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools): AgentReply? {
-        val action = QuickCommand.parse(text, view) ?: return null
+    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools, swedish: Boolean?): AgentReply? {
+        // Said in the answer language when one is set, so TARS never reads out Swedish in his English voice.
+        val action = QuickCommand.parse(text, view)?.let { a -> swedish?.let { a.copy(swedish = it) } ?: a } ?: return null
         val call = QuickCommand.call(action)
         val result = tools(view).run(call)
         val stuck = result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
@@ -356,6 +357,13 @@ class Agent(
     }
 
     /** Whether a fixed answer to [text] is in Swedish; TARS answers in English whatever was said. */
+    /** Whether fixed answers must be Swedish (true) or English (false); null when they follow what was said. */
+    private fun answersSwedish(settings: AgentSettings): Boolean? = when (settings.answers) {
+        Language.Swedish -> true
+        Language.English -> false
+        Language.Auto -> null
+    }
+
     private fun swedish(text: String, settings: AgentSettings): Boolean = when (settings.answers) {
         Language.Swedish -> true
         Language.English -> false

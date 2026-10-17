@@ -20,8 +20,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** A tool call the model asked for; [arguments] is already parsed. */
-data class ToolCall(val id: String, val name: String, val arguments: JsonObject)
+/**
+ * A tool call the model asked for; [arguments] is already parsed. [extra] is what the server
+ * sent with it to be sent back unchanged, like Gemini's thought signature, which Gemini 3
+ * refuses the next turn without.
+ */
+data class ToolCall(val id: String, val name: String, val arguments: JsonObject, val extra: JsonObject? = null)
 
 /** One message of a conversation, in the OpenAI chat format. */
 data class ChatMessage(
@@ -70,7 +74,7 @@ class ChatClient(http: OkHttpClient) {
     }
 
     private suspend fun send(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>, requireTool: Boolean): ChatMessage = withContext(Dispatchers.IO) {
-        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama, gemini = connection.provider == Provider.Gemini)
         val body = (if (requireTool) JsonObject(full + ("tool_choice" to JsonPrimitive("required"))) else full).toString()
         val request = Request.Builder()
             .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
@@ -117,7 +121,7 @@ class ChatClient(http: OkHttpClient) {
         requireTool: Boolean,
         onText: (String) -> Unit,
     ): ChatMessage = withContext(Dispatchers.IO) {
-        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama, gemini = connection.provider == Provider.Gemini)
         // Asks for the token counts at the end, for the speed shown with each answer; a server
         // that refuses the option is asked again without it, and not asked with it again.
         val usage = connection.baseUrl !in noUsage
@@ -184,7 +188,7 @@ class ChatClient(http: OkHttpClient) {
         private var firstAt = 0L
         private var pieces = 0
         private var usage: Usage? = null
-        private class Call(var id: String = "", var name: String = "", val arguments: StringBuilder = StringBuilder())
+        private class Call(var id: String = "", var name: String = "", val arguments: StringBuilder = StringBuilder(), var extra: JsonObject? = null)
         private val calls = sortedMapOf<Int, Call>()
         private var finish: String? = null
 
@@ -213,6 +217,7 @@ class ChatClient(http: OkHttpClient) {
                 val index = (obj["index"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: calls.size
                 val call = calls.getOrPut(index) { Call() }
                 (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { call.id = it }
+                (obj["extra_content"] as? JsonObject)?.let { call.extra = it }
                 val fn = obj["function"] as? JsonObject ?: return@forEach
                 (fn["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { call.name = it }
                 when (val args = fn["arguments"]) {
@@ -238,6 +243,7 @@ class ChatClient(http: OkHttpClient) {
                                 put("name", c.name)
                                 put("arguments", c.arguments.toString())
                             })
+                            c.extra?.let { put("extra_content", it) }
                         })
                     }
                 })
@@ -295,7 +301,7 @@ class ChatClient(http: OkHttpClient) {
      * arrives (Ollama keeps the start of the last conversation it read). Failures don't matter.
      */
     suspend fun prefill(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>): ChatStats? = withContext(Dispatchers.IO) {
-        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama, gemini = connection.provider == Provider.Gemini)
         val body = JsonObject(full + ("max_tokens" to JsonPrimitive(1))).toString()
         val request = Request.Builder()
             .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
@@ -368,7 +374,11 @@ class ChatClient(http: OkHttpClient) {
          * `reasoning_effort`, Ollama's own `think`, the chat template's `enable_thinking`
          * (MLX servers such as vMLX, and Qwen 3.5), and Qwen's `/no_think` in the system prompt.
          */
-        fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>, noThinking: Boolean = false): JsonObject = buildJsonObject {
+        /**
+         * [gemini]: tool calls Gemini didn't write itself (from the local AI, earlier in the
+         * conversation) get the placeholder signature Gemini 3 accepts in place of its own.
+         */
+        fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>, noThinking: Boolean = false, gemini: Boolean = false): JsonObject = buildJsonObject {
             put("model", model)
             put("temperature", 0.3)
             if (noThinking) {
@@ -379,7 +389,7 @@ class ChatClient(http: OkHttpClient) {
             val sent = if (!noThinking) messages else messages.mapIndexed { i, m ->
                 if (i == 0 && m.role == "system") m.copy(content = m.content.orEmpty() + "\n\n/no_think") else m
             }
-            put("messages", buildJsonArray { sent.forEach { add(encode(it)) } })
+            put("messages", buildJsonArray { sent.forEach { add(encode(it, gemini)) } })
             if (tools.isNotEmpty()) {
                 put("tools", buildJsonArray {
                     tools.forEach { t ->
@@ -396,7 +406,10 @@ class ChatClient(http: OkHttpClient) {
             }
         }
 
-        private fun encode(m: ChatMessage): JsonObject = buildJsonObject {
+        private val SKIP_SIGNATURE = buildJsonObject { put("google", buildJsonObject { put("thought_signature", "skip_thought_signature_validator") }) }
+
+        private fun encode(m: ChatMessage, gemini: Boolean = false): JsonObject = buildJsonObject {
+            val unsigned = gemini && m.toolCalls.isNotEmpty() && m.toolCalls.none { it.extra != null }
             put("role", m.role)
             // OpenAI wants content present (null allowed) on assistant messages with tool calls.
             put("content", m.content?.let(::JsonPrimitive) ?: JsonPrimitive(""))
@@ -411,6 +424,7 @@ class ChatClient(http: OkHttpClient) {
                                 put("name", c.name)
                                 put("arguments", c.arguments.toString())
                             })
+                            (c.extra ?: SKIP_SIGNATURE.takeIf { unsigned && c === m.toolCalls.first() })?.let { put("extra_content", it) }
                         })
                     }
                 })
@@ -427,7 +441,7 @@ class ChatClient(http: OkHttpClient) {
                 val fn = obj["function"] as? JsonObject ?: return@mapIndexedNotNull null
                 val name = (fn["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapIndexedNotNull null
                 val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: "call_$i"
-                ToolCall(id, name, parseArguments(fn["arguments"]))
+                ToolCall(id, name, parseArguments(fn["arguments"]), obj["extra_content"] as? JsonObject)
             }
             val finish = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("finish_reason")?.let { (it as? JsonPrimitive)?.contentOrNull }
             if (calls.isEmpty() && content != null) {

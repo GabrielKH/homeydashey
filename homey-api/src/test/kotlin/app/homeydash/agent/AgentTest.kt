@@ -712,6 +712,25 @@ class AgentTest {
         server.shutdown()
     }
 
+    @Test fun `TARS answers a quick Swedish command in English`() = runTest {
+        val tars = AgentSettings(persona = Persona.Tars, language = Language.Auto)
+        val reply = Agent(ChatClient(OkHttpClient())).ask("släck kitchen lamp", tars, { view(tars) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
+        assertTrue(reply.text, reply.text.contains(" off") && !reply.text.contains("släckt"))
+    }
+
+    @Test fun `Gemini's thought signature goes back with its tool call`() {
+        val m = ChatClient.parseResponse(
+            """{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","extra_content":{"google":{"thought_signature":"sig"}},
+              "function":{"name":"set_device","arguments":"{}"}}]}}]}""",
+        )
+        val body = ChatClient.requestBody("g", listOf(ChatMessage.user("hi"), m), emptyList(), gemini = true).toString()
+        assertTrue(body, body.contains(""""thought_signature":"sig""""))
+        // A call the local AI made gets the placeholder Gemini accepts.
+        val local = ChatMessage("assistant", "", listOf(ToolCall("call_text_0", "set_device", JsonObject(emptyMap()))))
+        assertTrue(ChatClient.requestBody("g", listOf(local), emptyList(), gemini = true).toString().contains("skip_thought_signature_validator"))
+        assertFalse(ChatClient.requestBody("g", listOf(local), emptyList()).toString().contains("thought_signature"))
+    }
+
     @Test fun `a change that didn't happen isn't called done`() = runTest {
         val home = FakeHome()
         home.after = mapOf("d-lamp" to JsonPrimitive(true))

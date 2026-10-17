@@ -162,7 +162,7 @@ class AgentTools(
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
-    fun cookingQuick(text: String): String? = recipes?.quick(text)
+    fun cookingQuick(text: String, swedish: Boolean? = null): String? = recipes?.quick(text, swedish)
 
     private val guest get() = view.settings.guest
 
