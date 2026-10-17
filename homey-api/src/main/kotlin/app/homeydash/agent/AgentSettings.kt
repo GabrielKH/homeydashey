@@ -16,7 +16,7 @@ data class Connection(
 ) {
     val local: Boolean get() = provider.local
 
-    /** Ollama needs no key; the internet providers do. */
+    /** A local server needs a key only if it asks for one (oMLX does); the internet providers always do. */
     val usable: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank() && (local || apiKey.isNotBlank())
 }
 

@@ -337,7 +337,7 @@ private fun BrainPage(
     )
     Label("Local AI on your computer")
     val local = settings.local ?: Connection(Provider.Ollama)
-    ConnectionFields(services, local, showKey = false) { c -> update { it.copy(local = c) } }
+    ConnectionFields(services, local, keyLabel = "API key (if the server asks for one)") { c -> update { it.copy(local = c) } }
     SwitchRow(
         "Short tool list",
         "The local AI gets its tools as a few lines of text and writes its calls itself. A much shorter prompt, so faster answers, " +
@@ -349,7 +349,7 @@ private fun BrainPage(
     Segmented(listOf(Provider.Gemini, Provider.OpenAI), internet.provider, { it.label }) { p ->
         update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
     }
-    ConnectionFields(services, internet, showKey = true) { c -> update { it.copy(internet = c) } }
+    ConnectionFields(services, internet, keyLabel = "API key") { c -> update { it.copy(internet = c) } }
     SpeedTest(services, settings, preview)
 }
 
@@ -560,14 +560,14 @@ private fun HearingTest(
 }
 
 @Composable
-private fun ConnectionFields(services: AssistantServices, connection: Connection, showKey: Boolean, onChange: (Connection) -> Unit) {
+private fun ConnectionFields(services: AssistantServices, connection: Connection, keyLabel: String, onChange: (Connection) -> Unit) {
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
     var result by remember(connection.provider) { mutableStateOf<String?>(null) }
     // The fields keep their own text while typing; switching provider starts them afresh.
     key(connection.provider) {
         Field("Address", connection.baseUrl, keyboard = KeyboardType.Uri) { onChange(connection.copy(baseUrl = it)) }
-        if (showKey) Field("API key", connection.apiKey, secret = true) { onChange(connection.copy(apiKey = it)) }
+        Field(keyLabel, connection.apiKey, secret = true) { onChange(connection.copy(apiKey = it)) }
         Field("Model", connection.model) { onChange(connection.copy(model = it)) }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
