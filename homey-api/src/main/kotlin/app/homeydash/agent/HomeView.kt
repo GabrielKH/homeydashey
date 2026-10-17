@@ -198,6 +198,10 @@ class HomeView(
         }
     }
 
+    /** [states] by device alias, to tell what changed between two notes. */
+    fun stateLines(): Map<String, String> =
+        states().lines().filter { it.isNotBlank() }.associateBy { it.substringBefore(' ') }
+
     private fun live(d: AgentDevice): List<String> {
         fun on(id: String) = (d.capability(id)?.value as? JsonPrimitive)?.content == "true"
         val idle = when {

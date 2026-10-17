@@ -57,7 +57,17 @@ class Agent(
     private val routines: () -> RoutineData = { RoutineData() },
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
-    private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean)
+    /**
+     * One question and everything said after it. [noted] is what its note said was on, for a
+     * local (true) or internet (false) brain, so the next note only says what changed.
+     */
+    private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean, val noted: Noted? = null)
+
+    /** What a note said: each device's line by alias, and the weather. [full] when it said all of it. */
+    class Noted(val local: Boolean, val states: Map<String, String>, val weather: String?, val full: Boolean)
+
+    /** The note of the question being answered, until its turn is remembered. */
+    private var opened: Pair<ChatMessage, Noted>? = null
 
     private val history = ArrayDeque<Turn>()
     private var lastActivity = 0L
@@ -156,7 +166,7 @@ class Agent(
             val compact = brain.local && settings.compactTools
             val earlier = history.filter { brain.local || !it.localOnly }.flatMap { it.messages }
             val tools = Tools(specs, compact, text, earlier, context)
-            val turn = mutableListOf(opening(settings, homeView, context, text, tools))
+            val turn = mutableListOf(opening(settings, homeView, context, text, tools, since(brain.local)))
             var localOnly = false
             var acted = false
             // A tool actually changed something; a failed or wrong call doesn't count.
@@ -385,8 +395,18 @@ class Agent(
         if (swedish(text, settings)) "Tryck på Ja på surfplattan för att bekräfta." else "Tap Yes on the tablet to confirm."
 
     private fun remember(turn: List<ChatMessage>, localOnly: Boolean) {
-        history.addLast(Turn(turn.toList(), localOnly))
+        val noted = opened?.takeIf { it.first === turn.firstOrNull() }?.second
+        history.addLast(Turn(turn.toList(), localOnly, noted))
         while (history.size > MAX_TURNS) history.removeFirst()
+    }
+
+    /**
+     * The last note a [local] brain saw, when the conversation still has a note that said
+     * everything, so a new note can say only what changed since. Null starts afresh.
+     */
+    private fun since(local: Boolean): Noted? {
+        val seen = history.filter { local || !it.localOnly }.mapNotNull { t -> t.noted?.takeIf { it.local == local } }
+        return seen.lastOrNull()?.takeIf { seen.any { it.full } }
     }
 
     private fun failure(brain: Connection, message: String?): String =
@@ -412,10 +432,18 @@ class Agent(
         return if (tools.compact) ToolText.written(all) else all
     }
 
-    /** The question with a short note before it: what is on right now, and any tools only this question needs. */
-    private fun opening(settings: AgentSettings, view: HomeView, context: AskContext, question: String, tools: Tools): ChatMessage {
+    /**
+     * The question with a short note before it: what is on right now, and any tools only this
+     * question needs. After the first question the note only says what changed since [since]:
+     * the earlier notes are still in the conversation, and the full list cost a local model
+     * about five seconds of reading every time.
+     */
+    private fun opening(settings: AgentSettings, view: HomeView, context: AskContext, question: String, tools: Tools, since: Noted? = null): ChatMessage {
         val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
-        return ChatMessage.user(situation(settings, view, context) + extra + QUESTION + question)
+        val states = view.stateLines()
+        val message = ChatMessage.user(situation(settings, view, context, since) + extra + QUESTION + question)
+        opened = message to Noted(view.local, states, context.weather, full = since == null)
+        return message
     }
 
     /**
@@ -453,14 +481,17 @@ class Agent(
             "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
             "(read) only reads; get_device has the rest):\n" + view.catalog()
 
-    /** What the last warm-up sent, so an unchanged start isn't sent again. */
+    /** What the last warm-up sent, so an unchanged start isn't sent again, and when. */
     private var warmed: Int? = null
+    private var warmedAt = 0L
 
     /**
      * Works through the rules and the home's devices ahead of the question, while it is still
      * being said, so a local model only has the short note and the question left to read.
-     * Only sent when that start changed since last time: a server that answers one request at
-     * a time (vMLX) would otherwise make the question wait behind it.
+     * Only sent when that start changed since last time, or nothing was asked for a while (the
+     * server may have let it go: after two quiet hours oMLX read all 4 800 tokens again): a
+     * server that answers one request at a time (vMLX) would otherwise make the question wait
+     * behind it.
      */
     suspend fun warm(
         settings: AgentSettings,
@@ -479,8 +510,10 @@ class Agent(
         val messages = listOf(ChatMessage.system(fixed(settings, homeView, tools.core)))
         val specs = tools.sent
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
-        if (key == warmed) return
+        val quiet = System.currentTimeMillis() - maxOf(warmedAt, lastActivity) > REWARM_AFTER_MS
+        if (key == warmed && !quiet) return
         warmed = key
+        warmedAt = System.currentTimeMillis()
         chat.prefill(brain, messages, specs)?.let { st ->
             listener?.trace("speed", "warm-up (rules and devices read ahead): ${st.text()}")
         }
@@ -626,12 +659,21 @@ class Agent(
     }
 
     /** The moment, for one question: what is on in the home right now, the clock and the rest. */
-    fun situation(settings: AgentSettings, view: HomeView, context: AskContext): String = buildString {
-        append("(From the app, not the user.)\nOn right now (everything else is off or idle):\n")
-        append(view.states().trimEnd().ifBlank { "nothing" })
+    fun situation(settings: AgentSettings, view: HomeView, context: AskContext, since: Noted? = null): String = buildString {
+        append("(From the app, not the user.)\n")
+        if (since == null) {
+            append("On right now (everything else is off or idle):\n")
+            append(view.states().trimEnd().ifBlank { "nothing" })
+        } else {
+            val now = view.stateLines()
+            val changed = now.filter { (alias, line) -> since.states[alias] != line }.values +
+                (since.states.keys - now.keys).map { since.states.getValue(it).substringBefore("\":") + "\": off or idle" }
+            if (changed.isEmpty()) append("On right now: the same as the last note.")
+            else append("Changed since the last note (everything else is as it said):\n").append(changed.joinToString("\n"))
+        }
         context.kitchen?.let { append("\nCooking: ").append(it) }
         context.fridge?.let { append("\nFridge: ").append(it) }
-        context.weather?.let { append("\nWeather (the dashboard's weather card):\n").append(it) }
+        context.weather?.takeIf { since == null || it != since.weather }?.let { append("\nWeather (the dashboard's weather card):\n").append(it) }
         append("\nNow: ").append(nowLine(now())).append(".")
         context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
         // Who is at the tablet is itself a secret ("Face recognition" switch).
@@ -691,6 +733,7 @@ class Agent(
         val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
+        const val REWARM_AFTER_MS = 10 * 60 * 1000L
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
     }

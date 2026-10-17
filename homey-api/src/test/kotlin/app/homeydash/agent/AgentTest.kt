@@ -719,6 +719,9 @@ class AgentTest {
         // request starts with the whole of the last one and only the new part is read.
         assertEquals(first, second.take(first.size))
         assertTrue(second.last().text().contains("12:07"))
+        // Nothing changed, so the new note doesn't list everything again.
+        assertTrue(second.last().text(), second.last().text().contains("the same as the last note"))
+        assertFalse(second.last().text().contains("Kitchen lamp"))
         assertEquals(3, server.requestCount)
         server.shutdown()
     }
@@ -988,6 +991,15 @@ class AgentTest {
         val home = FakeHome()
         AgentTools(v, home, FakeDashboard()).run(call("set_device", "device" to "växt lampan i kontoret", "capability" to "onoff", "value" to "on"))
         assertEquals("d-plant", home.sets.single().first)
+    }
+
+    @Test fun `a later note only says what changed`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val v = view()
+        val before = Agent.Noted(true, v.stateLines() + ("light_9" to "light_9 \"Hall lamp\": on"), "Rain", full = true)
+        val note = agent.situation(AgentSettings(), v, AskContext(weather = "Rain"), before)
+        assertTrue(note, note.contains("light_9 \"Hall lamp\": off or idle"))
+        assertFalse(note, note.contains("Kitchen lamp") || note.contains("Rain"))
     }
 
     @Test fun `the weather card is in the note, so the weather is always known`() {
