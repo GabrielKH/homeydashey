@@ -60,20 +60,20 @@ class AgentTools(
 
     fun specs(): List<ToolSpec> = buildList {
         add(tool("set_device", "Change one capability of one device: switch, dim, colour, temperature, volume, play/pause, blinds.") {
-            string("device", "Device alias, e.g. light_3")
+            string("device", DEVICE)
             string("capability", "Capability id, e.g. onoff, dim")
             string("value", "true/false, a number, or a listed choice")
             required("device", "capability", "value")
         })
-        add(tool("set_room", "Change a capability on every device in a room or group, e.g. all lights off in the kitchen.") {
-            string("room", "Room or group name")
+        add(tool("set_room", "Change a capability on every device in a room or group, e.g. all lights off in the kitchen. One call with room \"all\" does the whole house.") {
+            string("room", "Room or group name, or all")
             string("capability", "Capability id, usually onoff or dim")
             string("value", "New value")
             string("device_class", "Optional, e.g. light")
             required("room", "capability", "value")
         })
         add(tool("get_device", "All details of one device, including ranges and choices.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             required("device")
         })
         if (view.moods.isNotEmpty()) add(tool("set_mood", "Turn on a Homey mood (scene).") {
@@ -87,15 +87,16 @@ class AgentTools(
         })
         add(tool("play_music", "Play a song, album, artist, playlist, favourite or radio station on a player (e.g. a Sonos); finds anything on Spotify when set up.") {
             string("player", "Player alias")
-            string("query", "Song, album, artist, playlist or station, with the artist if said, e.g. \"Dancing Queen ABBA\"; empty lets you choose")
+            string("query", "What they asked for in their words: a title with the artist if said (\"Dancing Queen ABBA\"), or a genre, mood or chart (\"swedish top 50\", \"calm female vocals\"); empty only when they let you choose")
+            string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), or omit for a favourite or station")
             required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             required("device")
         })
         add(tool("run_device_action", "Run an action from device_actions: channel, app, favourite, playlist.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             string("action", "Action id or title")
             string("value", "What to pick or enter, e.g. Netflix; omit if nothing")
             required("device", "action")
@@ -115,11 +116,11 @@ class AgentTools(
             required("page")
         })
         add(tool("open_device", "Open a device's controls on the dashboard, e.g. a lamp's colour or a TV remote.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             required("device")
         })
         add(tool("press_remote", "Press TV or media box remote buttons in order.") {
-            string("device", "Device alias")
+            string("device", DEVICE)
             string("keys", "Comma-separated: up, down, left, right, ok, back, home, play, volume up/down, mute, power, channel up/down; repeat with x, e.g. \"down x3, ok\"")
             required("device", "keys")
         })
@@ -162,7 +163,7 @@ class AgentTools(
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
-    fun cookingQuick(text: String): String? = recipes?.quick(text)
+    fun cookingQuick(text: String, swedish: Boolean? = null): String? = recipes?.quick(text, swedish)
 
     private val guest get() = view.settings.guest
 
@@ -194,7 +195,7 @@ class AgentTools(
             "set_mood" -> setMood(a.str("mood"))
             "list_flows" -> ToolResult(home.flows().joinToString("\n") { it.name }.ifBlank { "No Flows can be started." })
             "run_flow" -> runFlow(a.str("name"))
-            "play_music" -> playMusic(a.str("player"), a.str("query"))
+            "play_music" -> playMusic(a.str("player"), a.str("query"), a.str("kind").ifBlank { null })
             "device_actions" -> deviceActions(a.str("device"))
             "run_device_action" -> runDeviceAction(a.str("device"), a.str("action"), a.str("value").ifBlank { null })
             "open_page" -> openPage(a.str("page"))
@@ -263,13 +264,15 @@ class AgentTools(
     }
 
     private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String): ToolResult {
+        // The whole house in one call, so "all the lights off" isn't a call per room for the AI to write.
+        val everywhere = WHOLE_HOUSE.matches(room.trim()) && view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) }
         // One of the owner's card groups ("Taklampor"), unless a room has exactly that name.
-        val group = view.group(room)?.takeIf { g -> view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) } || g.equals(room.trim(), ignoreCase = true) }
-        val roomId = if (group != null) null else view.room(room) ?: return ok("There's no room or group called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
-        val place = group ?: view.rooms[roomId].orEmpty()
+        val group = if (everywhere) null else view.group(room)?.takeIf { g -> view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) } || g.equals(room.trim(), ignoreCase = true) }
+        val roomId = if (everywhere || group != null) null else view.room(room) ?: return ok("There's no room or group called $room. Rooms: ${view.rooms.values.sorted().joinToString()}, or all for the whole house.")
+        val place = if (everywhere) "the house" else group ?: view.rooms[roomId].orEmpty()
         val wantedClass = classOf(cls)
         val targets = view.devices.mapNotNull { d ->
-            val inside = if (group != null) d.group == group else view.inRoom(d, roomId!!)
+            val inside = everywhere || if (group != null) d.group == group else view.inRoom(d, roomId!!)
             if (!inside || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
             // "Everything off in the kitchen" shouldn't reach a hidden fridge plug; name the class to include them.
             if (d.hiddenOnDashboard && wantedClass == null) return@mapNotNull null
@@ -347,10 +350,31 @@ class AgentTools(
         return ok("Started ${flow.name}.")
     }
 
-    private suspend fun playMusic(alias: String, query: String): ToolResult {
-        val d = view.device(alias) ?: return unknown(alias)
-        val played = home.playMusic(d.id, query) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
+    private suspend fun playMusic(alias: String, query: String, kind: String? = null): ToolResult {
+        val asked = view.device(alias) ?: return unknown(alias)
+        val d = musicPlayer(asked) ?: return ok(
+            "${asked.name} can't play music. These can: " +
+                view.devices.filter { sources(it.id).isNotEmpty() }.joinToString { "${it.alias} (${it.name}${it.room?.let { r -> ", $r" }.orEmpty()})" } + ".",
+        )
+        val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         return ok("Playing $played on ${d.name}.")
+    }
+
+    private fun sources(deviceId: String) = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }
+
+    /**
+     * The player to use for [asked]: itself, or another speaker in the same room when [asked]
+     * can't play music, or can't search Spotify and that one can (the same speaker added twice).
+     */
+    private fun musicPlayer(asked: AgentDevice): AgentDevice? {
+        val own = sources(asked.id)
+        if (own.any { it.catalogue }) return asked
+        val roommates = view.devices.filter { it.id != asked.id && asked.roomId != null && it.roomId == asked.roomId }
+        roommates.firstOrNull { o -> sources(o.id).any { it.catalogue } }?.let { return it }
+        if (own.isNotEmpty()) return asked
+        roommates.firstOrNull { sources(it.id).isNotEmpty() }?.let { return it }
+        // Refused only when other players show what they can play; else the home is asked anyway.
+        return asked.takeIf { view.devices.none { sources(it.id).isNotEmpty() } }
     }
 
     /** Some of what the player has, so a miss can be followed by a pick of the model's own. */
@@ -358,11 +382,16 @@ class AgentTools(
         val lists = mutableListOf<String>()
         for (source in FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }) {
             if (lists.size == 2) break
+            // A speaker and its twin both have "Favourites": list them once.
+            if (lists.any { it.startsWith("${source.title}:") }) continue
             val items = runCatching { home.choices(source.card, source.arg, "") }.getOrDefault(emptyList())
             if (items.isNotEmpty()) lists += "${source.title}: " + items.take(12).joinToString { it.name } + "."
         }
         val names = lists.joinToString(" ")
-        return if (names.isEmpty()) "" else " It has $names Pick one of these if it fits."
+        val noSpotify = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }.none { it.catalogue }
+        return (if (names.isEmpty()) "" else " It has $names Pick one of these if it fits.") +
+            (if (noSpotify) " Spotify search isn't set up on this speaker, so only these can be played." else "") +
+            (if (noSpotify) home.missingActions(deviceId)?.let { " ($it)" }.orEmpty() else "")
     }
 
     /** A device's Flow cards the assistant may use: never on guarded devices, nor anything that unlocks or disarms. */
@@ -394,6 +423,8 @@ class AgentTools(
         val cards = actionsOf(d) ?: return ok("${d.name}'s actions can't be used here.")
         val card = cards.firstOrNull { it.cardId.equals(action.trim(), ignoreCase = true) || it.title.equals(action.trim(), ignoreCase = true) }
             ?: NameMatch.best(action, cards) { NameMatch.score(action, it.title ?: it.cardId) }
+            // "favourite" or "radio" for Sonos's "Play Sonos favorite", which the model guesses before looking.
+            ?: FAVOURITE.takeIf { it.matches(action.trim()) }?.let { cards.firstOrNull { c -> c.cardId.contains("favorite", ignoreCase = true) } }
             ?: return ok("${d.name} has no action \"$action\". Use device_actions to see what it has.")
         val title = card.title ?: card.cardId
         // One value per argument, separated by ";" when the card has several.
@@ -640,8 +671,8 @@ class AgentTools(
     private fun unknown(alias: String): ToolResult {
         val near = view.similarDevices(alias)
         return ok(
-            if (near.isEmpty()) "I can't see a device called $alias. Use an alias from the list."
-            else "\"$alias\" could be: " + near.joinToString { "${it.alias} \"${it.name}\"" + (it.room?.let { r -> " ($r)" } ?: "") } +
+            if (near.isEmpty()) "I can't see a device called $alias. Use a name from the list."
+            else "\"$alias\" could be: " + near.joinToString { "\"${it.name}" + (it.room?.let { r -> ", $r" } ?: "") + "\"" } +
                 ". Pick one, or ask the user which they mean.",
         )
     }
@@ -649,6 +680,15 @@ class AgentTools(
     private fun ok(text: String) = ToolResult(text)
 
     companion object {
+        /** How a tool asks for a device: by name, since small models mix up alias numbers. */
+        private const val DEVICE = "The device's name as listed, with its room after a comma when several share the name, e.g. \"Taklampa, Sovrum\""
+
+        /** What a model calls a speaker's favourites when it guesses an action name. */
+        private val FAVOURITE = Regex("""(?i)(play_?)?(favou?rites?|favorit(er)?|radio|station|kanal)""")
+
+        /** "all", "the whole house", "hela huset": set_room for every room at once. */
+        private val WHOLE_HOUSE = Regex("""(?i)(all|alla|everything|everywhere|allt|överallt|((the )?whole )?(house|home)|hela (huset|hemmet)|hemma|alla rum|all rooms)""")
+
         private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)_\d+\b""")
         /** Guests may use the actions of TVs and speakers, nothing else's. */
         private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")

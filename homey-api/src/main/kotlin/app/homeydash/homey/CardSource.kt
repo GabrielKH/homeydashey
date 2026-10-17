@@ -16,4 +16,7 @@ interface CardSource {
     suspend fun autocomplete(card: FlowCardAction, arg: String, query: String): List<AutocompleteItem>
 
     suspend fun run(card: FlowCardAction, args: JsonObject)
+
+    /** Why [deviceId] is missing some of this source's cards, for the assistant's log; null when nothing is. */
+    fun missing(deviceId: String): String? = null
 }

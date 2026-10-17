@@ -72,10 +72,11 @@ class RecipeTools(
      * done straight away without the AI so the kitchen gets an instant answer. Null when
      * [text] isn't such a command or no recipe is open.
      */
-    fun quick(text: String): String? {
+    fun quick(text: String, answerSwedish: Boolean? = null): String? {
         if (cooking.current() == null) return null
         val command = CookingCommand.parse(text) ?: return null
-        val swedish = Confirmation.looksSwedish(text) || command.swedish
+        // [answerSwedish] is the language answers are given in, when that is set (TARS: English).
+        val swedish = answerSwedish ?: (Confirmation.looksSwedish(text) || command.swedish)
         val before = cooking.state.value?.step
         when (command.action) {
             "next" -> cooking.next()

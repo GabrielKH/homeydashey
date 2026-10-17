@@ -281,25 +281,26 @@ class SpeechOutput(
      * Speaks on the tablet and returns when it has finished. [onFrame] gets the voice's
      * level, low, mid and high (0..1) about 60 times a second while it plays.
      */
-    suspend fun speak(text: String, language: Language, voice: VoiceStyle = VoiceStyle.Natural, onFrame: (FloatArray) -> Unit = {}) {
+    suspend fun speak(text: String, language: Language, voice: VoiceStyle = VoiceStyle.Natural, onFrame: (FloatArray) -> Unit = {}, onStart: () -> Unit = {}) {
         if (text.isBlank()) return
         // TARS's voice is made on the tablet sentence by sentence: he starts on the first one
         // while the rest is still being made, instead of after the whole answer.
         if (voice == VoiceStyle.Tars && tars.isReady) {
             val swedish = swedish(text, language)
-            if (stream(channelOf(app.homeydash.agent.Sentences.split(text)), { tars.speak(it, swedish) }, onFrame)) return
+            if (stream(channelOf(app.homeydash.agent.Sentences.split(text)), { tars.speak(it, swedish) }, onFrame, onStart)) return
         }
         if (!ready) return
         val spoken = render(text, language, voice, File(appContext.cacheDir, "say.wav"))
         if (spoken == null) {
-            plain(text, language, voice)
+            plain(text, language, voice, onStart)
             return
         }
-        play(spoken, onFrame)
+        play(spoken, onFrame, onStart)
     }
 
     /** The plain engine, when the voice can't be made into a file. */
-    private suspend fun plain(text: String, language: Language, voice: VoiceStyle) {
+    private suspend fun plain(text: String, language: Language, voice: VoiceStyle, onStart: () -> Unit = {}) {
+        onStart()
         prepare(text, language, voice)
         suspendCancellableCoroutine { cont ->
             val id = UUID.randomUUID().toString()
@@ -309,7 +310,7 @@ class SpeechOutput(
         }
     }
 
-    private suspend fun play(spoken: Spoken, onFrame: (FloatArray) -> Unit) {
+    private suspend fun play(spoken: Spoken, onFrame: (FloatArray) -> Unit, onStart: () -> Unit = {}) {
         val finished = CompletableDeferred<Unit>()
         val p = MediaPlayer()
         player = p
@@ -321,6 +322,7 @@ class SpeechOutput(
             p.setOnCompletionListener { finished.complete(Unit) }
             p.setOnErrorListener { _, _, _ -> finished.complete(Unit); true }
             p.prepare()
+            onStart()
             p.start()
             while (!finished.isCompleted) {
                 onFrame(spoken.track.at(runCatching { p.currentPosition.toLong() }.getOrDefault(0L)))

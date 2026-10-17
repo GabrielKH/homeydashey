@@ -32,10 +32,23 @@ class SonosCards(
     @Volatile private var spotifyService: Int? = null
     @Volatile private var spotifyAccount: SpotifyOnSonos.Account? = null
 
+    /** What went wrong the last time the cards were made, for [missing]. */
+    @Volatile private var trouble: String? = null
+
+    /** Whether the cards last handed out had "Play from Spotify"; null before the first time. */
+    @Volatile var spotifyShown: Boolean? = null
+        private set
+
     override suspend fun cards(snapshot: HomeySnapshot): Map<String, List<FlowCardAction>> {
         speakers = household()
         rooms = match(snapshot.devices.values, snapshot.zones, speakers)
         val withSpotify = spotify?.configured == true
+        spotifyShown = withSpotify
+        trouble = when {
+            speakers.isEmpty() -> "the app found no Sonos speaker on the Wi-Fi"
+            !withSpotify -> "no Spotify keys in the assistant settings"
+            else -> null
+        }
         return rooms.mapValues { (deviceId, _) ->
             listOfNotNull(
                 card(deviceId, FAVOURITE, "Play Sonos favourite"),
@@ -46,6 +59,13 @@ class SonosCards(
     }
 
     override fun owns(card: FlowCardAction) = card.ownerUri == OWNER
+
+    override fun missing(deviceId: String): String? = when {
+        spotifyShown == null -> "the Sonos speakers haven't been looked for yet"
+        trouble != null && (speakers.isEmpty() || deviceId in rooms) -> trouble
+        deviceId !in rooms -> "it doesn't match a Sonos room; the rooms are ${speakers.map { it.room }.distinct().joinToString()}"
+        else -> null
+    }
 
     override suspend fun autocomplete(card: FlowCardAction, arg: String, query: String): List<AutocompleteItem> {
         val speaker = speakerFor(card)
@@ -155,18 +175,54 @@ class SonosCards(
          */
         fun match(devices: Collection<Device>, zones: Map<String, Zone>, speakers: List<SonosSpeaker>): Map<String, SonosSpeaker> {
             if (speakers.isEmpty()) return emptyMap()
-            val byRoom = speakers.groupBy { NameMatch.normalize(it.room) }.mapValues { it.value.first() }
-            return devices.mapNotNull { d ->
+            // "Sonos Kök" in the Sonos app is the Homey speaker "Kök".
+            val byRoom = speakers.groupBy { room(it.room) }.mapValues { it.value.first() }
+            fun within(a: String, b: String) = a.length >= 3 && Regex("(^| )${Regex.escape(a)}( |$)").containsMatchIn(b)
+            val candidates = devices.filter { d -> d.driverUri.orEmpty().contains("sonos", ignoreCase = true) || d.homeyClass == "speaker" }
+            // The speaker's own id, MAC or address in what the Homey app stores, whatever the names are.
+            val byId = candidates.mapNotNull { d -> speakers.firstOrNull { s -> identifies(d, s) }?.let { d.id to it } }.toMap()
+            val found = byId + candidates.filter { it.id !in byId }.mapNotNull { d ->
                 val sonos = d.driverUri.orEmpty().contains("sonos", ignoreCase = true)
-                if (!sonos && d.homeyClass != "speaker") return@mapNotNull null
-                val name = NameMatch.normalize(d.name)
-                val zone = d.zone?.let(zones::get)?.name?.let(NameMatch::normalize)
+                val name = room(d.name)
+                val zone = d.zone?.let(zones::get)?.name?.let(::room)
                 val speaker = byRoom[name]
-                    ?: (if (sonos) byRoom.entries.firstOrNull { (room, _) -> room.length >= 3 && Regex("(^| )${Regex.escape(room)}( |$)").containsMatchIn(name) }?.value else null)
+                    ?: (if (sonos) byRoom.entries.firstOrNull { (r, _) -> within(r, name) || within(name, r) }?.value else null)
                     ?: (if (sonos) zone?.let(byRoom::get) else null)
                     ?: return@mapNotNull null
                 d.id to speaker
             }.toMap()
+            // One Sonos speaker left over and one Homey Sonos speaker (or copies of it) without a
+            // room: they are the same one, named differently ("Beam" and "Sovrum").
+            val leftRooms = speakers.distinctBy { it.room }.filter { s -> found.values.none { it.room == s.room } }
+            val leftDevices = candidates.filter { it.id !in found && it.driverUri.orEmpty().contains("sonos", ignoreCase = true) }
+            if (leftRooms.size == 1 && leftDevices.map { NameMatch.normalize(it.name) }.distinct().size == 1) {
+                return found + leftDevices.associate { it.id to leftRooms.single() }
+            }
+            return found
         }
+
+        /** Whether [d]'s data or settings name [s]: its RINCON id, its MAC (inside that id) or its IP. */
+        fun identifies(d: Device, s: SonosSpeaker): Boolean {
+            val values = buildList { listOfNotNull(d.data, d.settings).forEach { strings(it, this) } }.map { it.lowercase() }
+            if (values.isEmpty()) return false
+            val uuid = s.uuid.lowercase()
+            val mac = Regex("^rincon_([0-9a-f]{12})").find(uuid)?.groupValues?.get(1)
+            val host = s.host.lowercase()
+            return values.any { v ->
+                v.contains(uuid) || v == host || v.startsWith("$host:") || v.contains("//$host:") || v.contains("//$host/") ||
+                    (mac != null && v.replace(":", "").replace("-", "").contains(mac))
+            }
+        }
+
+        private fun strings(e: kotlinx.serialization.json.JsonElement, into: MutableList<String>) {
+            when (e) {
+                is JsonObject -> e.values.forEach { strings(it, into) }
+                is kotlinx.serialization.json.JsonArray -> e.forEach { strings(it, into) }
+                is JsonPrimitive -> if (e.isString) into += e.content
+                else -> Unit
+            }
+        }
+
+        private fun room(name: String) = NameMatch.normalize(name).removePrefix("sonos ").removeSuffix(" sonos").trim()
     }
 }

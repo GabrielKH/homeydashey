@@ -153,7 +153,7 @@ fun AssistantSettingsDialog(
                     }
                     "voice" -> VoicePage(services, settings, update)
                     "listen" -> ListenPage(services, settings, update)
-                    "brain" -> BrainPage(services, settings, update)
+                    "brain" -> BrainPage(services, settings, update, preview)
                     "privacy" -> PrivacyPage(settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
                     "spotify" -> Spotify(settings, update)
                     "logs" -> Logs(services, settings, update)
@@ -316,7 +316,12 @@ private fun ListenPage(services: AssistantServices, settings: AgentSettings, upd
 
 /** Which AI answers, and how to reach the local and the internet one. */
 @Composable
-private fun BrainPage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+private fun BrainPage(
+    services: AssistantServices,
+    settings: AgentSettings,
+    update: ((AgentSettings) -> AgentSettings) -> Unit,
+    preview: (local: Boolean) -> Pair<HomeView, AgentTools>,
+) {
     val g = GlassTheme.colors
     Label("Which AI answers")
     Segmented(BrainMode.entries, settings.mode, { it.label }) { m -> update { it.copy(mode = m) } }
@@ -332,7 +337,7 @@ private fun BrainPage(services: AssistantServices, settings: AgentSettings, upda
     )
     Label("Local AI on your computer")
     val local = settings.local ?: Connection(Provider.Ollama)
-    ConnectionFields(services, local, showKey = false) { c -> update { it.copy(local = c) } }
+    ConnectionFields(services, local, keyHint = "Only if the server asks for one") { c -> update { it.copy(local = c) } }
     SwitchRow(
         "Short tool list",
         "The local AI gets its tools as a few lines of text and writes its calls itself. A much shorter prompt, so faster answers, " +
@@ -344,7 +349,51 @@ private fun BrainPage(services: AssistantServices, settings: AgentSettings, upda
     Segmented(listOf(Provider.Gemini, Provider.OpenAI), internet.provider, { it.label }) { p ->
         update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
     }
-    ConnectionFields(services, internet, showKey = true) { c -> update { it.copy(internet = c) } }
+    ConnectionFields(services, internet) { c -> update { it.copy(internet = c) } }
+    SpeedTest(services, settings, preview)
+}
+
+/**
+ * Times the AIs with the assistant's real prompt, so models and servers can be compared: how
+ * long until the first word, how fast it writes, and whether the second time is faster because
+ * the server kept the prompt worked through. The result also goes to the logs.
+ */
+@Composable
+private fun SpeedTest(services: AssistantServices, settings: AgentSettings, preview: (local: Boolean) -> Pair<HomeView, AgentTools>) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    var result by remember { mutableStateOf<String?>(null) }
+    Label("Speed")
+    Text(
+        "Asks each AI a short question with everything it normally reads, twice. \"First word\" is how long it read before answering; " +
+            "if the second time isn't much faster, the server reads the whole prompt again for every question.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    Text(
+        if (result == "Testing…") "Testing…" else "Speed test",
+        style = MaterialTheme.typography.labelLarge,
+        color = g.fg,
+        modifier = Modifier
+            .pressable({
+                if (result != "Testing…") {
+                    result = "Testing…"
+                    scope.launch {
+                        result = try {
+                            services.agent.speedTest(settings, view = { local -> preview(local).first }, tools = { v -> preview(v.local).second }).joinToString("\n\n")
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            "Didn't work: ${e.message}"
+                        }
+                    }
+                }
+            })
+            .glass(PillShape)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    )
+    result?.takeIf { it != "Testing…" }?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp), color = g.fg)
+    }
 }
 
 /** What the assistant may read and do, and who is who. */
@@ -511,14 +560,14 @@ private fun HearingTest(
 }
 
 @Composable
-private fun ConnectionFields(services: AssistantServices, connection: Connection, showKey: Boolean, onChange: (Connection) -> Unit) {
+private fun ConnectionFields(services: AssistantServices, connection: Connection, keyHint: String = "", onChange: (Connection) -> Unit) {
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
     var result by remember(connection.provider) { mutableStateOf<String?>(null) }
     // The fields keep their own text while typing; switching provider starts them afresh.
     key(connection.provider) {
         Field("Address", connection.baseUrl, keyboard = KeyboardType.Uri) { onChange(connection.copy(baseUrl = it)) }
-        if (showKey) Field("API key", connection.apiKey, secret = true) { onChange(connection.copy(apiKey = it)) }
+        Field("API key", connection.apiKey, secret = true, hint = keyHint) { onChange(connection.copy(apiKey = it)) }
         Field("Model", connection.model) { onChange(connection.copy(model = it)) }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -529,14 +578,19 @@ private fun ConnectionFields(services: AssistantServices, connection: Connection
             modifier = Modifier
                 .pressable({
                     result = "Testing…"
-                    scope.launch { result = services.chat.test(connection)?.let { "Didn't work: $it" } ?: "Works." }
+                    scope.launch {
+                        result = services.chat.speedTest(connection).fold(
+                            { st -> "Works." + (st?.let { " " + it.text().replaceFirstChar(Char::uppercase) + "." } ?: "") },
+                            { e -> "Didn't work: ${e.message ?: e}" },
+                        )
+                    }
                 })
                 .glass(PillShape)
                 .padding(horizontal = 18.dp, vertical = 10.dp),
         )
         Text(
             result ?: when (connection.provider) {
-                Provider.Ollama -> "On the computer: install Ollama, run \"ollama pull ${connection.model}\", and on a Mac run \"launchctl setenv OLLAMA_HOST 0.0.0.0\", \"launchctl setenv OLLAMA_CONTEXT_LENGTH 16384\" (room for all your devices) and \"launchctl setenv OLLAMA_KEEP_ALIVE 2h\" (stays loaded, answers faster), then restart Ollama."
+                Provider.Ollama -> "Any server on your computer that speaks the OpenAI format: oMLX, LM Studio or Ollama. Give its address with /v1 at the end and the model's name as the server shows it."
                 Provider.Gemini -> "Get a key at aistudio.google.com."
                 Provider.OpenAI -> "Get a key at platform.openai.com."
             },
@@ -627,7 +681,7 @@ internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, 
 }
 
 @Composable
-private fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, onChange: (String) -> Unit) {
+private fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, hint: String = "", onChange: (String) -> Unit) {
     val g = GlassTheme.colors
     var text by remember { mutableStateOf(value) }
     var reveal by remember { mutableStateOf(false) }
@@ -645,6 +699,12 @@ private fun Field(label: String, value: String, secret: Boolean = false, keyboar
             visualTransformation = if (secret && !reveal) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else keyboard, autoCorrectEnabled = false),
             modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+            decorationBox = { inner ->
+                Box {
+                    if (text.isEmpty() && hint.isNotEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = g.muted, maxLines = 1)
+                    inner()
+                }
+            },
         )
         if (secret) RoundButton(Sym.visibilityOff, { reveal = !reveal }, size = 36.dp, filledIcon = reveal)
     }

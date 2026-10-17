@@ -164,6 +164,15 @@ class AgentTest {
         assertEquals(setOf("d-lamp", "d-spot"), home.sets.map { it.first }.toSet())
     }
 
+    @Test fun `set_room all reaches every room in one call`() = runTest {
+        val home = FakeHome()
+        val result = AgentTools(view(), home, FakeDashboard()).run(call("set_room", "room" to "all", "capability" to "onoff", "value" to "false", "device_class" to "light"))
+        assertTrue(result.text, result.text.startsWith("Changed"))
+        val kitchen = FakeHome().also { AgentTools(view(), it, FakeDashboard()).run(call("set_room", "room" to "kitchen", "capability" to "onoff", "value" to "false", "device_class" to "light")) }
+        assertTrue(home.sets.map { it.first }.containsAll(kitchen.sets.map { it.first }))
+        assertTrue(home.sets.isNotEmpty())
+    }
+
     @Test fun `sensitive flows and goodnight wait for a yes`() = runTest {
         val home = FakeHome()
         val dash = FakeDashboard()
@@ -235,6 +244,7 @@ class AgentTest {
             args = listOf(FlowCardArg("device", "device"), FlowCardArg("channel", "autocomplete")),
         )
         private val unlock = FlowCardAction("homey:device:d-atv:unlock_parental", title = "Unlock")
+        private val favorite = FlowCardAction("homey:device:d-sonos:sonos_play_favorite", title = "Play Sonos favorite", args = listOf(FlowCardArg("favorite", "autocomplete")))
         override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) {}
         override suspend fun setMood(mood: Mood) {}
         override suspend fun flows() = emptyList<HomeyFlow>()
@@ -242,7 +252,11 @@ class AgentTest {
         override suspend fun people() = emptyList<HomeyPerson>()
         override suspend fun variables() = emptyList<LogicVariable>()
         override suspend fun playMusic(deviceId: String, query: String): String? = null
-        override fun deviceActions(deviceId: String) = if (deviceId == "d-atv") listOf(channel, unlock) else emptyList()
+        override fun deviceActions(deviceId: String) = when (deviceId) {
+            "d-atv" -> listOf(channel, unlock)
+            "d-sonos" -> listOf(favorite)
+            else -> emptyList()
+        }
         override suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String) =
             listOf("SVT1", "SVT2", "TV4").map { AutocompleteItem(it, null, null, JsonObject(mapOf("name" to JsonPrimitive(it)))) }
         override suspend fun runAction(card: FlowCardAction, args: JsonObject) { ran += card.cardId to args }
@@ -266,6 +280,16 @@ class AgentTest {
         assertEquals("Done: Change channel (TV4) on Vardagsrum.", done)
         assertEquals("TV4", home.ran.single().second["channel"]!!.jsonObject["name"]!!.jsonPrimitive.content)
         assertTrue(tools.run(call("run_device_action", "device" to "Vardagsrum", "action" to "unlock_parental")).text.contains("no action"))
+        // A guessed "favourite" or "radio" finds Sonos's "Play Sonos favorite".
+        assertTrue(tools.run(call("run_device_action", "device" to "Kök", "action" to "radio", "value" to "SVT2")).text.startsWith("Done"))
+        assertEquals("sonos_play_favorite", home.ran.last().first)
+    }
+
+    @Test fun `music asked of a device that can't play it goes to a speaker in the same room`() = runTest {
+        val v = HomeView.build(zones, media, emptyMap(), emptySet(), AgentSettings(), true)
+        val tools = AgentTools(v, MediaHome(), FakeDashboard())
+        val alias = v.device("Taklampa")!!.alias
+        assertTrue(tools.run(call("play_music", "player" to alias, "query" to "P1")).text.contains("on Kök"))
     }
 
     @Test fun `the endpointer hears a question start and stop`() {
@@ -654,7 +678,7 @@ class AgentTest {
         assertEquals(Triple("d-lamp", "dim", JsonPrimitive(0.3)), home.sets.single())
         // Unclear names come back with suggestions instead of a guess.
         val r = tools.run(call("set_device", "device" to "kitchen spot lamp", "capability" to "onoff", "value" to "on"))
-        assertTrue(r.text, r.text.contains("light_1") && r.text.contains("light_2"))
+        assertTrue(r.text, r.text.contains("Kitchen lamp") && r.text.contains("Spots"))
         assertEquals(1, home.sets.size)
         // Room-wide changes leave dashboard-hidden devices alone unless their class is named.
         home.sets.clear()
@@ -692,24 +716,52 @@ class AgentTest {
         agent.ask("vad är klockan", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(person = "Gabriel"))
         val first = sent()
         // The warm-up is the start of the question, word for word: the rules and the devices without their values.
-        assertEquals(1, warm.size)
-        assertEquals(warm[0], first[0])
+        // A user line follows, because Qwen's template refuses a request with none.
+        assertEquals(2, warm.size)
+        assertEquals("user", warm[1]["role"]!!.jsonPrimitive.content)
+        assertEquals(warm, first.take(2))
         assertTrue(first[0].text().contains("""light_1 "Kitchen lamp" light: onoff dim
 """))
         assertFalse(first[0].text().contains("dim=0.4"))
         // What is on now comes with the question.
-        assertTrue(first[1].text(), first[1].text().contains("""light_1 "Kitchen lamp": on dim=0.4"""))
-        assertTrue(first[1].text().endsWith("The user said: vad är klockan"))
+        assertTrue(first[2].text(), first[2].text().contains("""light_1 "Kitchen lamp": on dim=0.4"""))
+        // Written as a tool response, so Qwen's template keeps the answers before it exactly as sent.
+        assertTrue(first[2].text().startsWith("<tool_response>\n"))
+        assertTrue(first[2].text().endsWith("The user said: vad är klockan\n</tool_response>"))
         minute = 7
         agent.ask("tack", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
         val second = sent()
         // The clock and the person live with the question, so the start doesn't change.
         assertEquals(first[0], second[0])
         assertFalse(second[0].text().contains("12:0") || second[0].text().contains("Gabriel"))
-        assertEquals("vad är klockan", second[1].text())
+        // The earlier question goes again exactly as it was sent, note and all, so the new
+        // request starts with the whole of the last one and only the new part is read.
+        assertEquals(first, second.take(first.size))
         assertTrue(second.last().text().contains("12:07"))
+        // Nothing changed, so the new note doesn't list everything again.
+        assertTrue(second.last().text(), second.last().text().contains("the same as the last note"))
+        assertFalse(second.last().text().contains("Kitchen lamp"))
         assertEquals(3, server.requestCount)
         server.shutdown()
+    }
+
+    @Test fun `TARS answers a quick Swedish command in English`() = runTest {
+        val tars = AgentSettings(persona = Persona.Tars, language = Language.Auto)
+        val reply = Agent(ChatClient(OkHttpClient())).ask("släck kitchen lamp", tars, { view(tars) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
+        assertTrue(reply.text, reply.text.contains(" off") && !reply.text.contains("släckt"))
+    }
+
+    @Test fun `Gemini's thought signature goes back with its tool call`() {
+        val m = ChatClient.parseResponse(
+            """{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","extra_content":{"google":{"thought_signature":"sig"}},
+              "function":{"name":"set_device","arguments":"{}"}}]}}]}""",
+        )
+        val body = ChatClient.requestBody("g", listOf(ChatMessage.user("hi"), m), emptyList(), gemini = true).toString()
+        assertTrue(body, body.contains(""""thought_signature":"sig""""))
+        // A call the local AI made gets the placeholder Gemini accepts.
+        val local = ChatMessage("assistant", "", listOf(ToolCall("call_text_0", "set_device", JsonObject(emptyMap()))))
+        assertTrue(ChatClient.requestBody("g", listOf(local), emptyList(), gemini = true).toString().contains("skip_thought_signature_validator"))
+        assertFalse(ChatClient.requestBody("g", listOf(local), emptyList()).toString().contains("thought_signature"))
     }
 
     @Test fun `a change that didn't happen isn't called done`() = runTest {
@@ -960,10 +1012,44 @@ class AgentTest {
         assertEquals("d-plant", home.sets.single().first)
     }
 
+    @Test fun `a later note only says what changed`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val v = view()
+        val before = Agent.Noted(true, v.stateLines() + ("light_9" to "light_9 \"Hall lamp\": on"), "Rain", full = true)
+        val note = agent.situation(AgentSettings(), v, AskContext(weather = "Rain"), before)
+        assertTrue(note, note.contains("light_9 \"Hall lamp\": off or idle"))
+        assertFalse(note, note.contains("Kitchen lamp") || note.contains("Rain"))
+    }
+
     @Test fun `the weather card is in the note, so the weather is always known`() {
         val agent = Agent(ChatClient(OkHttpClient()))
         val note = agent.situation(AgentSettings(), view(), AskContext(weather = "Stockholm: Rain, 9 °C"))
         assertTrue(note.contains("Weather (the dashboard's weather card):\nStockholm: Rain, 9 °C"))
         assertTrue(agent.rules(AgentSettings()).contains("never ask the same question twice"))
+    }
+
+    @Test
+    fun `devices are named by name and room, and a wrong alias with a name follows the name`() {
+        val z: Map<String, Zone> = HomeyJson.decodeFromString(
+            """{"z-home":{"id":"z-home","name":"Hem"},"z-bed":{"id":"z-bed","name":"Sovrum","parent":"z-home"},"z-office":{"id":"z-office","name":"Kontor","parent":"z-home"},"z-maja":{"id":"z-maja","name":"Majas rum","parent":"z-home"}}""",
+        )
+        fun light(id: String, name: String, zone: String) =
+            """"$id":{"id":"$id","name":"$name","zone":"$zone","class":"light","capabilities":["onoff"],"capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}}"""
+        val raw: Map<String, Device> = HomeyJson.decodeFromString(
+            "{" + listOf(
+                light("d-bed", "Taklampa", "z-bed"),
+                light("d-office", "Taklampa", "z-office"),
+                light("d-gabriel", "Nattlampa Gabriel", "z-bed"),
+                light("d-maja", "Nattlampa Maja", "z-maja"),
+            ).joinToString(",") + "}",
+        )
+        val v = HomeView.build(z, raw, emptyMap(), emptySet(), AgentSettings(), true)
+        assertNull("a shared name needs its room", v.device("Taklampa"))
+        assertEquals("d-bed", v.device("Taklampa, Sovrum")?.id)
+        assertEquals("d-office", v.device("Taklampa (Kontor)")?.id)
+        assertEquals("d-gabriel", v.device("\"Nattlampa Gabriel\"")?.id)
+        val maja = v.device("Nattlampa Maja")!!.alias
+        assertEquals("d-gabriel", v.device("$maja Nattlampa Gabriel")?.id)
+        assertEquals("d-maja", v.device(maja)?.id)
     }
 }

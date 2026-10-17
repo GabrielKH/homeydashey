@@ -35,11 +35,17 @@ interface HomeControl {
     /** Plays the best match for [query] from the player's favourites, playlists or radio; returns its name. */
     suspend fun playMusic(deviceId: String, query: String): String?
 
+    /** [playMusic], looking on Spotify for that [kind] only: playlist, album, song or artist. */
+    suspend fun playMusic(deviceId: String, query: String, kind: String?): String? = playMusic(deviceId, query)
+
     /**
      * The Flow "Then" cards the device's app offers: TV channels, apps, Sonos favourites,
      * playlists and radio, remote keys. Everything an app can do that isn't a capability.
      */
     fun deviceActions(deviceId: String): List<FlowCardAction> = emptyList()
+
+    /** Why some of [deviceId]'s actions (such as Spotify on Sonos) are missing; null when nothing is. */
+    fun missingActions(deviceId: String): String? = null
 
     /** What an autocomplete argument offers for [query], such as channels or playlists. */
     suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String): List<AutocompleteItem> = emptyList()
@@ -92,6 +98,8 @@ class StoreHomeControl(
 
     override suspend fun setMood(mood: Mood) = store.setMood(mood)
 
+    override fun missingActions(deviceId: String): String? = store.missingCards(deviceId)
+
     override suspend fun flows(): List<HomeyFlow> = store.flows()
 
     override suspend fun triggerFlow(flow: HomeyFlow) = store.triggerFlow(flow)
@@ -100,7 +108,9 @@ class StoreHomeControl(
 
     override suspend fun variables(): List<LogicVariable> = parseVariables(store.logicVariables())
 
-    override suspend fun playMusic(deviceId: String, query: String): String? {
+    override suspend fun playMusic(deviceId: String, query: String): String? = playMusic(deviceId, query, null)
+
+    override suspend fun playMusic(deviceId: String, query: String, kind: String?): String? {
         // Looks through every source (favourites, playlists, radio…) and plays the best match
         // of all, so "P3" finds the radio station even when a favourite also says "P3 Dokumentär".
         val sources = FlowCards.musicSources(deviceActions(deviceId)).flatMap { it.all }
@@ -118,8 +128,10 @@ class StoreHomeControl(
         // The home's own favourites, playlists and radio first; a catalogue like Spotify when
         // none of them is clearly what was asked for.
         val (catalogues, own) = sources.partition { it.catalogue }
+        // Why a search failed (Spotify refusing the keys, say), so a miss can say so instead of "couldn't find".
+        var trouble: Throwable? = null
         suspend fun look(list: List<MusicSource>): List<Pair<MusicSource, AutocompleteItem>> = list.flatMap { source ->
-            runCatching { choices(source.card, source.arg, query) }.getOrDefault(emptyList()).map { source to it }
+            runCatching { choices(source.card, source.arg, query) }.onFailure { trouble = it }.getOrDefault(emptyList()).map { source to it }
         }
         // The artist is often only in the description ("Abbey Road" · "The Beatles").
         fun score(item: AutocompleteItem): Double =
@@ -128,10 +140,16 @@ class StoreHomeControl(
         val ownBest: Pair<MusicSource, AutocompleteItem>? = NameMatch.best(query, found) { score(it.second) }
         var best: Pair<MusicSource, AutocompleteItem>? = ownBest?.takeIf { catalogues.isEmpty() || score(it.second) >= OWN_IS_ENOUGH }
         if (best == null && catalogues.isNotEmpty()) {
-            val hits = look(catalogues)
+            // "playlist party hits": Spotify then finds the playlist, not an artist called Party Hits.
+            val word = kind?.let { KIND_WORDS[it.trim().lowercase()] }
+            val hits = if (word == null) look(catalogues) else catalogues.flatMap { source ->
+                runCatching { choices(source.card, source.arg, "$word $query") }.onFailure { trouble = it }.getOrDefault(emptyList()).map { source to it }
+            }
             best = NameMatch.best(query, hits) { score(it.second) } ?: hits.firstOrNull()
         }
-        best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" } ?: return null
+        best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" }
+            ?: trouble?.let { throw java.io.IOException("Searching for \"$query\" failed: ${it.message}", it) }
+            ?: return null
         runAction(best.first.card, FlowCards.musicArgs(best.first, best.second))
         // "Dancing Queen (Song · ABBA)", so the answer says what was found.
         return if (best.first.catalogue) listOfNotNull(best.second.name, best.second.description?.let { "($it)" }).joinToString(" ") else best.second.name
@@ -154,6 +172,11 @@ class StoreHomeControl(
     companion object {
         /** How well one of the home's own picks must match before a catalogue isn't searched. */
         private const val OWN_IS_ENOUGH = 0.9
+
+        /** play_music's kinds, as the words Spotify search knows them by. */
+        private val KIND_WORDS = mapOf(
+            "playlist" to "playlist", "album" to "album", "song" to "song", "track" to "song", "artist" to "artist",
+        )
 
         private val ANYTHING = Regex(
             "(anything|something|whatever|surprise me|random|you choose|any music|some music|music|" +
