@@ -293,12 +293,13 @@ private fun ListenPage(services: AssistantServices, settings: AgentSettings, upd
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
-    SwitchRow(
-        "Talk over the answer",
-        "Start speaking while it talks and it stops and listens, like a person would. Only voices taught under People can do this, " +
-            "so its own voice, the TV or a guest won't cut it off.",
-        settings.talkOver,
-    ) { on -> update { it.copy(talkOver = on) } }
+    Text("Talk over the answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Segmented(app.homeydash.agent.Interrupt.entries, settings.interrupt, { it.label }) { i -> update { it.copy(interrupt = i) } }
+    Text(
+        settings.interrupt.detail + if (settings.interrupt != app.homeydash.agent.Interrupt.Off) " It stops and listens to what you say, like a person would." else "",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
     Label("Who hears your questions")
     Hearing(services, settings, update)
     val context = androidx.compose.ui.platform.LocalContext.current

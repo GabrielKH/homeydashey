@@ -172,17 +172,35 @@ class SpeechStreamTest {
         assertEquals(pcm, VoiceFx.resample(pcm, 24000))
     }
 
+    private fun chunk(amp: Int, rate: Int = 16000) = ShortArray(rate / 10) { i -> (amp * kotlin.math.sin(i * 0.3)).toInt().toShort() }
+
     @Test fun `someone talking over its voice is noticed, its own quiet echo isn't`() {
         val rate = 16000
         val t = TalkOver(rate)
-        fun chunk(amp: Int) = ShortArray(rate / 10) { i -> (amp * kotlin.math.sin(i * 0.3)).toInt().toShort() }
-        // Half a second of faint echo: nothing.
-        repeat(5) { assertFalse(t.feed(chunk(300), rate / 10)) }
-        repeat(20) { assertFalse(t.feed(chunk(450), rate / 10)) }
-        // Someone talks: noticed after about 0.6 s.
-        val hits = (1..8).map { t.feed(chunk(4000), rate / 10) }
+        // Faint echo while it learns and after: nothing.
+        repeat(25) { assertFalse(t.feed(chunk(300), rate / 10)) }
+        // Someone talks clearly: noticed after about 0.9 s.
+        val hits = (1..12).map { t.feed(chunk(4000), rate / 10) }
         assertEquals(1, hits.count { it })
-        assertTrue(hits.indexOf(true) in 4..6)
+        assertTrue(hits.indexOf(true) in 7..9)
+    }
+
+    @Test fun `a loud start of its own voice or a short sound doesn't stop it`() {
+        val rate = 16000
+        val t = TalkOver(rate)
+        // Its "hmm" echoing loudly right at the start only teaches it the floor.
+        repeat(8) { assertFalse(t.feed(chunk(3000), rate / 10)) }
+        // A cough, a clap or a pot: short sounds never count.
+        repeat(5) {
+            repeat(5) { assertFalse(t.feed(chunk(9000), rate / 10)) }
+            repeat(4) { assertFalse(t.feed(chunk(300), rate / 10)) }
+        }
+        // Quiet talk across the room only counts on Easy.
+        val easy = TalkOver(rate, easy = true)
+        val strict = TalkOver(rate)
+        repeat(10) { easy.feed(chunk(200), rate / 10); strict.feed(chunk(200), rate / 10) }
+        assertTrue((1..10).any { easy.feed(chunk(900), rate / 10) })
+        assertFalse((1..10).any { strict.feed(chunk(900), rate / 10) })
     }
 
     @Test fun `thinking sounds don't repeat`() {

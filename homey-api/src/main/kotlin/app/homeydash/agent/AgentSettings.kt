@@ -107,6 +107,13 @@ enum class Secret(val title: String, val detail: String) {
     Faces("Face and voice recognition", "Know who is at the tablet, by face or by voice (first name only)."),
 }
 
+/** How readily talking over an answer stops it; the wake name always does. */
+enum class Interrupt(val label: String, val detail: String) {
+    Off("Off", "Only saying the wake name stops an answer."),
+    Clear("Clear speech", "A voice taught under People, speaking clearly for about a second, stops the answer. Noises, the TV and its own voice don't."),
+    Easy("Easy", "A taught voice stops the answer sooner and more quietly. In a noisy kitchen it may stop by mistake now and then."),
+}
+
 /** Who the assistant is: how it talks, apart from how it sounds. */
 enum class Persona(val label: String, val detail: String) {
     Nova("Nova", "Friendly and to the point."),
@@ -145,8 +152,8 @@ data class AgentSettings(
      * small "hmm" when it takes a moment. Only for answers on the tablet's own speaker.
      */
     val liveSpeech: Boolean = true,
-    /** Someone whose voice the tablet knows can talk over an answer to stop it and be heard. */
-    val talkOver: Boolean = true,
+    /** Whether, and how readily, someone whose voice the tablet knows can talk over an answer to stop it. */
+    val interrupt: Interrupt = Interrupt.Clear,
     /** Strangers at the tablet (face recognition sees someone it doesn't know) only get guest access. */
     val strangersAreGuests: Boolean = false,
     /** Saying this name ("Hey Nova") starts listening, like "Hey Siri". */

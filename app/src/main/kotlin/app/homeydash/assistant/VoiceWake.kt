@@ -174,6 +174,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         sensitivity: Int = MicSensitivity.DEFAULT,
         echo: Boolean = false,
         onTalk: ((sound: ShortArray) -> Unit)? = null,
+        talkEasy: Boolean = false,
     ): Int {
         stop()
         val gen = generation
@@ -195,7 +196,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             val main = Handler(Looper.getMainLooper())
             reader = thread(name = "wake-mic") {
                 val talk: ((ShortArray) -> Unit)? = onTalk?.let { handler -> { sound -> main.post { if (gen == generation) handler(sound) } } }
-                read(rec, gain, isLive = { gen == generation }, echo = echo, onTalk = talk) { result, failure, recent ->
+                read(rec, gain, isLive = { gen == generation }, echo = echo, onTalk = talk, talkEasy = talkEasy) { result, failure, recent ->
                     main.post {
                         if (gen != generation) return@post
                         if (failure != null) {
@@ -266,6 +267,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         isLive: () -> Boolean,
         echo: Boolean = false,
         onTalk: ((ShortArray) -> Unit)? = null,
+        talkEasy: Boolean = false,
         emit: (String?, String?, Recent?) -> Unit,
     ) {
         val size = maxOf(AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), RATE / 5 * 2)
@@ -294,7 +296,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             // The last few seconds the recogniser heard, to cut the wake name out of.
             val ring = ShortArray(RATE * RECENT_SECONDS)
             var fed = 0L
-            val talk = onTalk?.let { TalkOver(RATE) }
+            val talk = onTalk?.let { TalkOver(RATE, talkEasy) }
             while (isLive()) {
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) {

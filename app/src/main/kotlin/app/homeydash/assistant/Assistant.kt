@@ -562,7 +562,8 @@ class Assistant(
      * listens, keeping what they already said ([heard]) as the start of the question.
      */
     fun talkOver(person: KnownPerson, heard: ShortArray) {
-        if (state != AssistantState.Speaking) return
+        if (state != AssistantState.Speaking || !answering) return
+        answering = false
         voice = Seen(person, SystemClock.elapsedRealtime())
         services.trace("wake", "Stopped talking: ${person.name} talked over the answer.", true)
         services.output.stop()
@@ -620,6 +621,7 @@ class Assistant(
         // Rain on screen while it says it rains.
         if (WEATHER_WORDS.containsMatchIn(text)) scene = bridge.weatherScene(TOMORROW.containsMatchIn(text))
         job?.cancel()
+        answering = false
         job = scope.launch {
             state = AssistantState.Thinking
             // Talking like a person: the answer is spoken while the AI still writes it, and a
@@ -657,7 +659,7 @@ class Assistant(
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
                     context = askContext(s, person, followUp),
-                    speech = live?.let { pieces -> { sentence: String -> begun.set(true); pieces.trySend(sentence); Unit } },
+                    speech = live?.let { pieces -> { sentence: String -> begun.set(true); answering = true; pieces.trySend(sentence); Unit } },
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -674,6 +676,13 @@ class Assistant(
             if (live != null) services.output.prepareSounds(app.homeydash.agent.ThinkingSounds.all(settings.persona, swedish), swedish, settings.voice)
         }
     }
+
+    /**
+     * The answer itself is being said, not a thinking sound: only then can someone talk over it,
+     * so the echo of a "hmm" never cancels the question it's thinking about.
+     */
+    @Volatile var answering = false
+        private set
 
     /** The last thinking sound, so the next one is different. */
     private var lastHmm: String? = null
@@ -808,6 +817,7 @@ class Assistant(
     /** Says [text] on the chosen speaker, or on the tablet when there is none or it fails. */
     private suspend fun say(text: String) {
         state = AssistantState.Speaking
+        answering = true
         val s = settings
         val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
         if (speaker != null && sayOn(speaker.second, text, s)) return

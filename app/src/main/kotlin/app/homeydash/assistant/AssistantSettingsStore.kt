@@ -53,7 +53,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         speakerVolume = p[VOLUME]?.toIntOrNull() ?: 35,
         speak = p[SPEAK] != "false",
         liveSpeech = p[LIVE_SPEECH] != "false",
-        talkOver = p[TALK_OVER] != "false",
+        // Before the levels, talking over was a plain switch.
+        interrupt = enumOr(p[INTERRUPT], if (p[TALK_OVER] == "false") app.homeydash.agent.Interrupt.Off else app.homeydash.agent.Interrupt.Clear),
         strangersAreGuests = p[STRANGERS] == "true",
         wake = p[WAKE] == "true",
         wakeName = p[WAKE_NAME] ?: AgentSettings().wakeName,
@@ -96,7 +97,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[VOLUME] = s.speakerVolume.toString()
         p[SPEAK] = s.speak.toString()
         p[LIVE_SPEECH] = s.liveSpeech.toString()
-        p[TALK_OVER] = s.talkOver.toString()
+        p[INTERRUPT] = s.interrupt.name
         p[STRANGERS] = s.strangersAreGuests.toString()
         p[WAKE] = s.wake.toString()
         p[WAKE_NAME] = s.wakeName
@@ -162,6 +163,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val KNOWN_VOICES = stringPreferencesKey("known_voices")
         val LIVE_SPEECH = stringPreferencesKey("live_speech")
         val TALK_OVER = stringPreferencesKey("talk_over")
+        val INTERRUPT = stringPreferencesKey("interrupt")
         val FOLLOW_UP = stringPreferencesKey("follow_up")
         val MIC_SENSITIVITY = stringPreferencesKey("mic_sensitivity")
         val SEE_HIDDEN = stringPreferencesKey("see_hidden_devices")
