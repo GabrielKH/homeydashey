@@ -48,6 +48,10 @@ data class Device(
     val driverUri: String? = null,
     /** How the Homey app draws the device: `components` lists capabilities per control (`toggle`, `button`, `picker`, …). */
     val ui: JsonObject? = null,
+    /** What the app knows the device by, e.g. a Sonos speaker's `RINCON_…` id. */
+    val data: JsonObject? = null,
+    /** The device's settings; some apps keep its address here. */
+    val settings: JsonObject? = null,
     /** What the owner says the device is, on this tablet, when Homey's class is wrong. */
     @kotlinx.serialization.Transient val classOverride: String? = null,
     /** Other names the owner gave it on this tablet, for the assistant ("Frame", "tv:n"). */

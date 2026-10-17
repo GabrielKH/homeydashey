@@ -179,7 +179,9 @@ class SonosCards(
             val byRoom = speakers.groupBy { room(it.room) }.mapValues { it.value.first() }
             fun within(a: String, b: String) = a.length >= 3 && Regex("(^| )${Regex.escape(a)}( |$)").containsMatchIn(b)
             val candidates = devices.filter { d -> d.driverUri.orEmpty().contains("sonos", ignoreCase = true) || d.homeyClass == "speaker" }
-            val found = candidates.mapNotNull { d ->
+            // The speaker's own id, MAC or address in what the Homey app stores, whatever the names are.
+            val byId = candidates.mapNotNull { d -> speakers.firstOrNull { s -> identifies(d, s) }?.let { d.id to it } }.toMap()
+            val found = byId + candidates.filter { it.id !in byId }.mapNotNull { d ->
                 val sonos = d.driverUri.orEmpty().contains("sonos", ignoreCase = true)
                 val name = room(d.name)
                 val zone = d.zone?.let(zones::get)?.name?.let(::room)
@@ -197,6 +199,28 @@ class SonosCards(
                 return found + leftDevices.associate { it.id to leftRooms.single() }
             }
             return found
+        }
+
+        /** Whether [d]'s data or settings name [s]: its RINCON id, its MAC (inside that id) or its IP. */
+        fun identifies(d: Device, s: SonosSpeaker): Boolean {
+            val values = buildList { listOfNotNull(d.data, d.settings).forEach { strings(it, this) } }.map { it.lowercase() }
+            if (values.isEmpty()) return false
+            val uuid = s.uuid.lowercase()
+            val mac = Regex("^rincon_([0-9a-f]{12})").find(uuid)?.groupValues?.get(1)
+            val host = s.host.lowercase()
+            return values.any { v ->
+                v.contains(uuid) || v == host || v.startsWith("$host:") || v.contains("//$host:") || v.contains("//$host/") ||
+                    (mac != null && v.replace(":", "").replace("-", "").contains(mac))
+            }
+        }
+
+        private fun strings(e: kotlinx.serialization.json.JsonElement, into: MutableList<String>) {
+            when (e) {
+                is JsonObject -> e.values.forEach { strings(it, into) }
+                is kotlinx.serialization.json.JsonArray -> e.forEach { strings(it, into) }
+                is JsonPrimitive -> if (e.isString) into += e.content
+                else -> Unit
+            }
         }
 
         private fun room(name: String) = NameMatch.normalize(name).removePrefix("sonos ").removeSuffix(" sonos").trim()
