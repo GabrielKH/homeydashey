@@ -15,7 +15,8 @@ object ToolText {
     /** How to call a tool, in the rules. */
     const val HOW = "To use a tool, reply with only lines like " +
         "CALL set_device {\"device\": \"light_3\", \"capability\": \"onoff\", \"value\": \"true\"} " +
-        "(CALL, the tool name, its arguments as JSON), one call per line, and nothing else. No tags, no XML. " +
+        "(CALL, the tool name, its arguments as JSON), one call per line, and nothing else: no words before or after them, not even a joke, " +
+        "because the user hears nothing until the tools are done. No tags, no XML. " +
         "The results come back to you; then answer the user in words. Never say you did something without calling a tool for it."
 
     /** One line per tool: `name(arg, optional?): what it does`. */
