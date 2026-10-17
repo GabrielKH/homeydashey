@@ -153,7 +153,7 @@ fun AssistantSettingsDialog(
                     }
                     "voice" -> VoicePage(services, settings, update)
                     "listen" -> ListenPage(services, settings, update)
-                    "brain" -> BrainPage(services, settings, update)
+                    "brain" -> BrainPage(services, settings, update, preview)
                     "privacy" -> PrivacyPage(settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
                     "spotify" -> Spotify(settings, update)
                     "logs" -> Logs(services, settings, update)
@@ -316,7 +316,12 @@ private fun ListenPage(services: AssistantServices, settings: AgentSettings, upd
 
 /** Which AI answers, and how to reach the local and the internet one. */
 @Composable
-private fun BrainPage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+private fun BrainPage(
+    services: AssistantServices,
+    settings: AgentSettings,
+    update: ((AgentSettings) -> AgentSettings) -> Unit,
+    preview: (local: Boolean) -> Pair<HomeView, AgentTools>,
+) {
     val g = GlassTheme.colors
     Label("Which AI answers")
     Segmented(BrainMode.entries, settings.mode, { it.label }) { m -> update { it.copy(mode = m) } }
@@ -345,6 +350,50 @@ private fun BrainPage(services: AssistantServices, settings: AgentSettings, upda
         update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
     }
     ConnectionFields(services, internet, showKey = true) { c -> update { it.copy(internet = c) } }
+    SpeedTest(services, settings, preview)
+}
+
+/**
+ * Times the AIs with the assistant's real prompt, so models and servers can be compared: how
+ * long until the first word, how fast it writes, and whether the second time is faster because
+ * the server kept the prompt worked through. The result also goes to the logs.
+ */
+@Composable
+private fun SpeedTest(services: AssistantServices, settings: AgentSettings, preview: (local: Boolean) -> Pair<HomeView, AgentTools>) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    var result by remember { mutableStateOf<String?>(null) }
+    Label("Speed")
+    Text(
+        "Asks each AI a short question with everything it normally reads, twice. \"First word\" is how long it read before answering; " +
+            "if the second time isn't much faster, the server reads the whole prompt again for every question.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    Text(
+        if (result == "Testing…") "Testing…" else "Speed test",
+        style = MaterialTheme.typography.labelLarge,
+        color = g.fg,
+        modifier = Modifier
+            .pressable({
+                if (result != "Testing…") {
+                    result = "Testing…"
+                    scope.launch {
+                        result = try {
+                            services.agent.speedTest(settings, view = { local -> preview(local).first }, tools = { v -> preview(v.local).second }).joinToString("\n\n")
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            "Didn't work: ${e.message}"
+                        }
+                    }
+                }
+            })
+            .glass(PillShape)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    )
+    result?.takeIf { it != "Testing…" }?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp), color = g.fg)
+    }
 }
 
 /** What the assistant may read and do, and who is who. */
@@ -529,7 +578,12 @@ private fun ConnectionFields(services: AssistantServices, connection: Connection
             modifier = Modifier
                 .pressable({
                     result = "Testing…"
-                    scope.launch { result = services.chat.test(connection)?.let { "Didn't work: $it" } ?: "Works." }
+                    scope.launch {
+                        result = services.chat.speedTest(connection).fold(
+                            { st -> "Works." + (st?.let { " " + it.text().replaceFirstChar(Char::uppercase) + "." } ?: "") },
+                            { e -> "Didn't work: ${e.message ?: e}" },
+                        )
+                    }
                 })
                 .glass(PillShape)
                 .padding(horizontal = 18.dp, vertical = 10.dp),

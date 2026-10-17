@@ -20,6 +20,8 @@ data class AgentReply(
     val then: (suspend () -> List<String>)? = null,
     /** The whole answer was already handed to the voice while it was written (see [Agent.ask]'s speech). */
     val spoken: Boolean = false,
+    /** How fast each round of the AI came, in order; empty when it answered without the AI. */
+    val rounds: List<ChatStats> = emptyList(),
 )
 
 /** Context for one question that isn't about the home itself. */
@@ -87,7 +89,7 @@ class Agent(
     ): AgentReply {
         val heard = Watch(listener)
         heard.trace("question", text)
-        val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech)
+        val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech).copy(rounds = heard.rounds.toList())
         heard.trace(
             when {
                 reply.ignored -> "ignored"
@@ -174,9 +176,9 @@ class Agent(
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
                     out?.next()
                     val live = out?.takeIf { !command || changed }
+                    // Always streamed, also when nothing is spoken yet, so the first word can be timed.
                     val answer = try {
-                        if (live != null) chat.stream(brain, messages, tools.sent, requireTool = nudged && !acted, onText = live::feed)
-                        else chat.complete(brain, messages, tools.sent, requireTool = nudged && !acted)
+                        chat.stream(brain, messages, tools.sent, requireTool = nudged && !acted, onText = { piece: String -> live?.feed(piece) })
                     } catch (e: IOException) {
                         heard.step(AgentStep(step, thinking, StepState.Failed, e.message, thinking = true))
                         throw e
@@ -185,6 +187,10 @@ class Agent(
                         throw e
                     }
                     heard.step(AgentStep(step, thinking, StepState.Done, thinking = true))
+                    answer.stats?.let { st ->
+                        heard.rounds += st
+                        heard.trace("speed", "round ${heard.rounds.size}: ${st.text()}")
+                    }
                     val keepLocal = localOnly || toolbox.privateContext
                     answer.content?.takeIf { it.isNotBlank() }?.let { heard.trace("model", it, keepLocal) }
                     if (answer.toolCalls.isEmpty()) heard.trace("model stopped", answer.finish ?: "no reason given", keepLocal)
@@ -462,7 +468,40 @@ class Agent(
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
         if (key == warmed) return
         warmed = key
-        chat.prefill(brain, messages, specs)
+        chat.prefill(brain, messages, specs)?.let { st ->
+            listener?.trace("speed", "warm-up (rules and devices read ahead): ${st.text()}")
+        }
+    }
+
+    /**
+     * Times each connection with the assistant's real prompt and a short question, twice: the
+     * second time shows whether the server kept the start worked through (its prefix cache).
+     * Returns one line per connection, and puts them in the logs.
+     */
+    suspend fun speedTest(
+        settings: AgentSettings,
+        view: (local: Boolean) -> HomeView,
+        tools: (HomeView) -> AgentTools,
+    ): List<String> {
+        val brains = listOfNotNull(settings.local?.takeIf { it.usable }, settings.internet?.takeIf { it.usable })
+        if (brains.isEmpty()) return listOf("Set up an AI first.")
+        val question = if (settings.language == Language.English) "What time is it?" else "Vad är klockan?"
+        return brains.map { brain ->
+            val homeView = view(brain.local)
+            val compact = brain.local && settings.compactTools
+            val t = Tools(tools(homeView).specs(), compact, question, emptyList(), AskContext())
+            val messages = conversation(settings, homeView, AskContext(), emptyList(), listOf(ChatMessage.user(question)), t)
+            val name = "${brain.provider.label} ${brain.model}"
+            val line = try {
+                val first = chat.stream(brain, messages, t.sent) {}.stats
+                val second = chat.stream(brain, messages, t.sent) {}.stats
+                "$name\n1st: ${first?.text() ?: "no timing"}\n2nd: ${second?.text() ?: "no timing"}"
+            } catch (e: IOException) {
+                "$name: didn't answer (${e.message})"
+            }
+            listener?.trace("speed test", line)
+            line
+        }
     }
 
     /** Everything the assistant is told for a question, as one text (for tests and the settings preview). */

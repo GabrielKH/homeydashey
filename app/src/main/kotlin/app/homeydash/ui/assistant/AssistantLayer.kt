@@ -342,6 +342,14 @@ private fun Bubble(line: Line, partial: Boolean = false) {
                 modifier = Modifier.widthIn(max = 340.dp).padding(horizontal = 6.dp),
             )
         }
+        line.speed?.let { speed ->
+            Text(
+                speed,
+                style = MaterialTheme.typography.labelSmall,
+                color = g.muted.copy(alpha = 0.8f),
+                modifier = Modifier.widthIn(max = 340.dp).padding(horizontal = 6.dp),
+            )
+        }
         if (line.speechSettings) SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
     }
 }
