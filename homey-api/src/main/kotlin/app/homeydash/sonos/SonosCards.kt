@@ -175,18 +175,30 @@ class SonosCards(
          */
         fun match(devices: Collection<Device>, zones: Map<String, Zone>, speakers: List<SonosSpeaker>): Map<String, SonosSpeaker> {
             if (speakers.isEmpty()) return emptyMap()
-            val byRoom = speakers.groupBy { NameMatch.normalize(it.room) }.mapValues { it.value.first() }
-            return devices.mapNotNull { d ->
+            // "Sonos Kök" in the Sonos app is the Homey speaker "Kök".
+            val byRoom = speakers.groupBy { room(it.room) }.mapValues { it.value.first() }
+            fun within(a: String, b: String) = a.length >= 3 && Regex("(^| )${Regex.escape(a)}( |$)").containsMatchIn(b)
+            val candidates = devices.filter { d -> d.driverUri.orEmpty().contains("sonos", ignoreCase = true) || d.homeyClass == "speaker" }
+            val found = candidates.mapNotNull { d ->
                 val sonos = d.driverUri.orEmpty().contains("sonos", ignoreCase = true)
-                if (!sonos && d.homeyClass != "speaker") return@mapNotNull null
-                val name = NameMatch.normalize(d.name)
-                val zone = d.zone?.let(zones::get)?.name?.let(NameMatch::normalize)
+                val name = room(d.name)
+                val zone = d.zone?.let(zones::get)?.name?.let(::room)
                 val speaker = byRoom[name]
-                    ?: (if (sonos) byRoom.entries.firstOrNull { (room, _) -> room.length >= 3 && Regex("(^| )${Regex.escape(room)}( |$)").containsMatchIn(name) }?.value else null)
+                    ?: (if (sonos) byRoom.entries.firstOrNull { (r, _) -> within(r, name) || within(name, r) }?.value else null)
                     ?: (if (sonos) zone?.let(byRoom::get) else null)
                     ?: return@mapNotNull null
                 d.id to speaker
             }.toMap()
+            // One Sonos speaker left over and one Homey Sonos speaker (or copies of it) without a
+            // room: they are the same one, named differently ("Beam" and "Sovrum").
+            val leftRooms = speakers.distinctBy { it.room }.filter { s -> found.values.none { it.room == s.room } }
+            val leftDevices = candidates.filter { it.id !in found && it.driverUri.orEmpty().contains("sonos", ignoreCase = true) }
+            if (leftRooms.size == 1 && leftDevices.map { NameMatch.normalize(it.name) }.distinct().size == 1) {
+                return found + leftDevices.associate { it.id to leftRooms.single() }
+            }
+            return found
         }
+
+        private fun room(name: String) = NameMatch.normalize(name).removePrefix("sonos ").removeSuffix(" sonos").trim()
     }
 }
