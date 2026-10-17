@@ -39,6 +39,10 @@ data class FridgeItem(
     /** Taken out of the freezer on this day. */
     val thawed: String? = null,
     val note: String? = null,
+    /** How long this product keeps unopened, learned or looked up; null means the kind's usual time. */
+    val keeps: Int? = null,
+    /** How long this product keeps once opened, when known for this product. */
+    val keepsOpened: Int? = null,
     /** When it was added, for sorting the newest first; epoch ms. */
     val added: Long = 0,
 ) {
@@ -61,4 +65,15 @@ data class KnownProduct(
     val category: String,
     val amount: String? = null,
     val place: Place? = null,
-)
+    /** Days from purchase to the date printed on the pack, from the last few packs saved with a date. */
+    val keeps: List<Int> = emptyList(),
+    /** What the internet AI said: days unopened and opened, and whether it is a use-by food. */
+    val keepsDays: Int? = null,
+    val openedDays: Int? = null,
+    val useBy: Boolean? = null,
+    /** Items whose dates are already in [keeps], so saving one again doesn't count it twice. */
+    val seen: List<String> = emptyList(),
+) {
+    /** The best guess of how long it keeps unopened: what the packs showed, else what the AI found. */
+    fun typicalDays(): Int? = keeps.sorted().takeIf { it.isNotEmpty() }?.let { it[it.size / 2] } ?: keepsDays
+}

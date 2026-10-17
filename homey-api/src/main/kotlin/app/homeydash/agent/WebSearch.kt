@@ -34,8 +34,15 @@ class WebSearch(http: OkHttpClient) {
         return WebLookup { question, language -> ask(c, question, language) }
     }
 
-    private suspend fun ask(c: Connection, question: String, language: Language): String = withContext(Dispatchers.IO) {
-        val prompt = prompt(question, language)
+    /** Sends [prompt] as it is, with web search on, and returns the reply text; null when [connection] isn't set up. */
+    suspend fun raw(connection: Connection?, prompt: String): String? {
+        val c = connection?.takeIf { it.usable && !it.local } ?: return null
+        return send(c, prompt)
+    }
+
+    private suspend fun ask(c: Connection, question: String, language: Language): String = send(c, prompt(question, language))
+
+    private suspend fun send(c: Connection, prompt: String): String = withContext(Dispatchers.IO) {
         val request = when (c.provider) {
             Provider.Gemini -> Request.Builder()
                 .url(geminiBase(c.baseUrl) + "/models/" + c.model.removePrefix("models/") + ":generateContent")

@@ -412,8 +412,9 @@ private fun EatByRow(item: FridgeItem, e: Estimate) {
     val c = item.categoryInfo
     val why = when (e.basis) {
         Basis.Printed -> if (e.strict) "the use-by date on the pack" else "the best-before date on the pack"
+        Basis.Product -> "this product usually keeps ${days(item.keeps ?: c.days)} unopened"
         Basis.Guessed -> "${c.en.lowercase()} usually keeps ${days(c.days)} unopened"
-        Basis.Opened -> "${c.en.lowercase()} keeps about ${days(c.openedDays)} once opened"
+        Basis.Opened -> "${if (item.keepsOpened != null) "this product" else c.en.lowercase()} keeps about ${days(item.keepsOpened ?: c.openedDays)} once opened"
         Basis.Frozen -> "best quality for about ${days(c.freezerDays.takeIf { it > 0 } ?: 180)} frozen"
         Basis.Thawed -> "thawed food keeps a day or two in the fridge"
     }

@@ -76,7 +76,9 @@ class AppContainer(context: Context) {
     private val sonos = SonosCards(SonosClient(http), SonosFinder(context, http)::find, spotify)
 
     /** Recipes, and the one being cooked; the voice assistant reads it too. */
-    val kitchen = Kitchen(context, http, scope).also { assistant.kitchen = it }
+    val kitchen = Kitchen(context, http, scope) { prompt ->
+        assistant.web.raw(assistant.settings.value.webSearch(), prompt)
+    }.also { assistant.kitchen = it }
 
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
