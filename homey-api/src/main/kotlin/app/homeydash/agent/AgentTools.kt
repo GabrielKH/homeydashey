@@ -87,7 +87,8 @@ class AgentTools(
         })
         add(tool("play_music", "Play a song, album, artist, playlist, favourite or radio station on a player (e.g. a Sonos); finds anything on Spotify when set up.") {
             string("player", "Player alias")
-            string("query", "Song, album, artist, playlist or station, with the artist if said, e.g. \"Dancing Queen ABBA\"; empty lets you choose")
+            string("query", "What they asked for in their words: a title with the artist if said (\"Dancing Queen ABBA\"), or a genre, mood or chart (\"swedish top 50\", \"calm female vocals\"); empty only when they let you choose")
+            string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), or omit for a favourite or station")
             required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
@@ -194,7 +195,7 @@ class AgentTools(
             "set_mood" -> setMood(a.str("mood"))
             "list_flows" -> ToolResult(home.flows().joinToString("\n") { it.name }.ifBlank { "No Flows can be started." })
             "run_flow" -> runFlow(a.str("name"))
-            "play_music" -> playMusic(a.str("player"), a.str("query"))
+            "play_music" -> playMusic(a.str("player"), a.str("query"), a.str("kind").ifBlank { null })
             "device_actions" -> deviceActions(a.str("device"))
             "run_device_action" -> runDeviceAction(a.str("device"), a.str("action"), a.str("value").ifBlank { null })
             "open_page" -> openPage(a.str("page"))
@@ -349,13 +350,13 @@ class AgentTools(
         return ok("Started ${flow.name}.")
     }
 
-    private suspend fun playMusic(alias: String, query: String): ToolResult {
+    private suspend fun playMusic(alias: String, query: String, kind: String? = null): ToolResult {
         val asked = view.device(alias) ?: return unknown(alias)
         val d = musicPlayer(asked) ?: return ok(
             "${asked.name} can't play music. These can: " +
                 view.devices.filter { sources(it.id).isNotEmpty() }.joinToString { "${it.alias} (${it.name}${it.room?.let { r -> ", $r" }.orEmpty()})" } + ".",
         )
-        val played = home.playMusic(d.id, query) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
+        val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         return ok("Playing $played on ${d.name}.")
     }
 
@@ -381,6 +382,8 @@ class AgentTools(
         val lists = mutableListOf<String>()
         for (source in FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }) {
             if (lists.size == 2) break
+            // A speaker and its twin both have "Favourites": list them once.
+            if (lists.any { it.startsWith("${source.title}:") }) continue
             val items = runCatching { home.choices(source.card, source.arg, "") }.getOrDefault(emptyList())
             if (items.isNotEmpty()) lists += "${source.title}: " + items.take(12).joinToString { it.name } + "."
         }

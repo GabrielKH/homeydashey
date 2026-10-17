@@ -330,6 +330,7 @@ class Assistant(
 
     /** Listens for a question; [heard] is sound already heard of it (someone talked over the answer). */
     fun listen(heard: ShortArray? = null) {
+        if (!open && !conversing) freshScreen()
         services.output.stop()
         // The wake name may have been listened for while it talked; the question gets the microphone.
         if (!services.wake.enrolling) services.wake.stop()
@@ -583,6 +584,8 @@ class Assistant(
     /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
     fun wake(person: KnownPerson?) {
         voice = Seen(person, SystemClock.elapsedRealtime())
+        // Woken again after it was stopped: a new talk, so the last one's answers aren't still on screen.
+        if (!conversing && state == AssistantState.Idle) freshScreen()
         // Said while it was thinking or talking: like a person, it stops and listens.
         if (state == AssistantState.Thinking || state == AssistantState.Speaking) {
             services.trace("wake", "Interrupted while ${state.name.lowercase()}.", false)
@@ -626,6 +629,14 @@ class Assistant(
         state = AssistantState.Idle
         keepConversation()
         listen(heard)
+    }
+
+    /** Clears what the last talk left on screen; the assistant still remembers it. */
+    private fun freshScreen() {
+        lines.clear()
+        activity.clear()
+        pending = null
+        scene = null
     }
 
     /** Small from the start when the island or side window was chosen; never forces full screen. */
