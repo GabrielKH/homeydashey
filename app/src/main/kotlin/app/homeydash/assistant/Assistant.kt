@@ -309,6 +309,14 @@ class Assistant(
 
             override fun trace(kind: String, text: String, localOnly: Boolean) = services.trace(kind, text, localOnly)
         }
+        // Kept warm while nobody talks: a warm-up started by the wake word ran on the Mac at the
+        // same time as Whisper (7 s of speech to text, 20 s to the first word after a quiet spell).
+        scope.launch {
+            while (true) {
+                delay(KEEP_WARM_MS)
+                if (state == AssistantState.Idle && !voiceActive) warmBrain(followUp = false)
+            }
+        }
     }
 
     /** The steps worth showing: what it does in the home, and the AI only while it thinks. */
@@ -528,8 +536,12 @@ class Assistant(
     private fun warmUp() {
         // TARS's voice is loaded while the question is said, so he speaks without a pause.
         if (settings.speak) services.output.warm(settings.voice)
+        warmBrain(conversing)
+    }
+
+    /** Reads the rules and devices ahead on the local AI; the agent skips it when nothing changed. */
+    private fun warmBrain(followUp: Boolean) {
         val local = settings.local?.takeIf { it.usable && settings.mode != BrainMode.Internet } ?: return
-        val followUp = conversing
         scope.launch {
             services.chat.warm(local)
             runCatching {
@@ -1020,6 +1032,8 @@ class Assistant(
 
     private companion object {
         const val SPEAKER_DELAY_MS = 800L
+        /** How often to check whether the local AI needs warming while it waits (see Agent.REWARM_AFTER_MS). */
+        const val KEEP_WARM_MS = 2 * 60 * 1000L
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */
         const val WAKE_SOUND_AFTER_MS = 200L

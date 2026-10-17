@@ -73,6 +73,8 @@ class Transcriber(http: OkHttpClient, private val openAiUrl: String = "https://a
             .addFormDataPart("file", "question.wav", wav.toRequestBody(WAV))
             .addFormDataPart("response_format", "json")
             .addFormDataPart("temperature", "0")
+            // No retries at higher temperatures: each one decodes the whole question again.
+            .addFormDataPart("temperature_inc", "0")
             .addFormDataPart("language", language ?: "auto")
             .apply { if (hint.isNotBlank()) addFormDataPart("prompt", hint) }
             .build()
