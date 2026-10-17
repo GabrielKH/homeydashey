@@ -156,7 +156,7 @@ class Agent(
             val compact = brain.local && settings.compactTools
             val earlier = history.filter { brain.local || !it.localOnly }.flatMap { it.messages }
             val tools = Tools(specs, compact, text, earlier, context)
-            val turn = mutableListOf(ChatMessage.user(text))
+            val turn = mutableListOf(opening(settings, homeView, context, text, tools))
             var localOnly = false
             var acted = false
             // A tool actually changed something; a failed or wrong call doesn't count.
@@ -170,7 +170,7 @@ class Agent(
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
                 repeat(MAX_ROUNDS) {
-                    val messages = conversation(settings, homeView, context, earlier, turn, tools)
+                    val messages = conversation(settings, homeView, earlier, turn, tools)
                     val step = StepIds.next()
                     val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
@@ -393,24 +393,29 @@ class Agent(
         "${brain.provider.label} didn't answer: ${message ?: "unknown error"}"
 
     /**
-     * What is sent: the rules and the list of devices first, then the earlier turns, then a
-     * short note with what is on right now together with the question. The start only changes
-     * when the devices do, so a local model keeps it worked through from last time and only
-     * reads the note and the question (see [warm]).
+     * What is sent: the rules and the list of devices first, then the earlier turns, then this
+     * question's turn, which starts with its [opening]. The start only changes when the devices
+     * do, and earlier turns are sent exactly as they were the first time, notes included, so
+     * each request begins with the whole of the last one: a local model only reads what is new
+     * (see [warm]). A model like Qwen3.5 can only pick up where an earlier request ended, so a
+     * change anywhere before that (an earlier question sent without its note) made it read
+     * everything after the rules again.
      */
     private fun conversation(
         settings: AgentSettings,
         view: HomeView,
-        context: AskContext,
         earlier: List<ChatMessage>,
         turn: List<ChatMessage>,
         tools: Tools,
     ): List<ChatMessage> {
-        val question = turn.first()
-        val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
-        val now = ChatMessage.user(situation(settings, view, context) + extra + QUESTION + question.content.orEmpty())
-        val all = listOf(ChatMessage.system(fixed(settings, view, tools.core))) + earlier + now + turn.drop(1)
+        val all = listOf(ChatMessage.system(fixed(settings, view, tools.core))) + earlier + turn
         return if (tools.compact) ToolText.written(all) else all
+    }
+
+    /** The question with a short note before it: what is on right now, and any tools only this question needs. */
+    private fun opening(settings: AgentSettings, view: HomeView, context: AskContext, question: String, tools: Tools): ChatMessage {
+        val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
+        return ChatMessage.user(situation(settings, view, context) + extra + QUESTION + question)
     }
 
     /**
@@ -429,7 +434,7 @@ class Agent(
                 core = null
                 extra = emptyList()
             } else {
-                val said = question + " " + earlier.lastOrNull { it.role == "user" }?.content.orEmpty()
+                val said = question + " " + earlier.lastOrNull { it.role == "user" }?.content.orEmpty().substringAfterLast(QUESTION_LABEL)
                 val wanted = buildSet {
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
@@ -498,7 +503,7 @@ class Agent(
             val homeView = view(brain.local)
             val compact = brain.local && settings.compactTools
             val t = Tools(tools(homeView).specs(), compact, question, emptyList(), AskContext())
-            val messages = conversation(settings, homeView, AskContext(), emptyList(), listOf(ChatMessage.user(question)), t)
+            val messages = conversation(settings, homeView, emptyList(), listOf(opening(settings, homeView, AskContext(), question, t)), t)
             val name = "${brain.provider.label} ${brain.model}"
             val line = try {
                 val first = chat.stream(brain, messages, t.sent) {}.stats
@@ -538,6 +543,7 @@ class Agent(
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
         append("The home's devices are listed at the end of these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
         append("devices the note leaves out are off or idle, and get_device reads anything else (power, battery, other sensors). ")
+        append("Notes before earlier questions were true then; only the last note is how things are now. ")
         append("Only the part after \"$QUESTION_LABEL\" is what the user said. ")
         append("If the note says it was heard while the microphone stayed open after your last answer and it clearly isn't said to you ")
         append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")

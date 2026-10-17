@@ -65,8 +65,8 @@ class AgentTools(
             string("value", "true/false, a number, or a listed choice")
             required("device", "capability", "value")
         })
-        add(tool("set_room", "Change a capability on every device in a room or group, e.g. all lights off in the kitchen.") {
-            string("room", "Room or group name")
+        add(tool("set_room", "Change a capability on every device in a room or group, e.g. all lights off in the kitchen. One call with room \"all\" does the whole house.") {
+            string("room", "Room or group name, or all")
             string("capability", "Capability id, usually onoff or dim")
             string("value", "New value")
             string("device_class", "Optional, e.g. light")
@@ -263,13 +263,15 @@ class AgentTools(
     }
 
     private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String): ToolResult {
+        // The whole house in one call, so "all the lights off" isn't a call per room for the AI to write.
+        val everywhere = WHOLE_HOUSE.matches(room.trim()) && view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) }
         // One of the owner's card groups ("Taklampor"), unless a room has exactly that name.
-        val group = view.group(room)?.takeIf { g -> view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) } || g.equals(room.trim(), ignoreCase = true) }
-        val roomId = if (group != null) null else view.room(room) ?: return ok("There's no room or group called $room. Rooms: ${view.rooms.values.sorted().joinToString()}.")
-        val place = group ?: view.rooms[roomId].orEmpty()
+        val group = if (everywhere) null else view.group(room)?.takeIf { g -> view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) } || g.equals(room.trim(), ignoreCase = true) }
+        val roomId = if (everywhere || group != null) null else view.room(room) ?: return ok("There's no room or group called $room. Rooms: ${view.rooms.values.sorted().joinToString()}, or all for the whole house.")
+        val place = if (everywhere) "the house" else group ?: view.rooms[roomId].orEmpty()
         val wantedClass = classOf(cls)
         val targets = view.devices.mapNotNull { d ->
-            val inside = if (group != null) d.group == group else view.inRoom(d, roomId!!)
+            val inside = everywhere || if (group != null) d.group == group else view.inRoom(d, roomId!!)
             if (!inside || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
             // "Everything off in the kitchen" shouldn't reach a hidden fridge plug; name the class to include them.
             if (d.hiddenOnDashboard && wantedClass == null) return@mapNotNull null
@@ -649,6 +651,9 @@ class AgentTools(
     private fun ok(text: String) = ToolResult(text)
 
     companion object {
+        /** "all", "the whole house", "hela huset": set_room for every room at once. */
+        private val WHOLE_HOUSE = Regex("""(?i)(all|alla|everything|everywhere|allt|överallt|((the )?whole )?(house|home)|hela (huset|hemmet)|hemma|alla rum|all rooms)""")
+
         private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)_\d+\b""")
         /** Guests may use the actions of TVs and speakers, nothing else's. */
         private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")

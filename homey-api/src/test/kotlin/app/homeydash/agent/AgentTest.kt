@@ -164,6 +164,15 @@ class AgentTest {
         assertEquals(setOf("d-lamp", "d-spot"), home.sets.map { it.first }.toSet())
     }
 
+    @Test fun `set_room all reaches every room in one call`() = runTest {
+        val home = FakeHome()
+        val result = AgentTools(view(), home, FakeDashboard()).run(call("set_room", "room" to "all", "capability" to "onoff", "value" to "false", "device_class" to "light"))
+        assertTrue(result.text, result.text.startsWith("Changed"))
+        val kitchen = FakeHome().also { AgentTools(view(), it, FakeDashboard()).run(call("set_room", "room" to "kitchen", "capability" to "onoff", "value" to "false", "device_class" to "light")) }
+        assertTrue(home.sets.map { it.first }.containsAll(kitchen.sets.map { it.first }))
+        assertTrue(home.sets.isNotEmpty())
+    }
+
     @Test fun `sensitive flows and goodnight wait for a yes`() = runTest {
         val home = FakeHome()
         val dash = FakeDashboard()
@@ -706,7 +715,9 @@ class AgentTest {
         // The clock and the person live with the question, so the start doesn't change.
         assertEquals(first[0], second[0])
         assertFalse(second[0].text().contains("12:0") || second[0].text().contains("Gabriel"))
-        assertEquals("vad är klockan", second[1].text())
+        // The earlier question goes again exactly as it was sent, note and all, so the new
+        // request starts with the whole of the last one and only the new part is read.
+        assertEquals(first, second.take(first.size))
         assertTrue(second.last().text().contains("12:07"))
         assertEquals(3, server.requestCount)
         server.shutdown()
