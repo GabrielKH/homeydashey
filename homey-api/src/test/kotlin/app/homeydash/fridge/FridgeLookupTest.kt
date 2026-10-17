@@ -51,6 +51,22 @@ class FridgeLookupTest {
     }
 
     @Test
+    fun sizesAreInTheUnitThatFitsTheFood() {
+        assertEquals("1 l", Amounts.normalize("1000ml", "milk"))
+        assertEquals("1,5 l", Amounts.normalize("1,5", "juice"))
+        assertEquals("1,5 l", Amounts.normalize("1.5L", "milk"))
+        assertEquals("330 ml", Amounts.normalize("330 g", "drinks"))
+        assertEquals("3 dl", Amounts.normalize("3 dl", "milk"))
+        assertEquals("500 g", Amounts.normalize("0.5 kg", "mince"))
+        assertEquals("1,2 kg", Amounts.normalize("1200g", "meat"))
+        assertEquals("532 g", Amounts.normalize("0.532 kg", "meat"))
+        assertEquals("500 g", Amounts.normalize("500", "cheese"))
+        assertEquals("12 st", Amounts.normalize("12", "eggs"))
+        assertEquals("250 g", Amounts.normalize("2 x 125 g", "yoghurt"))
+        assertEquals("some", Amounts.normalize("some", "other"))
+    }
+
+    @Test
     fun readsUpcItemDb() {
         val p = UpcItemDb.parse("""{"code":"OK","total":1,"items":[{"ean":"0012000161155","title":"Pepsi Cola 12 oz","brand":"Pepsi","size":"12 oz"}]}""")
         assertEquals("Pepsi Cola 12 oz", p?.name)

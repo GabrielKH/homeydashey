@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.homeydash.assistant.FaceService
 import app.homeydash.data.Kitchen
+import app.homeydash.fridge.Amounts
 import app.homeydash.fridge.Basis
 import app.homeydash.fridge.DateKind
 import app.homeydash.fridge.Estimate
@@ -289,6 +291,24 @@ internal fun FridgeItemDialog(
     var item by remember(initial) { mutableStateOf(initial) }
     var confirmDelete by remember { mutableStateOf(false) }
     val category = item.categoryInfo
+    // The size as a number and a unit; drinks in litres, eggs by the piece, the rest in grams.
+    val initialSize = remember(initial) { Amounts.parse(initial.amount, initial.category) }
+    var size by remember(initial) { mutableStateOf(initialSize?.value?.stripTrailingZeros()?.toPlainString()?.replace('.', ',').orEmpty()) }
+    var unit by remember(initial) { mutableStateOf(initialSize?.unit ?: Amounts.unitFor(initial.category)) }
+    LaunchedEffect(item.category) {
+        // A new kind that is measured differently: grams become millilitres and back.
+        val liquid = Amounts.isLiquid(item.category)
+        val next = when {
+            liquid && unit in Amounts.MASS -> if (unit == "kg") "l" else "ml"
+            !liquid && unit in Amounts.VOLUME && item.category != "sauces" -> if (unit == "l") "kg" else "g"
+            item.category == "eggs" && size.isBlank() -> Amounts.PIECES
+            else -> unit
+        }
+        if (next != unit) {
+            unit = next
+            item = item.copy(amount = size.takeIf { it.isNotBlank() }?.let { "$it $next" })
+        }
+    }
     val e = FoodRules.estimate(item, today)
 
     fun save(then: () -> Unit) = scope.launch {
@@ -324,10 +344,27 @@ internal fun FridgeItemDialog(
                 },
                 "What is it? e.g. Köttfärs, Mellanmjölk, Rester lasagne",
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 GlassField(item.brand.orEmpty(), { item = item.copy(brand = it.ifBlank { null }) }, "Brand (optional)", Modifier.weight(1f))
-                GlassField(item.amount.orEmpty(), { item = item.copy(amount = it.ifBlank { null }) }, "Size, e.g. 500 g", Modifier.weight(1f))
+                GlassField(
+                    size,
+                    { typed ->
+                        size = typed.filter { it.isDigit() || it == ',' || it == '.' }
+                        item = item.copy(amount = size.takeIf { it.isNotBlank() }?.let { "$it $unit" })
+                    },
+                    if (Amounts.isLiquid(item.category)) "Size, e.g. 1,5" else "Size, e.g. 500",
+                    Modifier.weight(0.6f),
+                    keyboardType = KeyboardType.Decimal,
+                )
                 Stepper(item.quantity, { item = item.copy(quantity = it.coerceIn(1, 99)) })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Amounts.UNITS.forEach { u ->
+                    FilterChip(u, u == unit) {
+                        unit = u
+                        item = item.copy(amount = size.takeIf { it.isNotBlank() }?.let { "$it $u" })
+                    }
+                }
             }
 
             SectionLabel("Kind · sets how long it keeps")

@@ -96,15 +96,14 @@ import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.ZoomSuggestionOptions
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import kotlinx.coroutines.delay
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Scans groceries on the tablet's front camera. Something scanned before is added straight
  * away (with an undo); anything new is looked up (databases, then the internet AI) and opens
- * [onEdit] to confirm. After each barcode the camera reads the date off the pack for a few
- * seconds, so a pack is barcode, turn, date.
+ * [onEdit] to confirm. After each barcode the camera keeps looking for the date on the pack
+ * until it finds it, the next barcode is scanned, or Skip date is tapped.
  */
 @Composable
 internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (FridgeItem) -> Unit, onDismiss: () -> Unit) {
@@ -142,7 +141,7 @@ internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (Fridg
 
     fun withDate(item: FridgeItem, d: FoundDate) = item.copy(date = d.date.toString(), dateKind = d.kind ?: item.dateKind)
 
-    /** The date wasn't found in time, or was skipped: a new product goes to the confirm dialog as it is. */
+    /** Skip date: a new product goes to the confirm dialog without one. */
     fun endHunt() {
         val h = hunt ?: return
         hunt = null
@@ -226,14 +225,6 @@ internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (Fridg
                 busy = false
             }
         }
-    }
-
-    // A few seconds to show the date, from the barcode or from the lookup coming back.
-    val hunting = hunt
-    LaunchedEffect(hunting?.raw, hunting?.itemId, hunting?.draft) {
-        if (hunting == null || (hunting.itemId == null && hunting.draft == null)) return@LaunchedEffect
-        delay(DATE_HUNT_MS)
-        if (hunt?.raw == hunting.raw) endHunt()
     }
 
     if (front) BrightScreen()
@@ -338,7 +329,6 @@ internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (Fridg
 }
 
 private const val SAME_CODE_PAUSE_MS = 1500L
-private const val DATE_HUNT_MS = 6000L
 
 /**
  * Reading the date after a barcode: [raw] is the barcode; [itemId] the item already added (a

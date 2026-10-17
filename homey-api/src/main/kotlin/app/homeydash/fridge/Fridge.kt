@@ -144,7 +144,7 @@ class Fridge(
             return Identified(base, Source.Unknown, code, problem = problem ?: "No product database knows this barcode.")
         }
         return Identified(
-            base.copy(name = product.name, brand = product.brand, category = category.key, place = category.place, amount = code.amount ?: product.amount),
+            base.copy(name = product.name, brand = product.brand, category = category.key, place = category.place, amount = Amounts.normalize(code.amount ?: product.amount, category.key)),
             Source.Database, code,
         )
     }
@@ -154,7 +154,7 @@ class Fridge(
         brand = k.brand,
         category = k.category,
         place = k.place ?: FoodRules.byKey(k.category).place,
-        amount = code.amount ?: k.amount,
+        amount = Amounts.normalize(code.amount ?: k.amount, k.category),
         dateKind = base.dateKind ?: k.useBy?.let { if (it) DateKind.UseBy else DateKind.BestBefore },
         keeps = k.typicalDays(),
         keepsOpened = k.openedDays,
@@ -165,7 +165,11 @@ class Fridge(
      * yoghurts makes one line of three). Remembers a scanned product's name and category.
      */
     suspend fun add(item: FridgeItem): FridgeItem {
-        val clean = item.copy(name = item.name.trim().ifBlank { FoodRules.byKey(item.category).en }, quantity = item.quantity.coerceAtLeast(1))
+        val clean = item.copy(
+            name = item.name.trim().ifBlank { FoodRules.byKey(item.category).en },
+            quantity = item.quantity.coerceAtLeast(1),
+            amount = Amounts.normalize(item.amount, item.category),
+        )
         var result = clean
         update { list ->
             val same = list.firstOrNull {
@@ -185,7 +189,8 @@ class Fridge(
     }
 
     /** Saves changes to an item already in the fridge. */
-    suspend fun save(item: FridgeItem) {
+    suspend fun save(changed: FridgeItem) {
+        val item = changed.copy(amount = Amounts.normalize(changed.amount, changed.category))
         update { list -> list.map { if (it.id == item.id) item else it } }
         learn(item)
     }

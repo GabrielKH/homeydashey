@@ -51,6 +51,7 @@ class ProductResearch(private val ask: suspend (String) -> String?) {
             append("Reply with only one line of JSON and nothing else, like ")
             append("""{"name":"Mellanmjölk 1,5%","brand":"Arla","size":"1 l","kind":"milk","keeps_days":10,"opened_days":5,"use_by":false}""")
             append(". name is the Swedish product name as printed on the pack, without the brand. ")
+            append("size is the pack size as printed: l, dl, cl or ml for drinks, milk and juice; g or kg for food; st for eggs. ")
             append("kind is one of: ").append(FoodRules.all.joinToString(", ") { it.key }).append(". ")
             append("keeps_days counts from the day it is bought, unopened; opened_days once opened; ")
             append("use_by is true when the pack says sista förbrukningsdag (meat, fish, poultry, ready meals) rather than bäst före. ")
