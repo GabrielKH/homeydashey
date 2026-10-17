@@ -350,9 +350,30 @@ class AgentTools(
     }
 
     private suspend fun playMusic(alias: String, query: String): ToolResult {
-        val d = view.device(alias) ?: return unknown(alias)
+        val asked = view.device(alias) ?: return unknown(alias)
+        val d = musicPlayer(asked) ?: return ok(
+            "${asked.name} can't play music. These can: " +
+                view.devices.filter { sources(it.id).isNotEmpty() }.joinToString { "${it.alias} (${it.name}${it.room?.let { r -> ", $r" }.orEmpty()})" } + ".",
+        )
         val played = home.playMusic(d.id, query) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         return ok("Playing $played on ${d.name}.")
+    }
+
+    private fun sources(deviceId: String) = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }
+
+    /**
+     * The player to use for [asked]: itself, or another speaker in the same room when [asked]
+     * can't play music, or can't search Spotify and that one can (the same speaker added twice).
+     */
+    private fun musicPlayer(asked: AgentDevice): AgentDevice? {
+        val own = sources(asked.id)
+        if (own.any { it.catalogue }) return asked
+        val roommates = view.devices.filter { it.id != asked.id && asked.roomId != null && it.roomId == asked.roomId }
+        roommates.firstOrNull { o -> sources(o.id).any { it.catalogue } }?.let { return it }
+        if (own.isNotEmpty()) return asked
+        roommates.firstOrNull { sources(it.id).isNotEmpty() }?.let { return it }
+        // Refused only when other players show what they can play; else the home is asked anyway.
+        return asked.takeIf { view.devices.none { sources(it.id).isNotEmpty() } }
     }
 
     /** Some of what the player has, so a miss can be followed by a pick of the model's own. */
@@ -366,7 +387,8 @@ class AgentTools(
         val names = lists.joinToString(" ")
         val noSpotify = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }.none { it.catalogue }
         return (if (names.isEmpty()) "" else " It has $names Pick one of these if it fits.") +
-            (if (noSpotify) " Spotify search isn't set up on this speaker, so only these can be played." else "")
+            (if (noSpotify) " Spotify search isn't set up on this speaker, so only these can be played." else "") +
+            (if (noSpotify) home.missingActions(deviceId)?.let { " ($it)" }.orEmpty() else "")
     }
 
     /** A device's Flow cards the assistant may use: never on guarded devices, nor anything that unlocks or disarms. */

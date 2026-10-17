@@ -32,6 +32,9 @@ class SonosCards(
     @Volatile private var spotifyService: Int? = null
     @Volatile private var spotifyAccount: SpotifyOnSonos.Account? = null
 
+    /** What went wrong the last time the cards were made, for [missing]. */
+    @Volatile private var trouble: String? = null
+
     /** Whether the cards last handed out had "Play from Spotify"; null before the first time. */
     @Volatile var spotifyShown: Boolean? = null
         private set
@@ -41,6 +44,11 @@ class SonosCards(
         rooms = match(snapshot.devices.values, snapshot.zones, speakers)
         val withSpotify = spotify?.configured == true
         spotifyShown = withSpotify
+        trouble = when {
+            speakers.isEmpty() -> "the app found no Sonos speaker on the Wi-Fi"
+            !withSpotify -> "no Spotify keys in the assistant settings"
+            else -> null
+        }
         return rooms.mapValues { (deviceId, _) ->
             listOfNotNull(
                 card(deviceId, FAVOURITE, "Play Sonos favourite"),
@@ -51,6 +59,13 @@ class SonosCards(
     }
 
     override fun owns(card: FlowCardAction) = card.ownerUri == OWNER
+
+    override fun missing(deviceId: String): String? = when {
+        spotifyShown == null -> "the Sonos speakers haven't been looked for yet"
+        trouble != null && (speakers.isEmpty() || deviceId in rooms) -> trouble
+        deviceId !in rooms -> "it doesn't match a Sonos room; the rooms are ${speakers.map { it.room }.distinct().joinToString()}"
+        else -> null
+    }
 
     override suspend fun autocomplete(card: FlowCardAction, arg: String, query: String): List<AutocompleteItem> {
         val speaker = speakerFor(card)

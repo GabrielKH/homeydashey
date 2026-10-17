@@ -41,6 +41,9 @@ interface HomeControl {
      */
     fun deviceActions(deviceId: String): List<FlowCardAction> = emptyList()
 
+    /** Why some of [deviceId]'s actions (such as Spotify on Sonos) are missing; null when nothing is. */
+    fun missingActions(deviceId: String): String? = null
+
     /** What an autocomplete argument offers for [query], such as channels or playlists. */
     suspend fun choices(card: FlowCardAction, arg: FlowCardArg, query: String): List<AutocompleteItem> = emptyList()
 
@@ -91,6 +94,8 @@ class StoreHomeControl(
     }
 
     override suspend fun setMood(mood: Mood) = store.setMood(mood)
+
+    override fun missingActions(deviceId: String): String? = store.missingCards(deviceId)
 
     override suspend fun flows(): List<HomeyFlow> = store.flows()
 

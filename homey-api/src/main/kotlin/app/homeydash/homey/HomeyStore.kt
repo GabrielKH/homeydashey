@@ -127,6 +127,9 @@ class HomeyStore(
         val deviceCards: Map<String, List<FlowCardAction>>,
     )
 
+    /** Why the app's own cards for [deviceId] are missing, if any source knows. */
+    fun missingCards(deviceId: String): String? = extraCards.mapNotNull { it.missing(deviceId) }.joinToString(" ").ifEmpty { null }
+
     /** Adds each [CardSource]'s cards to Homey's own, skipping any a device already has from Homey. */
     private suspend fun addExtraCards(homeyCards: Map<String, List<FlowCardAction>>) {
         val snapshot = _snapshot.value

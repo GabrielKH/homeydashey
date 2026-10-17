@@ -285,6 +285,13 @@ class AgentTest {
         assertEquals("sonos_play_favorite", home.ran.last().first)
     }
 
+    @Test fun `music asked of a device that can't play it goes to a speaker in the same room`() = runTest {
+        val v = HomeView.build(zones, media, emptyMap(), emptySet(), AgentSettings(), true)
+        val tools = AgentTools(v, MediaHome(), FakeDashboard())
+        val alias = v.device("Taklampa")!!.alias
+        assertTrue(tools.run(call("play_music", "player" to alias, "query" to "P1")).text.contains("on Kök"))
+    }
+
     @Test fun `the endpointer hears a question start and stop`() {
         val e = Endpointer(16000, silenceMs = 500, noSpeechMs = 3000, patienceMs = 1500)
         val quiet = ShortArray(1600) { ((it % 7) - 3).toShort() }
