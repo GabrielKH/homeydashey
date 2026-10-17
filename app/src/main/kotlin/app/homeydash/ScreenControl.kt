@@ -24,10 +24,11 @@ import kotlinx.coroutines.launch
 /**
  * The kitchen screen's power and kiosk behaviour.
  *
- * Dimming: after the chosen minutes without a touch the screen goes dark (brightness to
+ * Dimming: after the chosen minutes without a touch (on the dashboard or in a popup) the screen goes dark (brightness to
  * the minimum under a black overlay with the clock) instead of sleeping, so it can wake
  * at once: on a touch, or when the proximity sensor sees someone come close. The first
- * touch only wakes the screen; it doesn't press what is under the finger.
+ * touch only wakes the screen; it doesn't press what is under the finger. It never dims
+ * while the assistant is listening, thinking or speaking.
  *
  * Kiosk: pins the app (Android's screen pinning, or full lock task when the app is a
  * device owner) and lets it be chosen as the tablet's home app.
@@ -43,6 +44,9 @@ class ScreenControl(private val activity: Activity, private val display: Display
     private val _dimmed = MutableStateFlow(false)
     val dimmed: StateFlow<Boolean> = _dimmed.asStateFlow()
 
+    /** Something on screen is going on (the assistant talking); counts as a touch while true. */
+    var busy: () -> Boolean = { false }
+
     private var lastActivity = SystemClock.elapsedRealtime()
     private var listening = false
 
@@ -57,9 +61,13 @@ class ScreenControl(private val activity: Activity, private val display: Display
     }
 
     fun start() {
+        // Touches in popups (Settings and the like) are their own windows; they count too.
+        app.homeydash.ui.components.UserActivity.onTouch = { wake() }
         scope.launch {
             while (true) {
                 val minutes = display.dimAfter.value
+                // The dim countdown starts again only once the assistant is done.
+                if (busy()) lastActivity = SystemClock.elapsedRealtime()
                 if (minutes > 0 && !_dimmed.value && SystemClock.elapsedRealtime() - lastActivity > minutes * 60_000L) dim()
                 delay(5_000)
             }
@@ -127,11 +135,7 @@ class ScreenControl(private val activity: Activity, private val display: Display
         runCatching {
             val component = ComponentName(activity, "app.homeydash.HomeScreen")
             if (activity.packageManager.getComponentEnabledSetting(component) == wanted) return@runCatching
-            activity.packageManager.setComponentEnabledSetting(
-                ComponentName(activity, "app.homeydash.HomeScreen"),
-                if (on) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP,
-            )
+            activity.packageManager.setComponentEnabledSetting(component, wanted, PackageManager.DONT_KILL_APP)
         }
         pin(on)
     }

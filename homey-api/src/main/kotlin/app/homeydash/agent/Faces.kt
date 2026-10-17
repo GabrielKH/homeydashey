@@ -12,7 +12,24 @@ data class KnownPerson(
     val role: Role,
     val samples: List<FloatArray>,
     val voice: List<FloatArray> = emptyList(),
-)
+    /**
+     * Voiceprints from the WeSpeaker model, much surer than [voice] (see [VoiceId]), by the wake
+     * name they were said with ("nova", "tars"): "Hey TARS" sounds different from "Hey Nova", so
+     * each character is taught on its own.
+     */
+    val prints: Map<String, List<FloatArray>> = emptyMap(),
+    /** The voiceprints for the wake name in use, picked by [forWake]; what [VoiceId] matches. */
+    val print: List<FloatArray> = emptyList(),
+) {
+    fun printsFor(wakeName: String): List<FloatArray> = prints[WakeName.key(wakeName)].orEmpty()
+
+    /** This person as heard with [wakeName]: [print] holds that name's voiceprints. */
+    fun forWake(wakeName: String): KnownPerson = copy(print = printsFor(wakeName))
+
+    /** [more] voiceprints said with [wakeName] added to the ones already kept. */
+    fun withPrints(wakeName: String, more: List<FloatArray>): KnownPerson =
+        copy(prints = prints + (WakeName.key(wakeName) to VoiceId.with(printsFor(wakeName), more)))
+}
 
 /** Matches a face embedding against the people enrolled on this tablet. */
 object FaceMatcher {
@@ -105,9 +122,35 @@ object WakeName {
         return t.isNotEmpty() && phrases(name).any { it == t }
     }
 
+    /** One word the recogniser heard, and how sure it was (0–1). */
+    data class Word(val word: String, val conf: Double)
+
+    /**
+     * Whether the name was said somewhere in [words], each of its words at least [minConfidence]
+     * sure. Other words around it ("hey nova, lights on", a cough first) don't spoil it, which
+     * a whole-utterance match did; a decoy that starts with the name ("nova scotia") still does.
+     */
+    fun spot(words: List<Word>, name: String, minConfidence: Double): Boolean {
+        val own = clean(name).split(' ').filter { it.isNotEmpty() }
+        if (own.isEmpty()) return false
+        val heard = words.map { Word(clean(it.word), it.conf) }.filter { it.word.isNotEmpty() }
+        for (start in 0..heard.size - own.size) {
+            val run = heard.subList(start, start + own.size)
+            if (run.map { it.word } != own) continue
+            if (run.any { it.conf < minConfidence }) continue
+            val after = heard.getOrNull(start + own.size)?.word
+            if (after != null && DECOYS.any { it.startsWith(clean(name) + " ") && it.removePrefix(clean(name) + " ").substringBefore(' ') == after }) continue
+            return true
+        }
+        return false
+    }
+
     /** The words of [name] the speech model doesn't know; it can only wake on known words. */
     fun unknownWords(name: String, vocabulary: Set<String>): List<String> =
         clean(name).split(' ').filter { it.isNotEmpty() && it !in vocabulary }
+
+    /** The key voiceprints are kept under for [name]: "Hey TARS" and "tars" are the same. */
+    fun key(name: String): String = clean(name).removePrefix("hey ").removePrefix("hej ").ifEmpty { "nova" }
 
     fun clean(text: String): String =
         text.lowercase().replace(Regex("[^a-z' ]"), " ").split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")

@@ -369,7 +369,7 @@ private fun TagPicker(all: List<String>, chosen: Set<String>, onChosen: (Set<Str
 }
 
 @Composable
-private fun GlassField(
+internal fun GlassField(
     value: String,
     onValue: (String) -> Unit,
     placeholder: String,

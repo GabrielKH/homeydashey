@@ -167,33 +167,29 @@ object Vacuums {
             used += c.id
         }
         // The app's own Flow cards that the capabilities don't already cover.
-        val capWords = caps.map { words(it.id) - setOf("set", "button") }.toSet()
+        val capWords = caps.map { words(it.id) - SET_BUTTON }.toSet()
         val choiceCards = mutableListOf<VacuumChoiceCard>()
         cards.filter { it.id !in usedCards }.forEach { c ->
             val w = FlowCards.tokens(c.cardId)
             if (w.any { it in CARD_NOISE }) return@forEach
-            if ((w - setOf("set")) in capWords) return@forEach
+            if ((w - SET) in capWords) return@forEach
             if (mapPicker != null && "map" in w) return@forEach
             val args = c.inputArgs
             when {
                 args.isEmpty() -> buttons += VacuumButton(c.title ?: readable(c.cardId), VacuumCommand.Card(c))
-                args.size == 1 && args[0].type in setOf("dropdown", "autocomplete", "checkbox") ->
+                args.size == 1 && args[0].type in CHOICE_TYPES ->
                     choiceCards += VacuumChoiceCard(c.title ?: readable(c.cardId), c, args[0])
             }
         }
 
         val battery = caps.firstOrNull { it.id == "measure_battery" }?.numberValue
-        val chargingCap = caps.firstOrNull { it.id == "battery_charging_state" || "charging" in words(it.id) }
-        val charging = chargingCap?.let { c ->
-            c.booleanValue ?: c.stringValue?.lowercase()?.let { "charg" in it && "dis" !in it && "not" !in it }
-        } == true
-
-        val alarms = caps.filter { it.id.startsWith("alarm_") && it.booleanValue == true }
+        val charging = charging(caps)
+        val alarms = alarms(caps)
         val (state, statusText) = state(device, caps, alarms, charging)
 
         val readings = caps.filter {
             it.getable && !it.setable && it.type == "number" && it.numberValue != null &&
-                it.id != "measure_battery" && it.id !in setOf("position_x", "position_y") && parts.none { p -> p.capability == it.id }
+                it.id != "measure_battery" && it.id !in POSITION && parts.none { p -> p.capability == it.id }
         } + caps.filter { it.getable && !it.setable && it.type == "boolean" && !it.id.startsWith("alarm_") && it.id !in STATE_BOOLEANS && it.booleanValue != null }
 
         return VacuumControls(
@@ -224,6 +220,19 @@ object Vacuums {
     fun mapImage(device: Device): DeviceImage? =
         device.images.firstOrNull { img -> img.imageObj?.url != null && listOfNotNull(img.id, img.title).any { "map" in it.lowercase() } }
             ?: device.images.firstOrNull { it.type == "camera" && it.imageObj?.url != null }
+
+    /** Just what the robot is doing, as [controls] works it out, without building its controls. */
+    fun state(device: Device): VacuumState {
+        val caps = device.capabilities.mapNotNull { device.capability(it) }
+        return state(device, caps, alarms(caps), charging(caps)).first
+    }
+
+    private fun charging(caps: List<Capability>): Boolean =
+        caps.firstOrNull { it.id == "battery_charging_state" || "charging" in words(it.id) }?.let { c ->
+            c.booleanValue ?: c.stringValue?.lowercase()?.let { "charg" in it && "dis" !in it && "not" !in it }
+        } == true
+
+    private fun alarms(caps: List<Capability>) = caps.filter { it.id.startsWith("alarm_") && it.booleanValue == true }
 
     private fun state(device: Device, caps: List<Capability>, alarms: List<Capability>, charging: Boolean): Pair<VacuumState, String?> {
         if (!device.available) return VacuumState.Offline to null
@@ -272,9 +281,9 @@ object Vacuums {
         var text: RoomCleaning.Text? = null
         cards.forEach { c ->
             val args = c.inputArgs
-            if (args.isEmpty() || args.any { it.type !in setOf("autocomplete", "text", "number", "range") }) return@forEach
+            if (args.isEmpty() || args.any { it.type !in ROOM_CARD_TYPES }) return@forEach
             val roomArgs = args.filter { isRoomArg(it) }
-            if (roomArgs.isEmpty() || args.any { it !in roomArgs && it.type !in setOf("number", "range") }) return@forEach
+            if (roomArgs.isEmpty() || args.any { it !in roomArgs && it.type !in NUMBER_TYPES }) return@forEach
             when {
                 roomArgs.all { it.type == "autocomplete" } -> byCount.putIfAbsent(roomArgs.size, c)
                 roomArgs.size == 1 && roomArgs[0].type == "text" && text == null -> text = RoomCleaning.Text(c, roomArgs[0])
@@ -315,6 +324,19 @@ object Vacuums {
         return (preferred + cards).firstNotNullOfOrNull { card ->
             card.inputArgs.firstOrNull { it.type == "autocomplete" && isRoomArg(it) }?.let { card to it }
         }
+    }
+
+    /**
+     * A card that drives the robot to a room or spot without cleaning ("Go to room", "Move to
+     * kitchen"), with its room argument when it takes one; null when the app has none.
+     */
+    fun goToCard(cards: List<FlowCardAction>): Pair<FlowCardAction, FlowCardArg?>? = cards.firstNotNullOfOrNull { c ->
+        val w = FlowCards.tokens(c.cardId) + FlowCards.tokens(c.title.orEmpty())
+        val goes = "goto" in w || "navigate" in w || ("go" in w && "to" in w) || ("move" in w && "to" in w)
+        if (!goes || "clean" in w || w.any { it in DOCK_WORDS }) return@firstNotNullOfOrNull null
+        val roomArg = c.inputArgs.firstOrNull { isRoomArg(it) && it.type in ROOM_ARG_TYPES }
+        // Coordinates or anything else the user can't say aren't for a voice command.
+        if (c.inputArgs.any { it != roomArg }) null else c to roomArg
     }
 
     fun roomsFrom(items: List<AutocompleteItem>): List<VacuumRoom> = items.map { item ->
@@ -411,7 +433,8 @@ object Vacuums {
         }.toMap()
     }
 
-    private fun words(id: String): Set<String> = FlowCards.tokens(id.replace('.', '_'))
+    // tokens() already splits at dots.
+    private fun words(id: String): Set<String> = FlowCards.tokens(id)
 
     private fun title(c: Capability) = c.title?.takeIf { it.isNotBlank() } ?: readable(c.id)
 
@@ -431,6 +454,13 @@ object Vacuums {
         "locate", "find", "empty", "wash", "spot", "refresh", "reset", "clean", "start", "stop", "go", "beep", "identify", "evacuate", "self",
     )
     private val CARD_NOISE = setOf("raw", "payload", "dnd")
+    private val SET = setOf("set")
+    private val SET_BUTTON = setOf("set", "button")
+    private val CHOICE_TYPES = setOf("dropdown", "autocomplete", "checkbox")
+    private val POSITION = setOf("position_x", "position_y")
+    private val ROOM_CARD_TYPES = setOf("autocomplete", "text", "number", "range")
+    private val NUMBER_TYPES = setOf("number", "range")
+    private val ROOM_ARG_TYPES = setOf("autocomplete", "text", "dropdown")
     private val STATE_BOOLEANS = setOf("is_cleaning", "dock", "pause_clean", "clean_full", "onoff")
     private val PICKER_ORDER = listOf("suction", "fan", "power", "vacuum", "water", "scrub", "mop", "mode", "route", "brush")
     private val PART_ORDER = listOf("filter", "main_brush", "side_brush", "mop", "sensor", "dust_bag", "strainer")

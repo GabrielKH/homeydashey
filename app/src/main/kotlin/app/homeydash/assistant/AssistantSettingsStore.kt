@@ -52,6 +52,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         speakerId = p[SPEAKER]?.takeIf { it.isNotBlank() },
         speakerVolume = p[VOLUME]?.toIntOrNull() ?: 35,
         speak = p[SPEAK] != "false",
+        liveSpeech = p[LIVE_SPEECH] != "false",
+        // Before the levels, talking over was a plain switch.
+        interrupt = enumOr(p[INTERRUPT], if (p[TALK_OVER] == "false") app.homeydash.agent.Interrupt.Off else app.homeydash.agent.Interrupt.Clear),
         strangersAreGuests = p[STRANGERS] == "true",
         wake = p[WAKE] == "true",
         wakeName = p[WAKE_NAME] ?: AgentSettings().wakeName,
@@ -60,12 +63,26 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         micSensitivity = p[MIC_SENSITIVITY]?.toIntOrNull() ?: MicSensitivity.DEFAULT,
         seeHiddenDevices = p[SEE_HIDDEN] != "false",
         face = enumOr(p[FACE], FaceStyle.Orb),
+        view = enumOr(p[VIEW], app.homeydash.agent.AssistantView.Full),
         voice = enumOr(p[VOICE], VoiceStyle.Natural),
+        wakeSound = enumOr(p[WAKE_SOUND], app.homeydash.agent.WakeSound.Hum),
+        persona = enumOr(p[PERSONA], app.homeydash.agent.Persona.Nova),
+        humor = p[HUMOR]?.toIntOrNull()?.coerceIn(0, 100) ?: 75,
+        novaName = p[NOVA_NAME] ?: AgentSettings().novaName,
         classicRed = p[CLASSIC_RED] == "true",
         useWhisper = p[USE_WHISPER] == "true",
         whisperUrl = p[WHISPER_URL].orEmpty(),
+        voiceServerUrl = p[VOICE_SERVER_URL].orEmpty(),
+        voiceServerModel = p[VOICE_SERVER_MODEL]?.takeIf { it.isNotBlank() } ?: app.homeydash.agent.DEFAULT_VOICE_MODEL,
+        voiceServerVoice = p[VOICE_SERVER_VOICE].orEmpty(),
         useOpenAiSpeech = p[USE_OPENAI_SPEECH] == "true",
         openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
+        sendLogs = p[SEND_LOGS] == "true",
+        compactTools = p[COMPACT_TOOLS] != "false",
+        logToken = p[LOG_TOKEN]?.let(KeystoreCipher::decrypt).orEmpty(),
+        logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
+        spotifyClientId = p[SPOTIFY_ID].orEmpty(),
+        spotifySecret = p[SPOTIFY_SECRET]?.let(KeystoreCipher::decrypt).orEmpty(),
     )
 
     private fun write(p: MutablePreferences, s: AgentSettings) {
@@ -79,6 +96,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[SPEAKER] = s.speakerId.orEmpty()
         p[VOLUME] = s.speakerVolume.toString()
         p[SPEAK] = s.speak.toString()
+        p[LIVE_SPEECH] = s.liveSpeech.toString()
+        p[INTERRUPT] = s.interrupt.name
         p[STRANGERS] = s.strangersAreGuests.toString()
         p[WAKE] = s.wake.toString()
         p[WAKE_NAME] = s.wakeName
@@ -87,12 +106,26 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[MIC_SENSITIVITY] = s.micSensitivity.toString()
         p[SEE_HIDDEN] = s.seeHiddenDevices.toString()
         p[FACE] = s.face.name
+        p[VIEW] = s.view.name
         p[VOICE] = s.voice.name
+        p[WAKE_SOUND] = s.wakeSound.name
+        p[PERSONA] = s.persona.name
+        p[HUMOR] = s.humor.toString()
+        p[NOVA_NAME] = s.novaName
         p[CLASSIC_RED] = s.classicRed.toString()
         p[USE_WHISPER] = s.useWhisper.toString()
         p[WHISPER_URL] = s.whisperUrl.trim()
+        p[VOICE_SERVER_URL] = s.voiceServerUrl.trim()
+        p[VOICE_SERVER_MODEL] = s.voiceServerModel.trim()
+        p[VOICE_SERVER_VOICE] = s.voiceServerVoice.trim()
         p[USE_OPENAI_SPEECH] = s.useOpenAiSpeech.toString()
         p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
+        p[SEND_LOGS] = s.sendLogs.toString()
+        p[COMPACT_TOOLS] = s.compactTools.toString()
+        p[LOG_TOKEN] = KeystoreCipher.encrypt(s.logToken.trim())
+        p[LOG_REPO] = s.logRepo.trim()
+        p[SPOTIFY_ID] = s.spotifyClientId.trim()
+        p[SPOTIFY_SECRET] = KeystoreCipher.encrypt(s.spotifySecret.trim())
     }
 
     private fun connection(p: Preferences, slot: String): Connection? {
@@ -128,16 +161,33 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WAKE = stringPreferencesKey("wake")
         val WAKE_NAME = stringPreferencesKey("wake_name")
         val KNOWN_VOICES = stringPreferencesKey("known_voices")
+        val LIVE_SPEECH = stringPreferencesKey("live_speech")
+        val TALK_OVER = stringPreferencesKey("talk_over")
+        val INTERRUPT = stringPreferencesKey("interrupt")
         val FOLLOW_UP = stringPreferencesKey("follow_up")
         val MIC_SENSITIVITY = stringPreferencesKey("mic_sensitivity")
         val SEE_HIDDEN = stringPreferencesKey("see_hidden_devices")
         val FACE = stringPreferencesKey("face")
+        val VIEW = stringPreferencesKey("assistant_view")
         val VOICE = stringPreferencesKey("voice")
+        val WAKE_SOUND = stringPreferencesKey("wake_sound")
+        val PERSONA = stringPreferencesKey("persona")
+        val HUMOR = stringPreferencesKey("humor")
+        val NOVA_NAME = stringPreferencesKey("nova_name")
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val USE_WHISPER = stringPreferencesKey("use_whisper")
         val WHISPER_URL = stringPreferencesKey("whisper_url")
+        val VOICE_SERVER_URL = stringPreferencesKey("voice_server_url")
+        val VOICE_SERVER_MODEL = stringPreferencesKey("voice_server_model")
+        val VOICE_SERVER_VOICE = stringPreferencesKey("voice_server_voice")
         val USE_OPENAI_SPEECH = stringPreferencesKey("use_openai_speech")
         val OPENAI_SPEECH_KEY = stringPreferencesKey("openai_speech_key")
+        val SPOTIFY_ID = stringPreferencesKey("spotify_client_id")
+        val SPOTIFY_SECRET = stringPreferencesKey("spotify_secret")
+        val SEND_LOGS = stringPreferencesKey("send_logs")
+        val COMPACT_TOOLS = stringPreferencesKey("compact_tools")
+        val LOG_TOKEN = stringPreferencesKey("log_token")
+        val LOG_REPO = stringPreferencesKey("log_repo")
 
         inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
             name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default

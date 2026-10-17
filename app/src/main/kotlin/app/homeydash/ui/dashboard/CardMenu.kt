@@ -1,6 +1,8 @@
 package app.homeydash.ui.dashboard
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,7 +48,8 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * What a long press on a card opens: the card's own extras (lamp, unlock, remote),
- * moving it within its group, putting it in a group, and hiding it on this tablet.
+ * moving it within its group, putting it in a group, what it is and what else it's called
+ * (for the cards and the assistant), and hiding it on this tablet.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -57,6 +60,8 @@ fun CardMenu(
     actions: DashboardActions,
     onOrder: (zoneId: String, order: List<String>) -> Unit,
     onGroup: (title: String?) -> Unit,
+    onClass: (cls: String?) -> Unit,
+    onNicknames: (names: List<String>) -> Unit,
     onHide: () -> Unit,
     pinned: Boolean,
     onPin: (Boolean) -> Unit,
@@ -71,72 +76,111 @@ fun CardMenu(
     GlassDialog(onDismiss = onDismiss, width = 520.dp) {
         DialogHeader(title = device.name, subtitle = section?.zone?.name, onClose = onDismiss)
 
-        val locked = device.capability("locked")
-        val extras = buildList<MenuExtra> {
-            if (hasLightControls(device) && device.available) add(MenuExtra(Sym.sliders, "Light controls") { actions.open(Sheet.Light(device.id)) })
-            if (locked?.setable == true && locked?.booleanValue == true && device.available) {
-                add(MenuExtra(Sym.lockOpen, "Unlock") { actions.set(device.id, "locked", JsonPrimitive(false)); onDismiss() })
-            }
-            if (actions.hasRemote(device)) add(MenuExtra(Sym.remote, "Remote") { actions.open(Sheet.Remote(device.id)) })
-        }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            MenuChip(if (pinned) Sym.pushPinSlash else Sym.pushPin, if (pinned) "Remove from overview" else "Add to overview", selected = pinned) {
-                onPin(!pinned)
-                onDismiss()
-            }
-            extras.forEach { extra -> MenuChip(extra.icon, extra.label, onClick = extra.onClick) }
-        }
-        Text("Tip: hold a card and drag it to move it.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
-
-        if (section != null && position != null && position.second > 1) {
-            MenuLabel("Order")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MenuChip(Sym.keyboardArrowLeft, "Move earlier", enabled = position.first > 0) {
-                    onOrder(section.zone.id, CardLayout.move(section, arrangement, device.id, -1))
+        // Scrolls when everything doesn't fit on the screen.
+        Column(
+            Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            val locked = device.capability("locked")
+            val extras = buildList<MenuExtra> {
+                if (hasLightControls(device) && device.available) add(MenuExtra(Sym.sliders, "Light controls") { actions.open(Sheet.Light(device.id)) })
+                if (locked?.setable == true && locked?.booleanValue == true && device.available) {
+                    add(MenuExtra(Sym.lockOpen, "Unlock") { actions.set(device.id, "locked", JsonPrimitive(false)); onDismiss() })
                 }
-                MenuChip(Sym.keyboardArrowRight, "Move later", enabled = position.first < position.second - 1) {
-                    onOrder(section.zone.id, CardLayout.move(section, arrangement, device.id, +1))
+                if (actions.hasRemote(device)) add(MenuExtra(Sym.remote, "Remote") { actions.open(Sheet.Remote(device.id)) })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MenuChip(if (pinned) Sym.pushPinSlash else Sym.pushPin, if (pinned) "Remove from overview" else "Add to overview", selected = pinned) {
+                    onPin(!pinned)
+                    onDismiss()
+                }
+                extras.forEach { extra -> MenuChip(extra.icon, extra.label, onClick = extra.onClick) }
+            }
+            Text("Tip: hold a card and drag it to move it.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+
+            if (section != null && position != null && position.second > 1) {
+                MenuLabel("Order")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MenuChip(Sym.keyboardArrowLeft, "Move earlier", enabled = position.first > 0) {
+                        onOrder(section.zone.id, CardLayout.move(section, arrangement, device.id, -1))
+                    }
+                    MenuChip(Sym.keyboardArrowRight, "Move later", enabled = position.first < position.second - 1) {
+                        onOrder(section.zone.id, CardLayout.move(section, arrangement, device.id, +1))
+                    }
                 }
             }
-        }
 
-        MenuLabel("Group")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            MenuChip(null, DashboardLayout.group(device).title, selected = current == null) { onGroup(null) }
-            customTitles.forEach { title -> MenuChip(null, title, selected = current == title) { onGroup(title) } }
-            if (newGroup == null) MenuChip(Sym.add, "New group") { newGroup = "" }
-        }
-        newGroup?.let { text ->
+            MenuLabel("Group")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MenuChip(null, DashboardLayout.group(device).title, selected = current == null) { onGroup(null) }
+                customTitles.forEach { title -> MenuChip(null, title, selected = current == title) { onGroup(title) } }
+                if (newGroup == null) MenuChip(Sym.add, "New group") { newGroup = "" }
+            }
+            newGroup?.let { text ->
+                Row(
+                    Modifier.fillMaxWidth().glass(PillShape).padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        if (text.isEmpty()) Text("Group name, e.g. Ceiling", style = MaterialTheme.typography.bodyLarge, color = g.muted)
+                        BasicTextField(
+                            value = text,
+                            onValueChange = { newGroup = it },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = g.fg),
+                            cursorBrush = SolidColor(g.fg),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) { onGroup(text.trim()); newGroup = null } }),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    MenuChip(Sym.check, "Add", enabled = text.isNotBlank(), primary = true) { onGroup(text.trim()); newGroup = null }
+                }
+            }
+
+            MenuLabel("What it is")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MenuChip(null, "As in Homey (${classLabel(device.homeyClass)})", selected = device.classOverride == null) { onClass(null) }
+                DEVICE_TYPES.forEach { (cls, label) ->
+                    MenuChip(null, label, selected = device.classOverride == cls) { onClass(cls) }
+                }
+            }
+
+            MenuLabel("Also called")
+            var names by remember(device.id) { mutableStateOf(device.nicknames.joinToString(", ")) }
+            val saved = device.nicknames.joinToString(", ")
+            fun save() = onNicknames(names.split(',').map { it.trim() }.filter { it.isNotEmpty() })
             Row(
                 Modifier.fillMaxWidth().glass(PillShape).padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.weight(1f)) {
-                    if (text.isEmpty()) Text("Group name, e.g. Ceiling", style = MaterialTheme.typography.bodyLarge, color = g.muted)
+                    if (names.isEmpty()) Text("Other names, e.g. The Frame, tv:n", style = MaterialTheme.typography.bodyLarge, color = g.muted)
                     BasicTextField(
-                        value = text,
-                        onValueChange = { newGroup = it },
+                        value = names,
+                        onValueChange = { names = it },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = g.fg),
                         cursorBrush = SolidColor(g.fg),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) { onGroup(text.trim()); newGroup = null } }),
+                        keyboardActions = KeyboardActions(onDone = { save() }),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                MenuChip(Sym.check, "Add", enabled = text.isNotBlank(), primary = true) { onGroup(text.trim()); newGroup = null }
+                MenuChip(Sym.check, "Save", enabled = names.trim() != saved, primary = names.trim() != saved) { save() }
             }
-        }
+            Text("The assistant knows the device by these names too. Separate them with commas.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
 
-        Row(
-            Modifier.fillMaxWidth().pressable({ onHide(); onDismiss() }).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            SymIcon(Sym.visibilityOff, size = 20.dp, tint = g.danger)
-            Column(Modifier.weight(1f)) {
-                Text("Hide on this tablet", style = MaterialTheme.typography.labelLarge, color = g.danger)
-                Text("Settings → Choose devices to show brings it back.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+            Row(
+                Modifier.fillMaxWidth().pressable({ onHide(); onDismiss() }).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SymIcon(Sym.visibilityOff, size = 20.dp, tint = g.danger)
+                Column(Modifier.weight(1f)) {
+                    Text("Hide on this tablet", style = MaterialTheme.typography.labelLarge, color = g.danger)
+                    Text("Settings → Choose devices to show brings it back.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                }
             }
         }
     }
@@ -172,6 +216,20 @@ fun RoomMenu(
         Text("Settings → Hide and sort rooms brings hidden rooms back.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
     }
 }
+
+/** What the owner can say a device is, when Homey has it wrong. */
+private val DEVICE_TYPES = listOf(
+    "light" to "Light",
+    "socket" to "Plug",
+    "tv" to "TV",
+    "speaker" to "Speaker",
+    "fan" to "Fan",
+    "heater" to "Heater",
+    "other" to "Other",
+)
+
+private fun classLabel(cls: String): String =
+    DEVICE_TYPES.firstOrNull { it.first == cls }?.second?.lowercase() ?: cls
 
 private class MenuExtra(val icon: Ic, val label: String, val onClick: () -> Unit)
 

@@ -24,8 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import app.homeydash.ui.components.AppDialog
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
@@ -86,10 +85,10 @@ fun SettingsDialog(
     onDismiss: () -> Unit,
 ) {
     val g = GlassTheme.colors
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    AppDialog(onDismiss) {
         Column(
             Modifier
-                .dialogSize(560.dp)
+                .dialogSize(560.dp, tall = true)
                 .background(g.wallBase, PanelShape)
                 .glass()
                 .verticalScroll(rememberScrollState())
@@ -316,6 +315,7 @@ fun SettingsDialog(
                     when (update) {
                         is AppUpdater.State.Available -> "Version $version · a newer one is ready"
                         is AppUpdater.State.Downloading -> "Downloading the update…"
+                        is AppUpdater.State.ReadyToInstall -> "Opening the installer…"
                         is AppUpdater.State.Failed -> "Update failed: ${update.message}"
                         AppUpdater.State.UpToDate -> "Version $version"
                     },
