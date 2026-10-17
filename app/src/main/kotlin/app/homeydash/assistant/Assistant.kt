@@ -46,6 +46,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -136,20 +138,26 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
         return ms
     }
 
+    private val sending = Mutex()
+
     /** Sends what hasn't been sent yet; returns what happened, in words. */
     suspend fun sendLog(): String {
         val s = settings.value
         val result = when {
             s.logToken.isBlank() -> "Add a GitHub token first."
-            else -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val entries = log.unsent()
-                if (entries.isEmpty()) return@withContext "Nothing new to send."
-                try {
-                    github.post(s.logToken, s.logRepo.trim().ifBlank { AgentLog.DEFAULT_REPO }, log.markdown(entries, android.os.Build.MODEL))
-                    log.sent(entries.size)
-                    "Sent ${entries.size} lines at " + java.time.LocalTime.now().withNano(0).toString().take(5) + "."
-                } catch (e: java.io.IOException) {
-                    e.message ?: "Couldn't send the logs."
+            // One send at a time, and a new line cancelling the wait mustn't cut a send short: the
+            // comment would be posted but the lines kept as unsent, so they went to GitHub twice.
+            else -> sending.withLock {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
+                    val entries = log.unsent()
+                    if (entries.isEmpty()) return@withContext "Nothing new to send."
+                    try {
+                        github.post(s.logToken, s.logRepo.trim().ifBlank { AgentLog.DEFAULT_REPO }, log.markdown(entries, android.os.Build.MODEL))
+                        log.sent(entries.size)
+                        "Sent ${entries.size} lines at " + java.time.LocalTime.now().withNano(0).toString().take(5) + "."
+                    } catch (e: java.io.IOException) {
+                        e.message ?: "Couldn't send the logs."
+                    }
                 }
             }
         }
