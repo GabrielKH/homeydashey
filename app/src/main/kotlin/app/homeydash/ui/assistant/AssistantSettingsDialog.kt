@@ -784,6 +784,15 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        val range = app.homeydash.agent.PACE_RANGE
+        Text("Speaking speed ${settings.pace} %", style = MaterialTheme.typography.labelLarge, color = g.fg)
+        GlassSlider(
+            (settings.pace - range.first) / (range.last - range.first).toFloat(),
+            { v -> update { it.copy(pace = (range.first + v * (range.last - range.first)).toInt().coerceIn(range)) } },
+            Modifier.weight(1f),
+        )
+    }
     if (settings.voice.local && settings.voice != VoiceStyle.Tars) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }

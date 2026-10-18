@@ -18,7 +18,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 
 /** Lets the assistant drive the dashboard: pages, device panels, Goodnight, weather, calendar, timers, theme. */
 class AssistantBridge(
@@ -86,26 +85,24 @@ class AssistantBridge(
         val c = f.current
         val now = "${weather.state.value.placeName ?: "Here"}: ${c.kind.label}, ${c.temperature.toInt()} °C" +
             (c.feelsLike?.let { ", feels like ${it.toInt()} °C" } ?: "") + (c.wind?.let { ", wind ${it.toInt()} m/s" } ?: "")
+        val today = LocalDate.now()
         val days = f.days.take(4).joinToString("\n") { d ->
-            "${d.date}: ${d.kind.label}, ${d.min.toInt()} to ${d.max.toInt()} °C" + (d.rainChance?.let { ", rain $it%" } ?: "")
+            "${app.homeydash.agent.SpokenDates.day(d.date, today)}: ${d.kind.label}, ${d.min.toInt()} to ${d.max.toInt()} °C" + (d.rainChance?.let { ", rain $it%" } ?: "")
         }
         return "$now\n$days"
     }
 
     override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent> {
         if (!calendar.hasPermission.value) return emptyList()
+        // All-day events are stored at midnight UTC, timed ones in local time.
         val zone = ZoneId.systemDefault()
-        val day = DateTimeFormatter.ofPattern("EEE d MMM")
-        val time = DateTimeFormatter.ofPattern("EEE d MMM HH:mm")
+        val today = LocalDate.now()
         return calendar.events(from, from.plusDays(days.toLong())).map { e ->
-            if (e.allDay) {
-                val start = Instant.ofEpochMilli(e.begin).atZone(ZoneOffset.UTC).toLocalDate()
-                AgentEvent(e.title, start.format(day) + " (all day)", null, true, e.location.takeIf { withLocations })
-            } else {
-                val start = Instant.ofEpochMilli(e.begin).atZone(zone)
-                val end = Instant.ofEpochMilli(e.end).atZone(zone)
-                AgentEvent(e.title, start.format(time), end.format(DateTimeFormatter.ofPattern("HH:mm")), false, e.location.takeIf { withLocations })
-            }
+            val at = if (e.allDay) ZoneOffset.UTC else zone
+            val start = Instant.ofEpochMilli(e.begin).atZone(at).toLocalDateTime()
+            val end = Instant.ofEpochMilli(e.end).atZone(at).toLocalDateTime()
+            val (begins, ends) = app.homeydash.agent.SpokenDates.event(start, end, e.allDay, today)
+            AgentEvent(e.title, begins, ends, e.allDay, e.location.takeIf { withLocations })
         }
     }
 

@@ -403,7 +403,9 @@ class RoutineTools(private val book: RoutineBook) {
 /** How a routine's run is put in words: for the AI to answer from, or spoken as is when there is no AI. */
 object RoutineText {
     fun forBrain(routine: Routine, run: RoutineRun, later: List<RoutineStep>): String = buildString {
-        append("Routine \"").append(routine.name).append("\", made by the owner. The app has already done its steps; don't do them again.\n")
+        append("Routine \"").append(routine.name).append("\", made by the owner. The app has done its steps and read what is below; answer now in words, ")
+        append("without tools unless the instructions ask for something not done yet. Don't mention the routine, its steps or this note: just talk to the user. ")
+        append("Say dates and times as a person would (\"today\", \"on Sunday\", \"at nine\"); an event that started on an earlier day is still going on.\n")
         run.done.forEach { append("Done: ").append(it).append('\n') }
         run.info.forEach { (heading, text) -> append(heading).append(":\n").append(text).append('\n') }
         if (later.isNotEmpty()) {

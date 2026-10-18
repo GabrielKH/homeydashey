@@ -128,6 +128,11 @@ class StoreHomeControl(
         // The home's own favourites, playlists and radio first; a catalogue like Spotify when
         // none of them is clearly what was asked for.
         val (catalogues, own) = sources.partition { it.catalogue }
+        // "radio P1", "kanalen P3": a station, which only the home's own radio has; Spotify
+        // would find songs that merely look alike ("#1TAKE, Pt. 1" for P1).
+        val asked = kind?.trim()?.lowercase()
+        val radio = asked == "radio" || (asked.isNullOrEmpty() && (RADIO.containsMatchIn(NameMatch.normalize(query)) || STATION.matches(NameMatch.normalize(query))))
+        @Suppress("NAME_SHADOWING") val query = if (radio) NameMatch.normalize(query).replace(RADIO, " ").trim().ifBlank { query } else query
         // Why a search failed (Spotify refusing the keys, say), so a miss can say so instead of "couldn't find".
         var trouble: Throwable? = null
         suspend fun look(list: List<MusicSource>): List<Pair<MusicSource, AutocompleteItem>> = list.flatMap { source ->
@@ -138,14 +143,16 @@ class StoreHomeControl(
             maxOf(NameMatch.score(query, item.name), NameMatch.score(query, listOfNotNull(item.name, item.description).joinToString(" ")))
         val found = look(own)
         val ownBest: Pair<MusicSource, AutocompleteItem>? = NameMatch.best(query, found) { score(it.second) }
-        var best: Pair<MusicSource, AutocompleteItem>? = ownBest?.takeIf { catalogues.isEmpty() || score(it.second) >= OWN_IS_ENOUGH }
-        if (best == null && catalogues.isNotEmpty()) {
+        var best: Pair<MusicSource, AutocompleteItem>? = ownBest?.takeIf { catalogues.isEmpty() || radio || score(it.second) >= OWN_IS_ENOUGH }
+        if (best == null && catalogues.isNotEmpty() && !radio) {
             // "playlist party hits": Spotify then finds the playlist, not an artist called Party Hits.
             val word = kind?.let { KIND_WORDS[it.trim().lowercase()] }
             val hits = if (word == null) look(catalogues) else catalogues.flatMap { source ->
                 runCatching { choices(source.card, source.arg, "$word $query") }.onFailure { trouble = it }.getOrDefault(emptyList()).map { source to it }
             }
-            best = NameMatch.best(query, hits) { score(it.second) } ?: hits.firstOrNull()
+            val hit = NameMatch.best(query, hits) { score(it.second) }
+            // The home's own near match beats a catalogue's guess.
+            best = listOfNotNull(ownBest, hit).maxByOrNull { score(it.second) } ?: hits.firstOrNull()
         }
         best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" }
             ?: trouble?.let { throw java.io.IOException("Searching for \"$query\" failed: ${it.message}", it) }
@@ -177,6 +184,11 @@ class StoreHomeControl(
         private val KIND_WORDS = mapOf(
             "playlist" to "playlist", "album" to "album", "song" to "song", "track" to "song", "artist" to "artist",
         )
+
+        /** Words that make a request a radio station. */
+        private val RADIO = Regex("""\b(radio\w*|kanal\w*|station\w*|channel)\b""")
+        /** Swedish Radio's stations said bare: "P1", "P4 Stockholm". */
+        private val STATION = Regex("""p ?[1-4]( \w+)?""")
 
         private val ANYTHING = Regex(
             "(anything|something|whatever|surprise me|random|you choose|any music|some music|music|" +

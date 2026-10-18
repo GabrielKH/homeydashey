@@ -173,6 +173,8 @@ class Agent(
             var changed = false
             var nudged = false
             var emptied = false
+            // Calls it asked for again after they were done: twice means it's going round in circles.
+            var repeats = 0
             val actions = mutableListOf<String>()
             // What each call did this turn, so the same change asked for twice isn't done twice.
             val done = mutableMapOf<String, ToolResult>()
@@ -252,6 +254,7 @@ class Agent(
                             heard.trace("guard", "Asked for $key again after it failed; not tried again.")
                             ToolResult("That exact call just failed: ${before.text} Don't try it again; try another way or tell the user what went wrong.", before.localOnly)
                         } else if (before != null) {
+                            repeats++
                             heard.trace("guard", "Asked for $key again; not done twice.")
                             ToolResult("Already done a moment ago: ${before.text} Don't do it again; answer the user.", before.localOnly)
                         } else {
@@ -266,6 +269,11 @@ class Agent(
                         localOnly = localOnly || result.localOnly
                         result.pending?.let { pending = it }
                         turn += ChatMessage.tool(call.id, result.text)
+                    }
+                    if (repeats >= MAX_REPEATS) {
+                        heard.trace("guard", "Kept asking for calls already done; stopped.")
+                        remember(turn, localOnly)
+                        return AgentReply("Sorry, I got stuck going round in circles.", brain, pending, error = true, actions = actions)
                     }
                 }
                 remember(turn, localOnly)
@@ -706,6 +714,8 @@ class Agent(
         private const val W = """(?<![\p{L}\d_])"""
         private const val E = """(?![\p{L}\d_])"""
         /** Tools that only look. */
+        /** Repeated calls before it stops instead of using up every round. */
+        const val MAX_REPEATS = 2
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines")
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
         val SETS = setOf("set_device", "set_room", "run_flow", "play_music", "run_device_action", "press_remote")

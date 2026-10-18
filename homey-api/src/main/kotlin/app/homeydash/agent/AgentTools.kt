@@ -88,7 +88,7 @@ class AgentTools(
         add(tool("play_music", "Play a song, album, artist, playlist, favourite or radio station on a player (e.g. a Sonos); finds anything on Spotify when set up.") {
             string("player", "Player alias")
             string("query", "What they asked for in their words: a title with the artist if said (\"Dancing Queen ABBA\"), or a genre, mood or chart (\"swedish top 50\", \"calm female vocals\"); empty only when they let you choose")
-            string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), or omit for a favourite or station")
+            string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), radio for a station (\"P1\", \"radio P3\"), or omit for a favourite")
             required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
@@ -631,7 +631,7 @@ class AgentTools(
         val count = (days ?: 1.0).toInt().coerceIn(1, 31)
         val events = dashboard.calendar(from, count, withLocations = view.allows(Secret.CalendarDetails))
         val text = if (events.isEmpty()) "No events." else events.joinToString("\n") { e ->
-            listOfNotNull(e.start + (e.end?.let { "–$it" } ?: ""), e.title, e.location).joinToString(" · ")
+            listOfNotNull(e.start + (e.end?.let { " to $it" } ?: ""), e.title, e.location).joinToString(" · ")
         }
         return ToolResult(text, localOnly(Secret.Calendar) || localOnly(Secret.CalendarDetails))
     }
