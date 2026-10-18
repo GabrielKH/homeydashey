@@ -228,6 +228,27 @@ object Memory {
     }
 
     /**
+     * One of [name] eaten or finished in the kitchen (scanned again, or taken out by the
+     * assistant), counted as a house habit; when the last one went, also how many days it
+     * lasted from purchase ([lastedDays]), so "how fast do we go through milk?" can be answered.
+     */
+    fun finished(name: String, lastedDays: Int?, at: ZonedDateTime): List<Fact> {
+        val product = name.trim().takeIf { it.isNotEmpty() } ?: return emptyList()
+        val habit = Fact(
+            who = HOUSE,
+            subject = "The house",
+            relation = "finishes",
+            obj = product,
+            kind = FactKind.Habit,
+            parts = mapOf(partOfDay(at) to 1),
+        )
+        val lasted = lastedDays?.takeIf { it in 0..365 }?.let { days ->
+            Fact(who = HOUSE, subject = product, relation = "lasts the house", obj = if (days == 1) "1 day" else "$days days", kind = FactKind.Learned)
+        }
+        return listOfNotNull(habit, lasted)
+    }
+
+    /**
      * The character and voice [person] picked under People, as one fact a new pick replaces, so
      * the assistant can say who they talk with ("Gabriel talks with TARS").
      */

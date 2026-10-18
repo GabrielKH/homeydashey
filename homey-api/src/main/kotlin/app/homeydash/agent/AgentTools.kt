@@ -21,7 +21,10 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import app.homeydash.homey.HomeyAlarm
+import app.homeydash.homey.Household
 import java.time.LocalDate
+import java.time.ZonedDateTime
 
 /**
  * Something the assistant wants to do that needs a yes first. [tapOnly] actions (like
@@ -51,6 +54,7 @@ class AgentTools(
     private val routines: RoutineTools? = null,
     /** What the assistant remembers from earlier conversations; null when it remembers nothing. */
     private val memory: MemoryTools? = null,
+    private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
     /**
      * Set once this conversation has seen something kept to the local AI; from then on
@@ -151,7 +155,25 @@ class AgentTools(
             string("start_date", "First day, yyyy-mm-dd; default today")
             number("days", "How many days, 1-31; default 1")
         })
-        if (view.allows(Secret.Presence)) add(tool("who_is_home", "Which Homey users are home or asleep.") {})
+        if (view.allows(Secret.Presence)) add(tool("who_is_home", "Which Homey users are home or asleep, and since when.") {})
+        if (!guest && view.allows(Secret.Presence)) add(tool(
+            "set_presence",
+            "Tell Homey someone is home, away, asleep or awake (\"jag går nu\", \"Anna sover\"); Homey Flows react to it.",
+        ) {
+            string("person", "Whose, as who_is_home names them; omit for the asker, or \"everyone\" for everyone home")
+            string("state", "home, away, asleep or awake")
+            required("state")
+        })
+        if (!guest && view.allows(Secret.WakeAlarms)) add(tool(
+            "alarms",
+            "Homey's wake-up alarms: list, set (\"väck mig 6:15\"), on, off, skip (no ring next time only, \"ingen väckning imorgon\") or delete.",
+        ) {
+            string("action", "list, set, on, off, skip or delete")
+            string("time", "For set: HH:mm, 24-hour, e.g. 06:15")
+            string("days", "For set: once (default), weekdays, weekends, every day, or days like \"mon, wed\"")
+            string("name", "The alarm's name; omit for the asker's own")
+            required("action")
+        })
         if (view.phones.isNotEmpty()) add(tool(
             "find_phone",
             "Find a phone in the house: ring it (it plays a loud sound, even on silent) and say whether it is home and its battery. " +
@@ -229,6 +251,8 @@ class AgentTools(
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
             "calendar" -> calendar(a.str("start_date"), a.num("days"))
             "who_is_home" -> whoIsHome()
+            "set_presence" -> setPresence(a.str("person"), a.str("state"))
+            "alarms" -> alarms(a.str("action"), a.str("time"), a.str("days"), a.str("name"))
             "find_phone" -> findPhone(a.str("phone"), a.str("action"))
             "variables" -> variables()
             "ask_internet" -> askInternet(a.str("question"))
@@ -767,12 +791,118 @@ class AgentTools(
 
     private suspend fun whoIsHome(): ToolResult {
         if (!view.allows(Secret.Presence)) return ok("Presence is switched off.")
+        val now = clock()
         val text = home.people().joinToString("\n") { p ->
             val where = when (p.present) { true -> "home"; false -> "away"; null -> "unknown" }
-            "${p.name}: $where${if (p.asleep == true) ", asleep" else ""}"
+            val since = p.since?.let { " since " + Household.whenText(java.time.Instant.ofEpochMilli(it).atZone(now.zone), now).removePrefix("today ") }.orEmpty()
+            "${p.name}: $where${if (p.asleep == true) ", asleep" else ""}$since"
         }.ifBlank { "No Homey users." }
         return ToolResult(text, localOnly(Secret.Presence))
     }
+
+    /** Marks someone home, away, asleep or awake in Homey; the asker when no one is named. */
+    private suspend fun setPresence(person: String, state: String): ToolResult {
+        if (!view.allows(Secret.Presence)) return ok("Presence is switched off.")
+        val lo = localOnly(Secret.Presence)
+        val s = state.trim().lowercase()
+        val (present, asleep) = when {
+            s in setOf("home", "hemma", "present", "back", "arrived") -> true to null
+            s in setOf("away", "borta", "out", "left", "gone", "ute") -> false to false
+            s in setOf("asleep", "sleep", "sleeping", "sover", "sova", "night") -> null to true
+            s in setOf("awake", "wake", "up", "vaken", "uppe", "morning") -> null to false
+            else -> return ok("Say home, away, asleep or awake.")
+        }
+        val people = home.people().filter { it.id.isNotEmpty() }
+        if (people.isEmpty()) return ToolResult("No Homey users to mark.", lo)
+        val asked = person.trim()
+        val chosen = when {
+            EVERYONE.matches(asked) -> people.filter { it.present == true }.ifEmpty { return ToolResult("Nobody is home.", lo) }
+            asked.isEmpty() || OWN_PHONE.matches(asked) -> {
+                val asker = view.settings.asker ?: return ToolResult("I don't know who is asking. Say whose, e.g. \"Anna\".", lo)
+                listOf(people.firstOrNull { NameMatch.score(asker.name, it.name) >= 0.9 }
+                    ?: return ToolResult("${asker.name} isn't a Homey user, so Homey can't mark them.", lo))
+            }
+            else -> listOf(NameMatch.best(asked, people) { NameMatch.score(asked, it.name) }
+                ?: return ToolResult("There's no Homey user called $asked. Users: ${people.joinToString { it.name }}.", lo))
+        }
+        for (p in chosen) {
+            try {
+                home.setPresence(p.id, present, asleep)
+            } catch (e: app.homeydash.homey.HomeyHttpException) {
+                if (e.code == 401 || e.code == 403) return ToolResult("The Homey API key may not change presence. Give it the \"Presence\" permission in the Homey web app.", lo)
+                throw e
+            }
+        }
+        val word = when { asleep == true -> "asleep"; asleep == false && present == null -> "awake"; present == true -> "home"; else -> "away" }
+        return ToolResult("Homey now has ${chosen.joinToString { it.name }} as $word.", lo)
+    }
+
+    /** Lists, sets and switches Homey's wake-up alarms; an unnamed alarm is the asker's own. */
+    private suspend fun alarms(action: String, time: String, days: String, name: String): ToolResult {
+        if (!view.allows(Secret.WakeAlarms)) return ok("Wake-up alarms are switched off for the assistant.")
+        val lo = localOnly(Secret.WakeAlarms)
+        val now = clock()
+        val list = home.alarms()
+        val asker = view.settings.asker
+        fun describe(a: HomeyAlarm): String {
+            val ring = Household.nextRing(a, now)
+            return "${a.name}: ${Household.timeText(a.time)}, ${Household.daysText(a.days)}, " +
+                (if (ring != null) "rings ${Household.whenText(ring, now)}" else "off")
+        }
+        // "mitt alarm": the one named after the asker.
+        fun mine(): HomeyAlarm? = asker?.let { who -> list.firstOrNull { it.name.contains(who.name, ignoreCase = true) } }
+        // The named one, else the asker's, else the only one there is.
+        fun target(): HomeyAlarm? {
+            val asked = name.trim()
+            if (asked.isNotEmpty()) return NameMatch.best(asked, list) { NameMatch.score(asked, it.name) }
+            return mine() ?: list.singleOrNull()
+        }
+        fun denied(e: Exception) = e is app.homeydash.homey.HomeyHttpException && (e.code == 401 || e.code == 403)
+        val noRight = "The Homey API key may not change alarms. Give it the \"Alarms\" permission in the Homey web app."
+        return try { when (action.trim().lowercase()) {
+            "", "list", "status", "next" -> ToolResult(if (list.isEmpty()) "No wake-up alarms in Homey." else list.joinToString("\n", transform = ::describe), lo)
+            "set", "create", "add", "change", "update" -> {
+                val at = Household.parseTime(time) ?: return ok("Say the time as HH:mm, e.g. 06:15.")
+                // Never someone else's: a new alarm unless it's named, or the asker's own.
+                val existing = when {
+                    name.isNotBlank() -> NameMatch.best(name.trim(), list) { NameMatch.score(name.trim(), it.name) }
+                    asker != null -> mine()
+                    else -> list.firstOrNull { it.name.equals(DEFAULT_ALARM, ignoreCase = true) }
+                }
+                val repeat = if (days.isBlank()) existing?.days ?: emptySet() else Household.parseDays(days) ?: return ok("Say the days as once, weekdays, weekends, every day or day names.")
+                val alarmName = name.trim().ifBlank { existing?.name ?: asker?.let { "$DEFAULT_ALARM ${it.name}" } ?: DEFAULT_ALARM }
+                val saved = home.saveAlarm(existing?.id, alarmName, at, repeat, true)
+                ToolResult("Set: " + describe(saved) + ".", lo)
+            }
+            "on", "enable" -> {
+                val a = target() ?: return ToolResult(pickOne(list), lo)
+                val saved = home.saveAlarm(a.id, a.name, a.time, a.days, true)
+                ToolResult("On: " + describe(saved) + ".", lo)
+            }
+            "off", "disable", "cancel" -> {
+                val a = target() ?: return ToolResult(pickOne(list), lo)
+                home.saveAlarm(a.id, a.name, a.time, a.days, false)
+                ToolResult("${a.name} is off. It won't ring until switched on again.", lo)
+            }
+            "skip" -> {
+                val a = target() ?: return ToolResult(pickOne(list), lo)
+                val ring = home.skipAlarm(a.id) ?: return ToolResult("${a.name} isn't set to ring.", lo)
+                ToolResult("${a.name} won't ring ${Household.whenText(ring, now)}." + if (a.repeats) " It rings as usual after that." else "", lo)
+            }
+            "delete", "remove" -> {
+                val a = target() ?: return ToolResult(pickOne(list), lo)
+                home.deleteAlarm(a.id)
+                ToolResult("Deleted ${a.name}.", lo)
+            }
+            else -> ok("Use list, set, on, off, skip or delete.")
+        } } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (denied(e)) ToolResult(noRight, lo) else throw e
+        }
+    }
+
+    private fun pickOne(list: List<HomeyAlarm>) =
+        if (list.isEmpty()) "There are no wake-up alarms in Homey." else "Which alarm? " + list.joinToString { "\"${it.name}\" (${Household.timeText(it.time)})" } + "."
 
     /** Rings a phone and says whether it's home, for its owner only unless sharing allows more; see [Phones]. */
     private suspend fun findPhone(whose: String, action: String): ToolResult {
@@ -867,6 +997,9 @@ class AgentTools(
 
         /** "min", "my phone", "mobilen": the asker's own phone. */
         private val OWN_PHONE = Regex("""(?i)(my|mine|me|min|mitt|mig|jag|own|egen|eget)?\s*(phone|telefon(en)?|mobil(en)?|iphone(n)?|cell)?""")
+        /** What an alarm the assistant makes is called, with the asker's name after it. */
+        const val DEFAULT_ALARM = "Väckning"
+        private val EVERYONE = Regex("""(?i)(everyone|everybody|all|alla|allihop|allihopa|hela familjen|the whole family)""")
         private val WHERE_WORDS = setOf("where", "var", "status", "locate", "find", "hitta", "home", "hemma")
         /** Guests may use the actions of TVs and speakers, nothing else's. */
         private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")
@@ -881,7 +1014,7 @@ class AgentTools(
         /** When each robot was last given a command (device id to time). */
         private val lastCommand = java.util.concurrent.ConcurrentHashMap<String, Long>()
         private val ROOM_WORDS = setOf("room", "rum", "segment", "zone", "area", "location", "position")
-        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables", "find_phone")
+        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables", "find_phone", "set_presence", "alarms")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */
         private val SENSITIVE = Regex("""\b(un)?lock\w*|\blås\w*|\b(dis)?arm\w*|\b(av)?larm\w*|\balarm\w*|\bgarage\w*|\bdoor\w*|\bdörr\w*""", RegexOption.IGNORE_CASE)

@@ -115,6 +115,41 @@ class FridgeLookupTest {
         assertEquals(today.plusDays(12), fridge.estimate(next).date)
     }
 
+    @Test
+    fun scanningSomethingInTheFridgeAgainTakesOneOut() = runBlocking {
+        var now = 1_000_000_000L
+        val dir = Files.createTempDirectory("fridge").toFile()
+        val fridge = Fridge(dir, emptyList(), clock = { now }, date = { today }).also { it.load() }
+        val used = mutableListOf<Pair<String, Int>>()
+        fridge.onUsed = { item, left -> used += item.name to left }
+        val code = ScanCodes.parse("7310865004703")!!
+        val milk = fridge.add(fridge.identify(code).item.copy(name = "Mjölk", category = "milk", quantity = 2))
+        // Just bought: a second scan is another pack, not one finished.
+        assertNull(fridge.scannedAgain(code.key))
+        now += 60 * 60_000L
+        val again = fridge.scannedAgain(code.key)
+        assertEquals(milk.id, again?.id)
+        assertEquals(1, fridge.useOne(again!!.id))
+        assertEquals(0, fridge.useOne(again.id))
+        assertNull(fridge.scannedAgain(code.key))
+        assertEquals(listOf("Mjölk" to 1, "Mjölk" to 0), used)
+        // An undo of a mistaken scan isn't remembered, and putting back brings the line back.
+        fridge.putBack(again.copy(quantity = 1))
+        assertEquals(1, fridge.items.value.single().quantity)
+        fridge.useOne(again.id, eaten = false)
+        assertEquals(2, used.size)
+    }
+
+    @Test
+    fun finishedFoodBecomesHouseMemory() {
+        val facts = app.homeydash.agent.Memory.finished("Mellanmjölk", 5, java.time.ZonedDateTime.of(2026, 10, 18, 8, 0, 0, 0, java.time.ZoneId.of("Europe/Stockholm")))
+        assertEquals(2, facts.size)
+        assertEquals("finishes", facts[0].relation)
+        assertEquals("Mellanmjölk", facts[0].obj)
+        assertEquals("5 days", facts[1].obj)
+        assertTrue(app.homeydash.agent.Memory.finished(" ", null, java.time.ZonedDateTime.now()).isEmpty())
+    }
+
     private fun check(digits: String): Int {
         val sum = digits.reversed().mapIndexed { i, c -> (c - '0') * if (i % 2 == 0) 3 else 1 }.sum()
         return (10 - sum % 10) % 10
