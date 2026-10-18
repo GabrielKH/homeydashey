@@ -84,7 +84,7 @@ class VacuumToolTest {
         assertTrue(t.specs().any { it.name == "vacuum" })
         assertEquals("Robbie started cleaning.", t.vacuum("action" to "start"))
         assertEquals("clean_full" to JsonPrimitive(true), home.sets.last())
-        assertEquals("Robbie is going back to its dock.", t.vacuum("action" to "dock"))
+        assertTrue(t.vacuum("action" to "dock").startsWith("Sent Robbie home twice"))
         assertEquals("cancel_and_dock" to JsonPrimitive(true), home.sets.last())
         assertEquals("Robbie is cleaning Kitchen.", t.vacuum("action" to "clean_rooms", "rooms" to "kitchen"))
         assertEquals("clean_room" to JsonObject(mapOf("repeat" to JsonPrimitive(1), "rooms" to JsonPrimitive("Kitchen"))), home.ran.last())
@@ -143,6 +143,22 @@ class VacuumToolTest {
         assertEquals("Robbie is cleaning Kitchen and Hall.", t.run(ToolCall("c1", "vacuum", rooms)).text)
         val alias = HomeView.build(zones, devices, emptyMap(), emptySet(), AgentSettings(), true).devices.single().alias
         val said = t.run(ToolCall("c2", alias, JsonObject(mapOf("action" to JsonPrimitive("dock"))))).text
-        assertEquals("Robbie is going back to its dock.", said)
+        assertTrue(said, said.startsWith("Sent Robbie home twice"))
+    }
+
+    @Test fun `start then dock waits between the two, and dock is confirmed from Homey`() = runTest {
+        var robot = robot("cleaning")
+        val home = object : HomeControl by Home(cards(textCard), null) {
+            val times = mutableListOf<Long>()
+            override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) {
+                times += testScheduler.currentTime
+                if (capability == "cancel_and_dock") robot = robot("docked")
+            }
+            override fun device(deviceId: String) = robot
+        }
+        val t = AgentTools(HomeView.build(zones, mapOf("rr" to robot), emptyMap(), emptySet(), AgentSettings(), true), home, Dash())
+        t.vacuum("action" to "start")
+        assertEquals("Robbie is on its way back to its dock.", t.vacuum("action" to "dock"))
+        assertTrue(home.times.toString(), home.times.size == 2 && home.times[1] - home.times[0] >= 3_000)
     }
 }

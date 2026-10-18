@@ -256,7 +256,7 @@ class Agent(
                         // "I'll turn on the light", or "the light is on" without doing it: small models
                         // sometimes stop at the promise, or claim it's done.
                         val said = answer.content.orEmpty()
-                        val claims = PROMISE.containsMatchIn(said) || (command && CLAIM.containsMatchIn(said))
+                        val claims = PROMISE.containsMatchIn(said) || (command && (CLAIM.containsMatchIn(said) || ECHO.containsMatchIn(said)))
                         if (!changed && !nudged && claims) {
                             nudged = true
                             heard.trace("guard", if (acted) "It said it did something a tool didn't do; asked it to try again." else "It promised or claimed without calling a tool; asked it to do it.")
@@ -847,14 +847,19 @@ class Agent(
         )
         /** Saying something was changed: "Taklampan är tänd", "I've turned it off", "Done". */
         val CLAIM = Regex(
-            """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|switched (on|off)|done|""" +
+            """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|on (its|the) way|heading (back|home)|switched (on|off)|done|""" +
                 """har (tänt|släckt|satt|slagit|startat|stängt|dimmat|ändrat)|är (nu )?(tänd|tända|släckt|släckta|avstängd|avstängda|igång)|""" +
                 """tänt|släckt|tände|släckte|slog (på|av)|satte på|startade|stängde av|dimmade|klart|fixat)$E""",
             RegexOption.IGNORE_CASE,
         )
+        /** Repeating the request back as an order ("Stop the vacuum, send it back to its dock") instead of doing it. */
+        val ECHO = Regex(
+            """^\s*(stop|send|start|turn|switch|dock|pause|play|set|stoppa|stanna|skicka|starta|pausa|tänd|släck|sätt|spela)(?![\p{L}\d_])""",
+            RegexOption.IGNORE_CASE,
+        )
         /** The user asked for a change, rather than how things are. */
         val COMMAND = Regex(
-            """$W(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|gör|fixa|spela|pausa|turn|switch|put|set|start|dim|raise|lower|open|make|play|pause|stop)$E""",
+            """$W(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|gör|fixa|spela|pausa|stoppa|stanna|skicka|kör|turn|switch|put|set|start|dim|raise|lower|open|make|play|pause|stop|send|dock)$E""",
             RegexOption.IGNORE_CASE,
         )
         val RECIPE_TOOLS = setOf("find_recipes", "open_recipe", "read_recipe", "recipe_step", "close_recipe", "recipe_timers")

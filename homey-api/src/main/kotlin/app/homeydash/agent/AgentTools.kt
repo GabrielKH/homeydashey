@@ -545,11 +545,27 @@ class AgentTools(
         val c = Vacuums.controls(device, cards)
         suspend fun exec(cmd: VacuumCommand?, done: String): ToolResult {
             cmd ?: return ok("${d.name}'s Homey app has no way to $action it.")
+            // "Stop" then "dock" in one breath: the robot drops the second if it comes too soon.
+            val wait = (lastCommand[d.id] ?: 0L) + VACUUM_GAP_MS - System.currentTimeMillis()
+            if (wait > 0) kotlinx.coroutines.delay(wait)
             when (cmd) {
                 is VacuumCommand.Set -> home.setCapability(d.id, cmd.capability, cmd.value)
                 is VacuumCommand.Card -> home.runAction(cmd.card, cmd.args)
             }
+            lastCommand[d.id] = System.currentTimeMillis()
             return ok(done)
+        }
+        /** Sends it home, and once more if Homey doesn't show it heading there after a few seconds. */
+        suspend fun dock(): ToolResult {
+            val cmd = c.dock ?: return exec(null, "")
+            exec(cmd, "")
+            vacuumSent(d.id, DOCK)
+            if (homeward(d.id)) return ok("${d.name} is on its way back to its dock.")
+            exec(cmd, "")
+            return ok(
+                if (homeward(d.id)) "${d.name} is on its way back to its dock (it needed a second nudge)."
+                else "Sent ${d.name} home twice, but Homey doesn't show it heading back yet; it may need a moment, or a look.",
+            )
         }
         val verb = action.trim().lowercase().replace(' ', '_')
         return when (verb) {
@@ -557,7 +573,7 @@ class AgentTools(
             "pause" -> exec(c.pause, "${d.name} paused.")
             "resume", "continue" -> exec(c.resume, "${d.name} carries on.")
             "stop" -> exec(c.stop, "${d.name} stopped.")
-            "dock", "home", "return" -> exec(c.dock, "${d.name} is going back to its dock.").also { if (c.dock != null) vacuumSent(d.id, DOCK) }
+            "dock", "home", "return" -> dock()
             "where", "locate", "status", "position", "location" -> ok(whereIs(d.name, device))
             "rooms" -> vacuumRooms(c, cards).let { known ->
                 ok(if (known.isEmpty()) "${d.name} doesn't list its rooms in Homey." else "${d.name}'s rooms: " + known.joinToString { it.name } + ".")
@@ -601,6 +617,17 @@ class AgentTools(
             }
             else -> ok("Use start, pause, resume, stop, dock, clean_rooms, go_to, rooms or where.")
         }
+    }
+
+    /** Waits up to [VACUUM_CHECK_MS] for Homey to show the robot returning, docked or charging. */
+    private suspend fun homeward(deviceId: String): Boolean {
+        var waited = 0L
+        while (home.device(deviceId)?.let { Vacuums.state(it) } !in HOMEWARD) {
+            if (waited >= VACUUM_CHECK_MS) return false
+            kotlinx.coroutines.delay(VACUUM_POLL_MS)
+            waited += VACUUM_POLL_MS
+        }
+        return true
     }
 
     /**
@@ -847,6 +874,12 @@ class AgentTools(
 
         private const val REMOTE_GAP_MS = 350L
         private const val DOCK = "its dock"
+        private const val VACUUM_GAP_MS = 4_000L
+        private const val VACUUM_CHECK_MS = 6_000L
+        private const val VACUUM_POLL_MS = 1_000L
+        private val HOMEWARD = setOf(VacuumState.Returning, VacuumState.Docked, VacuumState.Charging)
+        /** When each robot was last given a command (device id to time). */
+        private val lastCommand = java.util.concurrent.ConcurrentHashMap<String, Long>()
         private val ROOM_WORDS = setOf("room", "rum", "segment", "zone", "area", "location", "position")
         private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables", "find_phone")
 
