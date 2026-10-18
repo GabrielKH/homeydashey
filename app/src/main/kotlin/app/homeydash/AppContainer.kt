@@ -78,7 +78,16 @@ class AppContainer(context: Context) {
     /** Recipes, and the one being cooked; the voice assistant reads it too. */
     val kitchen = Kitchen(context, http, scope) { prompt ->
         assistant.web.raw(assistant.settings.value.webSearch(), prompt)
-    }.also { assistant.kitchen = it }
+    }.also { k ->
+        assistant.kitchen = k
+        // Eaten and finished food goes into the assistant's memory, when memory is on.
+        k.fridge.onUsed = { item, left ->
+            if (assistant.settings.value.access(app.homeydash.agent.Secret.Memory) != app.homeydash.agent.Access.Off) {
+                val lasted = item.boughtDate()?.takeIf { left == 0 }?.let { java.time.temporal.ChronoUnit.DAYS.between(it, java.time.LocalDate.now()).toInt() }
+                assistant.memory.learn(app.homeydash.agent.Memory.finished(item.name, lasted, java.time.ZonedDateTime.now()))
+            }
+        }
+    }
 
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
