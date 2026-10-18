@@ -163,8 +163,8 @@ class Agent(
             return AgentReply(reply, actions = listOf("recipe step (without the AI)"))
         }
 
-        // Plain on, off and dim commands are done straight away, without the AI.
-        if (context.routine == null) quick(text, view(true), tools, settings)?.let { return it }
+        // Plain on, off and dim commands go to the AI too (Gabriel, 2026-10-18: the local AI is
+        // fast and reliable enough now); the words QuickCommand knew are in the rules instead.
 
         // What a routine read for a local brain never goes to the internet one.
         val brains = settings.brains().filter { it.local || !context.routineLocalOnly }
@@ -320,25 +320,6 @@ class Agent(
             }
         }
         return AgentReply(lastError ?: "No connection answered.", error = true)
-    }
-
-    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools, settings: AgentSettings): AgentReply? {
-        val swedish = answersSwedish(settings)
-        // Said in the answer language when one is set, so TARS never reads out Swedish in his English voice.
-        val action = QuickCommand.parse(text, view, settings.asker?.name)?.let { a -> swedish?.let { a.copy(swedish = it) } ?: a } ?: return null
-        val call = QuickCommand.call(action)
-        val result = tools(view).run(call)
-        val stuck = result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
-        val ok = (result.text.startsWith("Done") || result.text.startsWith("Changed")) && !stuck
-        if (ok) learnHabit(call, view, settings)
-        val reply = when {
-            ok -> QuickCommand.done(action, view)
-            stuck || result.text.startsWith(QuickCommand.UNREACHABLE_PREFIX) ->
-                QuickCommand.notChanged(action, view)
-            else -> result.text
-        }
-        remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
-        return AgentReply(reply, error = !ok, actions = listOf("${call.name} ${call.arguments} → ${result.text.take(140)} (without the AI)"))
     }
 
     /**
@@ -724,6 +705,10 @@ class Agent(
         append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
         append("Rules: in tool calls name a device exactly as the list writes it in quotes, adding its room after a comma when several devices share that name (\"Taklampa, Sovrum\"); in answers too call things by their names, never the alias (light_3). ")
         append("Read the name the user said word by word: \"Annas nattlampa\" is \"Nattlampa Anna\", never \"Nattlampa Erik\"; when they name a room, the device must be in that room. ")
+        append("Commands: \"tänd\", \"sätt på\", \"slå på\", \"turn on\" mean on; \"släck\", \"stäng av\", \"slå av\", \"turn off\" mean off; a bare \"sätt taklampan\" means on; ")
+        append("\"dimma\" or \"sätt X till 30 %\" sets dim to 0.3. \"Släck i köket\" or \"tänd lamporna i vardagsrummet\" is every light in that room, one set_room call with device_class light, ")
+        append("but \"taklampan i vardagsrummet\" is only that lamp. A card group's name (\"taklamporna\") is one set_room call with the group as the room. ")
+        append("\"Min\", \"mitt\" or \"my\" means the person at the tablet's own: the device with their name in it. ")
         append("Speech to text can mishear a name (\"startlampan\" for \"taklampan\"): pick the listed name it sounds like. People name things loosely, in Swedish or English ")
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
         append("use one of the devices it suggests or ask which one. ")

@@ -3,8 +3,8 @@ package app.homeydash.agent
 /**
  * Plain on, off and dim commands, understood without the AI: "tänd taklampan i
  * vardagsrummet", "släck i köket", "sätt köksbordet på 30 %", "turn off the hall light".
- * They are run straight away, which is faster and can't go wrong the way a small model
- * can (promising to do something and not doing it). Anything else goes to the AI.
+ * No longer run before the AI (Gabriel, 2026-10-18: everything goes through the AI, its
+ * rules carry these words); kept with its tests should a fast path come back.
  */
 object QuickCommand {
     /** What to do: [device] or every light in [roomId], set to [on] or to [dim] (0..1). */

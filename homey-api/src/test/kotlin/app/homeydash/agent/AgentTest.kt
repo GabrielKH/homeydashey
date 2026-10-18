@@ -745,12 +745,6 @@ class AgentTest {
         server.shutdown()
     }
 
-    @Test fun `TARS answers a quick Swedish command in English`() = runTest {
-        val tars = AgentSettings(persona = Persona.Tars, language = Language.Auto)
-        val reply = Agent(ChatClient(OkHttpClient())).ask("släck kitchen lamp", tars, { view(tars) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
-        assertTrue(reply.text, reply.text.contains(" off") && !reply.text.contains("släckt"))
-    }
-
     @Test fun `Gemini's thought signature goes back with its tool call`() {
         val m = ChatClient.parseResponse(
             """{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","extra_content":{"google":{"thought_signature":"sig"}},
@@ -770,9 +764,6 @@ class AgentTest {
         val tools = AgentTools(view(), home, FakeDashboard())
         val r = tools.run(call("set_device", "device" to "light_1", "capability" to "onoff", "value" to "false"))
         assertTrue(r.text, r.text.startsWith(QuickCommand.NOT_CHANGED_PREFIX))
-        // Without the AI too, and in Swedish.
-        val reply = Agent(ChatClient(OkHttpClient())).ask("släck kitchen lamp", AgentSettings(), { view() }, { AgentTools(it, home, FakeDashboard()) })
-        assertTrue(reply.text, reply.text.contains("svarar inte") && reply.error)
         // A lamp Homey can't reach isn't even tried.
         val offline = devices + ("d-lamp" to devices.getValue("d-lamp").copy(available = false))
         val v = HomeView.build(zones, offline, moods, emptySet(), AgentSettings(), true)
@@ -904,7 +895,7 @@ class AgentTest {
         server.shutdown()
     }
 
-    @Test fun `plain on, off and dim commands run without the AI`() = runTest {
+    @Test fun `plain on, off and dim words are understood`() = runTest {
         val v = view()
         val lamp = QuickCommand.parse("Tänd kitchen lamp!", v)!!
         assertEquals("Kitchen lamp", lamp.device?.name)
@@ -921,11 +912,12 @@ class AgentTest {
         assertEquals(true, QuickCommand.parse("sätt kitchen lamp", v)!!.on)
         assertNull(QuickCommand.parse("sätt en timer", v))
 
-        // Through the agent: no AI is set up at all, and it still works.
+        // Through the agent the AI does it now, with these words in its rules; with no AI nothing changes.
         val home = FakeHome()
         val reply = Agent(ChatClient(OkHttpClient())).ask("släck spots", AgentSettings(), { view(local = it) }, { AgentTools(it, home, FakeDashboard()) })
-        assertEquals("Spots är släckt.", reply.text)
-        assertEquals(Triple("d-spot", "onoff", JsonPrimitive(false)), home.sets.single())
+        assertTrue(home.sets.isEmpty())
+        assertTrue(reply.error)
+        assertTrue(Agent(ChatClient(OkHttpClient())).rules(AgentSettings()).contains("a bare \"sätt taklampan\" means on"))
     }
 
     @Test fun `next step while cooking is answered without the AI, and the open recipe is in the instructions`() = runTest {
