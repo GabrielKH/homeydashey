@@ -1130,4 +1130,18 @@ class AgentTest {
         assertTrue(fixed.indexOf("Personality:") < fixed.indexOf(Agent.TOOLS_LAST_WRITTEN))
         assertTrue(Agent.CLAIM.containsMatchIn("Jag tändde alla lampor i vardagsrummet åt dig!"))
     }
+
+    @Test
+    fun `my night light is the one named after whoever asks`() {
+        val z: Map<String, Zone> = HomeyJson.decodeFromString("""{"z-bed":{"id":"z-bed","name":"Sovrum"}}""")
+        fun lamp(id: String, name: String) = """"$id":{"id":"$id","name":"$name","zone":"z-bed","class":"light","capabilities":["onoff"],
+              "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}}"""
+        val raw: Map<String, Device> = HomeyJson.decodeFromString("{" + lamp("d-m", "Nattlampa Maja") + "," + lamp("d-g", "Gabriel\u2019s Nattlampa") + "}")
+        val v = HomeView.build(z, raw, emptyMap(), emptySet(), AgentSettings(), true)
+        assertEquals("Gabriel\u2019s Nattlampa", QuickCommand.parse("Kan du tända min nattlampa?", v, "Gabriel")?.device?.name)
+        assertEquals("Nattlampa Maja", QuickCommand.parse("släck min nattlampa", v, "Maja")?.device?.name)
+        // Nobody known, or nothing named after them: the AI decides, never a guess.
+        assertNull(QuickCommand.parse("tänd min nattlampa", v, null))
+        assertNull(QuickCommand.parse("tänd min nattlampa", v, "Anna"))
+    }
 }

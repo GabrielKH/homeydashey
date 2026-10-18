@@ -325,7 +325,7 @@ class Agent(
     private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools, settings: AgentSettings): AgentReply? {
         val swedish = answersSwedish(settings)
         // Said in the answer language when one is set, so TARS never reads out Swedish in his English voice.
-        val action = QuickCommand.parse(text, view)?.let { a -> swedish?.let { a.copy(swedish = it) } ?: a } ?: return null
+        val action = QuickCommand.parse(text, view, settings.asker?.name)?.let { a -> swedish?.let { a.copy(swedish = it) } ?: a } ?: return null
         val call = QuickCommand.call(action)
         val result = tools(view).run(call)
         val stuck = result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
@@ -794,7 +794,8 @@ class Agent(
         append("\nNow: ").append(nowLine(now())).append(".")
         context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
         // Who is at the tablet is itself a secret ("Face recognition" switch).
-        context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it).append(".") }
+        context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it)
+            .append("; \"my\" or \"min\" means theirs, like a device with their name in it.") }
         context.routine?.let { append("\n").append(it) }
         context.tabletBattery?.let { append("\nThe tablet you run on: battery ").append(it).append(".") }
         if (settings.persona == Persona.Tars) append("\nAnswer what is asked now, using a tool if it needs one; any joke must be new, not one from your earlier answers.")
