@@ -20,6 +20,10 @@ object SpokenDates {
         else -> date.format(DAY)
     }
 
+    /** [date] written as 2026-10-20, in words; left as it is when it isn't a date. */
+    fun day(date: String, today: LocalDate): String =
+        runCatching { day(LocalDate.parse(date.trim()), today) }.getOrDefault(date)
+
     /**
      * When an event starts and ends, in words. An event over several days keeps its end day
      * ("Friday 16 October 09:00" until "Sunday 18 October 10:00"), so a trip that started

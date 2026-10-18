@@ -12,6 +12,8 @@ class SpokenDatesTest {
         assertEquals("Today", SpokenDates.day(today, today))
         assertEquals("Tomorrow", SpokenDates.day(today.plusDays(1), today))
         assertEquals("Tuesday 20 October", SpokenDates.day(today.plusDays(2), today))
+        assertEquals("Tomorrow", SpokenDates.day("2026-10-19", today))
+        assertEquals("soon", SpokenDates.day("soon", today))
     }
 
     @Test fun `a trip that started on Friday keeps its end day`() {
