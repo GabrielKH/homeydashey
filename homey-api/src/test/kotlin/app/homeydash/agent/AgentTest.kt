@@ -1066,6 +1066,7 @@ class AgentTest {
         assertFalse(Addressed.matches("ja men jag ringer dig sen"))
         assertTrue(Addressed.matches("Vad är klockan"))
         assertTrue(Addressed.matches("TARS, det är slut"))
+        assertTrue(Addressed.matches("Nej, det är inte i köket, det är laddat i dockan. Skicka det bara till köket."))
         server.shutdown()
     }
 

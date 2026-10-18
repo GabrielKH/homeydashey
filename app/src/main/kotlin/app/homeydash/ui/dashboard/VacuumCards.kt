@@ -58,6 +58,7 @@ import app.homeydash.ui.components.DialogHeightShare
 import app.homeydash.ui.components.screenSizeDp
 import app.homeydash.data.PartWear
 import app.homeydash.data.VacuumUsage
+import app.homeydash.agent.AgentTools
 import app.homeydash.homey.AutocompleteItem
 import app.homeydash.homey.Capability
 import app.homeydash.homey.Device
@@ -151,7 +152,7 @@ fun VacuumTile(device: Device, actions: DashboardActions, modifier: Modifier = M
                     RoundButton(icon, { actions.runVacuum(device, command) }, size = 52.dp, primary = true, contentDescription = label)
                 }
                 val dock = controls.dock.takeIf { controls.state !in setOf(VacuumState.Docked, VacuumState.Charging) }
-                dock?.let { RoundButton(Sym.home, { actions.runVacuum(device, it) }, size = 44.dp, filledIcon = false, contentDescription = "Send home") }
+                dock?.let { RoundButton(Sym.home, { actions.runVacuum(device, it); AgentTools.vacuumSent(device.id, "its dock") }, size = 44.dp, filledIcon = false, contentDescription = "Send home") }
             }
         }
     }
@@ -374,7 +375,7 @@ private fun MainControls(device: Device, c: VacuumControls, actions: DashboardAc
             c.stop?.let { BigButton(Sym.stop, "Stop") { actions.runVacuum(device, it) } }
         }
         c.dock?.takeIf { c.state !in setOf(VacuumState.Docked, VacuumState.Charging) }?.let {
-            BigButton(Sym.home, "Send home") { actions.runVacuum(device, it) }
+            BigButton(Sym.home, "Send home") { actions.runVacuum(device, it); AgentTools.vacuumSent(device.id, "its dock") }
         }
     }
 }
@@ -436,6 +437,8 @@ private fun RoomsSection(device: Device, c: VacuumControls, cards: List<app.home
             BigButton(Sym.broom, label, primary = command != null) {
                 if (command != null && device.available) {
                     actions.runVacuum(device, command)
+                    // So the assistant can say where it most likely is afterwards.
+                    AgentTools.vacuumSent(device.id, selected.last().name)
                     selected = emptyList()
                 }
             }

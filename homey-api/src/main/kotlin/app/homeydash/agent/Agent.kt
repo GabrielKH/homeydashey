@@ -914,8 +914,8 @@ internal object Addressed {
     private val YOU = Regex("""(?<![\p{L}\d_])(tars|nova)(?![\p{L}\d_])""", RegexOption.IGNORE_CASE)
     private val ASKS = Regex("""^\s*(vad|var|vem|vilken|vilket|vilka|när|hur|varför|kan|kommer|är|har|ska|what|where|who|which|when|how|why|can|could|will|would|is|are|do|does|did)(?![\p{L}\d_])""", RegexOption.IGNORE_CASE)
     private val TELLS = Regex(
-        """^\s*(säg|berätta|spela|sätt|tänd|släck|gör|visa|öppna|stäng|starta|stoppa|pausa|höj|sänk|dimma|skruva|byt|hitta|sök|läs|ring|påminn|kolla|ta|ge|fortsätt|""" +
-            """say|tell|play|turn|set|make|show|open|close|start|stop|pause|dim|raise|lower|change|find|search|read|remind|check|give|continue|put)(?![\p{L}\d_])""",
+        """^\s*(skicka|kör|åk|kom|säg|berätta|spela|sätt|tänd|släck|gör|visa|öppna|stäng|starta|stoppa|pausa|höj|sänk|dimma|skruva|byt|hitta|sök|läs|ring|påminn|kolla|ta|ge|fortsätt|""" +
+            """send|drive|go|come|say|tell|play|turn|set|make|show|open|close|start|stop|pause|dim|raise|lower|change|find|search|read|remind|check|give|continue|put)(?![\p{L}\d_])""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -923,6 +923,8 @@ internal object Addressed {
         val t = text.trim()
         if (t.isEmpty()) return false
         if (wakeName.isNotBlank() && t.contains(wakeName.trim(), ignoreCase = true)) return true
-        return t.endsWith("?") || YOU.containsMatchIn(t) || ASKS.containsMatchIn(t) || TELLS.containsMatchIn(t)
+        if (t.endsWith("?") || YOU.containsMatchIn(t)) return true
+        // Each sentence or clause counts: "Nej, den är i dockan. Skicka den bara till köket."
+        return t.split('.', '!', '?', ',', ';').any { part -> ASKS.containsMatchIn(part) || TELLS.containsMatchIn(part) }
     }
 }

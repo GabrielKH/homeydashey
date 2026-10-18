@@ -6,6 +6,7 @@ import app.homeydash.homey.RemoteAction
 import app.homeydash.homey.Remotes
 import app.homeydash.homey.VacuumCommand
 import app.homeydash.homey.VacuumRoom
+import app.homeydash.homey.VacuumState
 import app.homeydash.homey.Vacuums
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -112,10 +113,11 @@ class AgentTools(
         if (!guest && view.devices.any { it.deviceClass == "vacuumcleaner" && it.secret == null }) add(tool(
             "vacuum",
             "Control a robot vacuum: start, pause, resume, stop, dock (send home), clean_rooms (clean only the named rooms), " +
-                "go_to (drive to a room, e.g. so the user can empty it there), or rooms (list the rooms it knows).",
+                "go_to (drive to a room, e.g. so the user can empty it there), rooms (list the rooms it knows), " +
+                "or where (where it is: in its dock, cleaning, or the room it was last sent to).",
         ) {
             string("device", "Vacuum alias; may be left out when there is one")
-            string("action", "start, pause, resume, stop, dock, clean_rooms, go_to or rooms")
+            string("action", "start, pause, resume, stop, dock, clean_rooms, go_to, rooms or where")
             string("rooms", "For clean_rooms and go_to: room names, comma-separated, e.g. \"Kitchen, Hall\"")
             required("action")
         })
@@ -219,7 +221,7 @@ class AgentTools(
             "open_page" -> openPage(a.str("page"))
             "open_device" -> view.device(a.str("device"))?.let { d -> ok(if (dashboard.openDevice(d.id)) "Opened ${d.name}." else "Can't open ${d.name}.") } ?: unknown(a.str("device"))
             "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
-            "vacuum" -> vacuum(a.str("device"), a.str("action"), a.str("rooms"))
+            "vacuum" -> vacuum(a.str("device"), a.str("action"), a.list("rooms"))
             "goodnight" -> goodnight()
             "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"))
             "recipe_timers" -> recipeTimers()
@@ -231,7 +233,9 @@ class AgentTools(
             "variables" -> variables()
             "ask_internet" -> askInternet(a.str("question"))
             "run_routine" -> runRoutine(a.str("name"))
-            else -> recipes?.run(call) ?: fridge?.run(call)
+            // A small model sometimes calls the device instead of its tool ("vacuum_1 {action: go_to}").
+            else -> view.device(call.name)?.takeIf { it.deviceClass == "vacuumcleaner" }?.let { d -> vacuum(d.alias, a.str("action"), a.list("rooms")) }
+                ?: recipes?.run(call) ?: fridge?.run(call)
                 ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
                 ?: memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) && call.name in it.names }?.run(call, view.settings.asker, view.local)
                 ?: ok("There is no tool called ${call.name}.")
@@ -553,7 +557,8 @@ class AgentTools(
             "pause" -> exec(c.pause, "${d.name} paused.")
             "resume", "continue" -> exec(c.resume, "${d.name} carries on.")
             "stop" -> exec(c.stop, "${d.name} stopped.")
-            "dock", "home", "return" -> exec(c.dock, "${d.name} is going back to its dock.")
+            "dock", "home", "return" -> exec(c.dock, "${d.name} is going back to its dock.").also { if (c.dock != null) vacuumSent(d.id, DOCK) }
+            "where", "locate", "status", "position", "location" -> ok(whereIs(d.name, device))
             "rooms" -> vacuumRooms(c, cards).let { known ->
                 ok(if (known.isEmpty()) "${d.name} doesn't list its rooms in Homey." else "${d.name}'s rooms: " + known.joinToString { it.name } + ".")
             }
@@ -568,10 +573,12 @@ class AgentTools(
                     val item = NameMatch.best(wanted[0], items) { NameMatch.score(wanted[0], it.name) } ?: items.singleOrNull()
                     if (item != null) {
                         home.runAction(goCard.first, JsonObject(mapOf(goArg.name to FlowCards.argValue(goArg, item))))
+                        vacuumSent(d.id, item.name)
                         return ok("${d.name} is driving to ${item.name}.")
                     }
                 } else if (goCard != null && goArg != null) {
                     home.runAction(goCard.first, JsonObject(mapOf(goArg.name to JsonPrimitive(wanted[0]))))
+                    vacuumSent(d.id, wanted[0])
                     return ok("${d.name} is driving to ${wanted[0]}.")
                 }
                 val cleaning = c.roomCleaning ?: return ok("${d.name}'s Homey app can't send it to a room; it can only start, stop and dock.")
@@ -584,6 +591,7 @@ class AgentTools(
                 val max = cleaning.maxRooms
                 if (max != null && picked.size > max) return ok("${d.name} can take at most $max room(s) at once.")
                 val names = picked.joinToString(" and ") { it.name }
+                vacuumSent(d.id, picked.last().name)
                 // Without a go-to card, cleaning just that room is how the robot gets there.
                 exec(
                     Vacuums.roomArgs(cleaning, picked),
@@ -591,7 +599,39 @@ class AgentTools(
                     else "${d.name} is cleaning $names.",
                 )
             }
-            else -> ok("Use start, pause, resume, stop, dock, clean_rooms, go_to or rooms.")
+            else -> ok("Use start, pause, resume, stop, dock, clean_rooms, go_to, rooms or where.")
+        }
+    }
+
+    /**
+     * Where a vacuum is, as far as the app knows: in its dock when Homey says it's docked or
+     * charging, else the room it reports (if its app has one) or the room it was last sent to.
+     */
+    private fun whereIs(name: String, device: app.homeydash.homey.Device): String {
+        val state = Vacuums.state(device)
+        val room = device.capabilities.mapNotNull { device.capability(it) }.firstOrNull { c ->
+            !c.setable && (c.type == "string" || c.type == "enum") && FlowCards.tokens(c.id).any { it in ROOM_WORDS }
+        }?.let { c -> c.values?.firstOrNull { it.id == c.stringValue }?.title ?: c.stringValue }?.takeIf { it.isNotBlank() }
+        val sent = lastSent[device.id]
+        val ago = sent?.let { (_, at) -> ((System.currentTimeMillis() - at) / 60_000).let { m -> if (m < 1) "just now" else if (m < 120) "$m min ago" else "${m / 60} h ago" } }
+        return when (state) {
+            VacuumState.Docked -> "$name is in its dock."
+            VacuumState.Charging -> "$name is in its dock, charging."
+            VacuumState.Returning -> "$name is on its way back to its dock."
+            VacuumState.Offline -> "$name is offline in Homey, so where it is isn't known."
+            else -> {
+                val doing = when (state) {
+                    VacuumState.Cleaning -> "cleaning"
+                    VacuumState.Paused -> "paused"
+                    VacuumState.Error -> "stuck or showing an error"
+                    else -> "standing still"
+                }
+                when {
+                    room != null -> "$name is $doing in $room."
+                    sent != null && sent.first != DOCK -> "$name is $doing; it was last sent to ${sent.first} ($ago), so it's most likely there."
+                    else -> "$name is $doing, away from its dock; its app doesn't tell Homey which room it's in."
+                }
+            }
         }
     }
 
@@ -806,6 +846,8 @@ class AgentTools(
         private const val MAX_ACTIONS = 40
 
         private const val REMOTE_GAP_MS = 350L
+        private const val DOCK = "its dock"
+        private val ROOM_WORDS = setOf("room", "rum", "segment", "zone", "area", "location", "position")
         private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables", "find_phone")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */
@@ -879,6 +921,21 @@ class AgentTools(
         private fun text(v: JsonElement): String = (v as? JsonPrimitive)?.contentOrNull ?: v.toString()
 
         private fun JsonObject.str(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
+
+        /** A text or a list of texts as one comma-separated text: models send ["Kök"] as often as "Kök". */
+        private fun JsonObject.list(key: String): String = when (val v = this[key]) {
+            is kotlinx.serialization.json.JsonArray -> v.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.joinToString(", ")
+            else -> str(key)
+        }
+
+        /**
+         * Where each vacuum was last sent by the assistant or its page (device id to place and
+         * when), since most robots don't tell Homey which room they're in.
+         */
+        private val lastSent = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+
+        /** Remembers that [deviceId] was sent to [place], e.g. "Kök" or "its dock". */
+        fun vacuumSent(deviceId: String, place: String) { lastSent[deviceId] = place to System.currentTimeMillis() }
 
         private fun JsonObject.num(key: String): Double? = (this[key] as? JsonPrimitive)?.let { it.doubleOrNull ?: it.contentOrNull?.toDoubleOrNull() }
     }

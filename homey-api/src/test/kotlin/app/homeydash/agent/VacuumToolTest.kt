@@ -109,4 +109,40 @@ class VacuumToolTest {
         val said = tools(Home(cards(textCard), devices.getValue("rr"))).vacuum("action" to "clean_rooms", "rooms" to "Garage")
         assertTrue(said, said.contains("no room \"Garage\"") && said.contains("Kitchen, Hall"))
     }
+
+    private fun robot(state: String, charging: Boolean = false): Device = HomeyJson.decodeFromString(
+        """
+        {"id": "rr", "name": "Robbie", "zone": "z-home", "class": "vacuumcleaner",
+          "capabilities": ["vacuumcleaner_state", "battery_charging_state", "clean_full", "cancel_and_dock"],
+          "capabilitiesObj": {
+            "vacuumcleaner_state": {"id": "vacuumcleaner_state", "type": "enum", "value": "$state"},
+            "battery_charging_state": {"id": "battery_charging_state", "type": "boolean", "value": $charging},
+            "clean_full": {"id": "clean_full", "type": "boolean", "value": false, "setable": true},
+            "cancel_and_dock": {"id": "cancel_and_dock", "type": "boolean", "value": false, "setable": true}
+          }}
+        """,
+    )
+
+    @Test fun `where says docked, charging, or the room it was last sent to`() = runTest {
+        assertEquals("Robbie is in its dock.", tools(Home(cards(textCard), robot("docked"))).vacuum("action" to "where"))
+        assertEquals("Robbie is in its dock, charging.", tools(Home(cards(textCard), robot("docked", charging = true))).vacuum("action" to "locate"))
+        val goTo = """
+            {"homey:device:rr:go_to_room": {"id": "homey:device:rr:go_to_room", "title": "Go to room",
+              "args": [{"name": "room", "type": "autocomplete", "title": "Room"}]}}
+        """
+        val t = tools(Home(cards(goTo), robot("stopped")))
+        t.vacuum("action" to "go_to", "rooms" to "Kök")
+        val said = t.vacuum("action" to "where")
+        assertTrue(said, said.contains("last sent to Kök") && said.contains("just now"))
+    }
+
+    @Test fun `rooms as a list and the vacuum's alias used as the tool name both work`() = runTest {
+        val home = Home(cards(textCard), devices.getValue("rr"))
+        val t = tools(home)
+        val rooms = JsonObject(mapOf("action" to JsonPrimitive("clean_rooms"), "rooms" to kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("Kitchen"), JsonPrimitive("Hall")))))
+        assertEquals("Robbie is cleaning Kitchen and Hall.", t.run(ToolCall("c1", "vacuum", rooms)).text)
+        val alias = HomeView.build(zones, devices, emptyMap(), emptySet(), AgentSettings(), true).devices.single().alias
+        val said = t.run(ToolCall("c2", alias, JsonObject(mapOf("action" to JsonPrimitive("dock"))))).text
+        assertEquals("Robbie is going back to its dock.", said)
+    }
 }
