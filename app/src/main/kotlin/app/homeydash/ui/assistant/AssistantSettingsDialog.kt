@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -514,10 +515,15 @@ private fun PrivacyPage(
             Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.45f },
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(secret.title, style = MaterialTheme.typography.labelLarge, color = g.fg)
-            Text(secret.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-            Segmented(Access.entries, settings.access(secret), { it.label }, enabled = enabled) { a ->
-                update { it.copy(secrets = it.secrets + (secret to a)) }
+            // Like an iOS settings row: what it is on the left, a small Off / Local / On switch on the right.
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(secret.title, style = MaterialTheme.typography.labelLarge, color = g.fg)
+                    Text(secret.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                }
+                Segmented(Access.entries, settings.access(secret), { it.label }, enabled = enabled, compact = true) { a ->
+                    update { it.copy(secrets = it.secrets + (secret to a)) }
+                }
             }
             if (secret == Secret.Phones && settings.access(secret) != Access.Off) NavRow(Sym.phone, "Whose phone is whose", onPhones)
         }
@@ -805,9 +811,10 @@ internal fun Label(text: String) {
 }
 
 @Composable
-internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, enabled: Boolean = true, onPick: (T) -> Unit) {
+internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, enabled: Boolean = true, compact: Boolean = false, onPick: (T) -> Unit) {
     val g = GlassTheme.colors
-    Row(Modifier.fillMaxWidth().glass(PillShape).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    // Compact sits beside its title, sized to its words; otherwise it spans the page.
+    Row((if (compact) Modifier.width(IntrinsicSize.Max) else Modifier.fillMaxWidth()).glass(PillShape).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         options.forEach { option ->
             val on = option == selected
             Text(
@@ -820,7 +827,7 @@ internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, 
                     .weight(1f)
                     .pressable({ onPick(option) }.takeIf { enabled })
                     .then(if (on) Modifier.background(g.fg, PillShape) else Modifier)
-                    .padding(vertical = 11.dp),
+                    .padding(vertical = if (compact) 7.dp else 11.dp, horizontal = if (compact) 14.dp else 0.dp),
             )
         }
     }
