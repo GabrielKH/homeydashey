@@ -122,7 +122,11 @@ enum class Interrupt(val label: String, val detail: String) {
 
 /** Who the assistant is: how it talks, apart from how it sounds. */
 enum class Persona(val label: String, val detail: String) {
-    Nova("Nova", "Friendly and to the point."),
+    Nova(
+        "Nova",
+        "Warm, quick and a little playful, like a friend in the kitchen: does what you ask straight away, " +
+            "answers in Swedish or English, whichever you speak, and keeps it to a sentence or two.",
+    ),
     Tars(
         "TARS",
         "TARS from Interstellar: his voice, his name as the wake word, a \"huuh?\" when he hears it, and dry, deadpan humor " +
@@ -131,6 +135,18 @@ enum class Persona(val label: String, val detail: String) {
 }
 
 const val TARS_WAKE_NAME = "TARS"
+
+/** What [p] says about itself when it is picked in Settings, in its own words; [name] is what it answers to. */
+fun Persona.intro(name: String, swedish: Boolean, humor: Int = 75): String = when (this) {
+    Persona.Tars ->
+        "TARS. Former Marine Corps robot, now in charge of your kitchen. Humor setting $humor percent, honesty ninety. " +
+            "I do what you ask first and tell you what I think of it second. In English. Say Hey TARS when you need me."
+    Persona.Nova -> if (swedish) {
+        "Hej, jag är $name! Jag sköter lampor, musik, timers och kylen, och svarar kort på svenska eller engelska. Säg hej $name när du behöver mig."
+    } else {
+        "Hi, I'm $name! I look after the lights, music, timers and the fridge, and keep my answers short. Say Hey $name whenever you need me."
+    }
+}
 
 /** mlx-audio's multilingual Chatterbox: natural Swedish and English on a Mac. */
 const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
@@ -267,6 +283,35 @@ data class AgentSettings(
         p == Persona.Tars -> TARS_WAKE_NAME
         persona == Persona.Nova -> wakeName.trim().ifBlank { novaName }
         else -> novaName
+    }
+
+    /** The character [person] talks with: their own pick under People, or the house's. */
+    fun characterOf(person: KnownPerson?): Persona = person?.character ?: persona
+
+    /**
+     * The names that wake the assistant: the house character's, and another character's too
+     * once someone picked it under People. Saying either works; only the personality differs.
+     */
+    fun wakeNames(people: List<KnownPerson>): List<String> {
+        val chosen = people.mapNotNull { it.character }.toSet()
+        return (listOf(nameOf(persona)) + Persona.entries.filter { it != persona && it in chosen }.map { nameOf(it) })
+            .filter { WakeName.clean(it).isNotEmpty() }
+            .distinctBy { WakeName.key(it) }
+    }
+
+    /** The character a heard wake name belongs to; the house's when it is no character's. */
+    fun characterNamed(name: String): Persona =
+        Persona.entries.firstOrNull { WakeName.key(nameOf(it)) == WakeName.key(name) } ?: persona
+
+    /**
+     * These settings as [p] talking with [person]: [p]'s name, wake sound and way of talking. The
+     * voice is the person's own pick when [p] is their character, otherwise the house's for the
+     * house's character and [p]'s own usual voice for the other.
+     */
+    fun talkingAs(p: Persona, person: KnownPerson? = null): AgentSettings {
+        val own = person?.voiceStyle?.takeIf { person.character == p }
+        val s = if (p == persona) this else asCharacter(p)
+        return if (own != null) s.copy(voice = own) else s
     }
 
     /** The language answers are spoken in: TARS answers in English whatever language he hears. */

@@ -251,4 +251,18 @@ class MemoryTest {
 
     private fun toolCall(id: String, name: String, args: String) =
         """{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"$id","type":"function","function":{"name":"$name","arguments":"${args.replace("\"", "\\\"")}"}}]}}]}"""
+
+    @Test
+    fun `a new character pick replaces the old one`() {
+        val g = Asker("g", "Gabriel")
+        var d = Memory.merge(MemoryData(), Memory.characterChoice(g, Persona.Tars, null), 1)
+        d = Memory.merge(d, Memory.characterChoice(g, Persona.Nova, VoiceStyle.Warm), 2)
+        assertEquals(1, d.facts.size)
+        assertEquals("Nova in the Warm voice", d.facts.single().obj)
+        assertEquals("g", d.facts.single().who)
+        val at = ZonedDateTime.of(2026, 10, 18, 8, 0, 0, 0, ZoneId.of("Europe/Stockholm"))
+        d = Memory.merge(d, Memory.woke(g, Persona.Tars, at), 3)
+        d = Memory.merge(d, Memory.woke(g, Persona.Tars, at), 4)
+        assertEquals(2, d.facts.first { it.kind == FactKind.Habit }.count)
+    }
 }

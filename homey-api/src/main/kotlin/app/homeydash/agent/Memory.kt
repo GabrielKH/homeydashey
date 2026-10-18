@@ -228,6 +228,30 @@ object Memory {
     }
 
     /**
+     * The character and voice [person] picked under People, as one fact a new pick replaces, so
+     * the assistant can say who they talk with ("Gabriel talks with TARS").
+     */
+    fun characterChoice(person: Asker, character: Persona?, voice: VoiceStyle?): Fact = Fact(
+        who = person.id,
+        whoName = person.name,
+        subject = person.name,
+        relation = "talks with the character",
+        obj = (character?.label ?: "the house's character") + (voice?.let { " in the ${it.label} voice" } ?: ""),
+        kind = FactKind.Said,
+    )
+
+    /** That [asker] woke [character] by its name, counted like a habit with the part of the day. */
+    fun woke(asker: Asker, character: Persona, at: ZonedDateTime): Fact = Fact(
+        who = asker.id,
+        whoName = asker.name,
+        subject = asker.name,
+        relation = "wakes",
+        obj = character.label,
+        kind = FactKind.Habit,
+        parts = mapOf(partOfDay(at) to 1),
+    )
+
+    /**
      * A finished conversation as plain lines for [digestPrompt]: what the user said (after
      * [label] in a question's note) and what was answered, without notes, tool calls or the
      * app's own nudges. The newest part is kept when it's long.
