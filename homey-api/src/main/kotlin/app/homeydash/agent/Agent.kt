@@ -173,6 +173,7 @@ class Agent(
             var changed = false
             var nudged = false
             var emptied = false
+            var reasked = false
             // Calls it asked for again after they were done: twice means it's going round in circles.
             var repeats = 0
             val actions = mutableListOf<String>()
@@ -209,7 +210,17 @@ class Agent(
                     if (answer.toolCalls.isNotEmpty()) heard.trace("model calls", answer.toolCalls.joinToString("; ") { "${it.name} ${it.arguments}" }, keepLocal)
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
-                        if (!acted && answer.content.orEmpty().contains(IGNORE)) return AgentReply("", brain, ignored = true)
+                        if (!acted && answer.content.orEmpty().contains(IGNORE)) {
+                            // Small models ignore far too much ("Säg något roligt" after an answer): what is
+                            // plainly said to the assistant gets answered, once asked again.
+                            if (!reasked && Addressed.matches(text, settings.wakeName)) {
+                                reasked = true
+                                heard.trace("guard", "It ignored something said to it; asked it to answer.")
+                                turn += ChatMessage.user(NUDGE_ADDRESSED)
+                                return@repeat
+                            }
+                            return AgentReply("", brain, ignored = true)
+                        }
                         // An empty answer: the server hid what the model wrote (vMLX drops tool tags
                         // when no tool schemas were sent), or it wrote nothing. Ask once, then say so.
                         if (answer.content.isNullOrBlank()) {
@@ -605,6 +616,8 @@ class Agent(
         append("For TV channels, opening an app and remote buttons, call device_actions and then run_device_action. Never make up a stream URL. ")
         append("For music, keep what they asked for in play_music's query and give its kind: a mood, genre, chart or \"hits\" is a playlist. ")
         append("Speech to text sometimes translates an English title into Swedish (\"spela dåligt med Michael Jackson\" is Bad by Michael Jackson): search the real title. ")
+        append("A mood is the owner's scene for its own room: use it only for that room, and give set_mood the room the user said. ")
+        append("When they ask for a feeling in a room (mysigt, fest, romantiskt, film, lugnt, fokus) and no mood of that room fits, call set_scene with the room and the look; never use another room's mood instead. ")
         append("Only use devices, rooms and moods in the home list; ")
         append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")
@@ -718,11 +731,12 @@ class Agent(
         const val MAX_REPEATS = 2
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines")
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
-        val SETS = setOf("set_device", "set_room", "run_flow", "play_music", "run_device_action", "press_remote")
+        val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "run_device_action", "press_remote")
         /** How tool results that changed something begin. */
         val CHANGED = listOf("Done", "Changed", "Started", "Playing")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
             "Call the right tool now, or tell the user plainly what went wrong.)"
+        const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
         const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +
             "like CALL play_music {\"player\": \"player_1\"}, never in <tool_call> tags; or answer the user in words.)"
@@ -786,3 +800,25 @@ object Confirmation {
 internal fun nowLine(t: ZonedDateTime): String =
     t.format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy (yyyy-MM-dd)", Locale.ENGLISH)) +
         ", week " + t.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR) + ", " + t.format(DateTimeFormatter.ofPattern("HH:mm"))
+
+/**
+ * Whether something heard while the microphone stayed open is plainly said to the assistant:
+ * it names it, asks something, or starts by telling it to do something.
+ */
+internal object Addressed {
+    // "You" alone isn't enough: "jag ringer dig sen" on the phone is said to someone else.
+    private val YOU = Regex("""(?<![\p{L}\d_])(tars|nova)(?![\p{L}\d_])""", RegexOption.IGNORE_CASE)
+    private val ASKS = Regex("""^\s*(vad|var|vem|vilken|vilket|vilka|när|hur|varför|kan|kommer|är|har|ska|what|where|who|which|when|how|why|can|could|will|would|is|are|do|does|did)(?![\p{L}\d_])""", RegexOption.IGNORE_CASE)
+    private val TELLS = Regex(
+        """^\s*(säg|berätta|spela|sätt|tänd|släck|gör|visa|öppna|stäng|starta|stoppa|pausa|höj|sänk|dimma|skruva|byt|hitta|sök|läs|ring|påminn|kolla|ta|ge|fortsätt|""" +
+            """say|tell|play|turn|set|make|show|open|close|start|stop|pause|dim|raise|lower|change|find|search|read|remind|check|give|continue|put)(?![\p{L}\d_])""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    fun matches(text: String, wakeName: String = ""): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        if (wakeName.isNotBlank() && t.contains(wakeName.trim(), ignoreCase = true)) return true
+        return t.endsWith("?") || YOU.containsMatchIn(t) || ASKS.containsMatchIn(t) || TELLS.containsMatchIn(t)
+    }
+}

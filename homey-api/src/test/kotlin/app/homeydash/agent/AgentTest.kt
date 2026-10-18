@@ -1052,4 +1052,35 @@ class AgentTest {
         assertEquals("d-gabriel", v.device("$maja Nattlampa Gabriel")?.id)
         assertEquals("d-maja", v.device(maja)?.id)
     }
+
+    @Test fun `something plainly said to it in a follow-up is answered, not ignored`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"[ignore]"}}]}"""))
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Humor at 75 percent."}}]}"""))
+        server.start()
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val settings = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val reply = agent.ask("Säg något roligt.", settings, { view(settings, it) }, { AgentTools(it, FakeHome(), FakeDashboard()) }, AskContext(followUp = true))
+        assertFalse(reply.ignored)
+        assertEquals("Humor at 75 percent.", reply.text)
+        assertFalse(Addressed.matches("ja men jag ringer dig sen"))
+        assertTrue(Addressed.matches("Vad är klockan"))
+        assertTrue(Addressed.matches("TARS, det är slut"))
+        server.shutdown()
+    }
+
+    @Test fun `a mood for another room isn't used, and a look is made from the lamps`() = runTest {
+        val home = FakeHome()
+        val v = HomeView.build(zones, devices, mapOf("m2" to Mood("m2", "Myskväll", "z-hall")), emptySet(), AgentSettings(), true)
+        val tools = AgentTools(v, home, FakeDashboard())
+        val refused = tools.run(call("set_mood", "mood" to "Myskväll", "room" to "the kitchen")).text
+        assertTrue(refused, refused.contains("set_scene"))
+        tools.run(call("set_scene", "room" to "kitchen", "look" to "mysigt"))
+        assertEquals(
+            listOf(Triple("d-lamp", "onoff", JsonPrimitive(true)), Triple("d-lamp", "dim", JsonPrimitive(0.35)), Triple("d-spot", "onoff", JsonPrimitive(true))),
+            home.sets,
+        )
+        assertEquals(SceneLook.Party, SceneLook.of("fest"))
+        assertEquals(SceneLook.Cozy, SceneLook.of("Cozy"))
+    }
 }
