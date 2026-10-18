@@ -83,6 +83,8 @@ object StepText {
             "set_theme" -> "Switching to ${str("mode")}"
             "calendar" -> "Reading the calendar"
             "who_is_home" -> "Checking who's home"
+            "find_phone" -> (if (str("action").lowercase() in setOf("where", "var")) "Looking for " else "Ringing ") +
+                str("phone").ifBlank { "your phone" }.let { if (it.contains("phone", true) || it.contains("telefon", true) || it.contains("mobil", true)) it else "$it's phone" }
             "variables" -> "Reading Homey's variables"
             "ask_internet" -> "Searching the internet"
             "run_routine" -> "Running ${str("name")}"

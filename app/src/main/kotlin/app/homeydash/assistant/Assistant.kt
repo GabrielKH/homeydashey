@@ -897,13 +897,15 @@ class Assistant(
      * or else by face: a known person gets their role, a stranger gets guest access if the
      * owner chose that.
      */
-    private fun forWhoIsHere(s: AgentSettings): Pair<AgentSettings, String?> {
+    private fun forWhoIsHere(settings: AgentSettings): Pair<AgentSettings, String?> {
+        // Who has which phone is told by the people the tablet knows, whoever is asking.
+        val s = settings.copy(people = services.faces.people.value.associate { it.id to it.name })
         if (s.access(Secret.Faces) == Access.Off) return s to null
         val byVoice = voice?.takeIf { it.person != null && SystemClock.elapsedRealtime() - it.at < 60_000 }
         val seen = byVoice ?: services.faces.current() ?: return s to null
         val person = seen.person
         return when {
-            person != null -> s.forRole(person.role) to person.name
+            person != null -> s.forRole(person.role).copy(asker = app.homeydash.agent.Asker(person.id, person.name)) to person.name
             s.strangersAreGuests -> s.forRole(Role.Guest) to null
             else -> s to null
         }

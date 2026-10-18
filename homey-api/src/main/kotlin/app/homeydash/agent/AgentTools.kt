@@ -148,6 +148,14 @@ class AgentTools(
             number("days", "How many days, 1-31; default 1")
         })
         if (view.allows(Secret.Presence)) add(tool("who_is_home", "Which Homey users are home or asleep.") {})
+        if (view.phones.isNotEmpty()) add(tool(
+            "find_phone",
+            "Find a phone in the house: ring it (it plays a loud sound, even on silent) and say whether it is home and its battery. " +
+                "Leave phone out for the asker's own phone.",
+        ) {
+            string("phone", "Whose phone, or its name, e.g. \"Anna\" or \"iPad\"; omit for the asker's own")
+            string("action", "ring (default) or where (only say whether it is home)")
+        })
         if (view.allows(Secret.Variables)) add(tool("variables", "Homey Logic variables and their values.") {})
         if (web != null) add(tool(
             "ask_internet",
@@ -216,6 +224,7 @@ class AgentTools(
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
             "calendar" -> calendar(a.str("start_date"), a.num("days"))
             "who_is_home" -> whoIsHome()
+            "find_phone" -> findPhone(a.str("phone"), a.str("action"))
             "variables" -> variables()
             "ask_internet" -> askInternet(a.str("question"))
             "run_routine" -> runRoutine(a.str("name"))
@@ -694,6 +703,48 @@ class AgentTools(
         return ToolResult(text, localOnly(Secret.Presence))
     }
 
+    /** Rings a phone and says whether it's home, for its owner only unless sharing allows more; see [Phones]. */
+    private suspend fun findPhone(whose: String, action: String): ToolResult {
+        val s = view.settings
+        val phones = view.phones
+        if (phones.isEmpty()) return ok("No phones in Homey. Add them with Homey's Apple Find My app, and switch on Find phones.")
+        fun owner(p: AgentDevice) = Phones.ownerOf(p, s)
+        val asked = whose.trim().takeUnless { it.isEmpty() || OWN_PHONE.matches(it) }
+        val chosen: List<AgentDevice> = if (asked == null) {
+            val asker = s.asker
+            val mine = phones.filter { asker != null && owner(it) == asker.id }
+            when {
+                mine.isNotEmpty() -> mine
+                phones.size == 1 && Phones.rightTo(phones.single(), s) != Phones.Right.None -> phones
+                asker == null -> return ok("I don't know who is asking, so I can't tell which phone is yours. Teach me your voice under People, or say whose phone.")
+                else -> return ok("${asker.name} has no phone in Homey's Find My app. Pick it under Settings → Assistant → Privacy → Phones.")
+            }
+        } else {
+            // "Anna", "Annas telefon", "the iPad": by its owner's name or by its own.
+            val byOwner = phones.filter { p -> owner(p)?.let { s.people[it] }?.let { NameMatch.score(asked, it) >= 0.95 || Phones.named(asked, it) } == true }
+            byOwner.ifEmpty { listOfNotNull(NameMatch.best(asked, phones) { NameMatch.score(asked, it.name) }) }
+                .ifEmpty { return ok("I can't find a phone called \"$asked\". The phones are: " + phones.joinToString { "\"${it.name}\"" } + ".") }
+        }
+        val onlyWhere = action.trim().lowercase() in WHERE_WORDS
+        val lines = chosen.map { p ->
+            val right = Phones.rightTo(p, s)
+            val ownerName = owner(p)?.let { s.people[it] }
+            when {
+                right == Phones.Right.None ->
+                    "${p.name} is ${ownerName ?: "someone else"}'s phone; only ${ownerName ?: "its owner"} can find it."
+                onlyWhere && right != Phones.Right.All -> "${p.name}: only ${ownerName ?: "its owner"} may hear where it is."
+                onlyWhere -> "${p.name}: ${Phones.status(p)}."
+                else -> {
+                    val card = home.deviceActions(p.id).let(Phones::ringCard)
+                        ?: return@map "${p.name} can't ring: its Homey app has no \"Play sound\" card."
+                    home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
+                    "Ringing ${p.name}" + if (right == Phones.Right.All) " (${Phones.status(p)})." else "."
+                }
+            }
+        }
+        return ToolResult(lines.joinToString("\n"), localOnly(Secret.Phones))
+    }
+
     private suspend fun variables(): ToolResult {
         if (!view.allows(Secret.Variables)) return ok("Variables are switched off.")
         val text = home.variables().joinToString("\n") { "${it.name} = ${text(it.value)}" }.ifBlank { "No variables." }
@@ -741,13 +792,17 @@ class AgentTools(
         /** "all", "the whole house", "hela huset": set_room for every room at once. */
         private val WHOLE_HOUSE = Regex("""(?i)(all|alla|everything|everywhere|allt|överallt|((the )?whole )?(house|home)|hela (huset|hemmet)|hemma|alla rum|all rooms)""")
 
-        private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)_\d+\b""")
+        private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood|phone)_\d+\b""")
+
+        /** "min", "my phone", "mobilen": the asker's own phone. */
+        private val OWN_PHONE = Regex("""(?i)(my|mine|me|min|mitt|mig|jag|own|egen|eget)?\s*(phone|telefon(en)?|mobil(en)?|iphone(n)?|cell)?""")
+        private val WHERE_WORDS = setOf("where", "var", "status", "locate", "find", "hitta", "home", "hemma")
         /** Guests may use the actions of TVs and speakers, nothing else's. */
         private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")
         private const val MAX_ACTIONS = 40
 
         private const val REMOTE_GAP_MS = 350L
-        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables")
+        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables", "find_phone")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */
         private val SENSITIVE = Regex("""\b(un)?lock\w*|\blås\w*|\b(dis)?arm\w*|\b(av)?larm\w*|\balarm\w*|\bgarage\w*|\bdoor\w*|\bdörr\w*""", RegexOption.IGNORE_CASE)

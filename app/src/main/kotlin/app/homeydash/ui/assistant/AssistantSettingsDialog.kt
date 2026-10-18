@@ -58,6 +58,9 @@ import app.homeydash.agent.HomeView
 import app.homeydash.agent.Language
 import app.homeydash.agent.Provider
 import app.homeydash.agent.Secret
+import app.homeydash.agent.Phones
+import app.homeydash.agent.PhoneSharing
+import app.homeydash.agent.SHARED_PHONE
 import app.homeydash.assistant.AssistantServices
 import app.homeydash.homey.Device
 import app.homeydash.homey.Zone
@@ -102,7 +105,7 @@ fun AssistantSettingsDialog(
         when (page) {
             "main" -> onBack()
             "routine" -> page = "routines"
-            "devices", "preview" -> page = "privacy"
+            "devices", "preview", "phones" -> page = "privacy"
             else -> page = "main"
         }
         Unit
@@ -123,6 +126,7 @@ fun AssistantSettingsDialog(
                     when (page) {
                         "devices" -> "Hidden from the assistant"
                         "preview" -> "What the assistant sees"
+                        "phones" -> "Phones"
                         "routines" -> "Routines"
                         "routine" -> editing?.name?.ifBlank { null } ?: "New routine"
                         in PAGES -> PAGES.getValue(page)
@@ -145,6 +149,7 @@ fun AssistantSettingsDialog(
                         update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
                     }
                     "preview" -> Preview(services, settings, preview)
+                    "phones" -> PhonesPage(services, devices, settings, update)
                     "routines" -> RoutineList(services, onEdit = { editing = it; page = "routine" }, onRun = onRunRoutine)
                     "routine" -> editing?.let { r ->
                         androidx.compose.runtime.key(r.id) {
@@ -154,7 +159,7 @@ fun AssistantSettingsDialog(
                     "voice" -> VoicePage(services, settings, update)
                     "listen" -> ListenPage(services, settings, update)
                     "brain" -> BrainPage(services, settings, update, preview)
-                    "privacy" -> PrivacyPage(settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces)
+                    "privacy" -> PrivacyPage(settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces, onPhones = { page = "phones" })
                     "spotify" -> Spotify(settings, update)
                     "logs" -> Logs(services, settings, update)
                     else -> Main(services, settings, update, onPage = { page = it }, onRoutines = { page = "routines" })
@@ -404,6 +409,7 @@ private fun PrivacyPage(
     onDevices: () -> Unit,
     onPreview: () -> Unit,
     onFaces: () -> Unit,
+    onPhones: () -> Unit,
 ) {
     val g = GlassTheme.colors
     Text(
@@ -430,6 +436,64 @@ private fun PrivacyPage(
             Text(secret.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
             Segmented(Access.entries, settings.access(secret), { it.label }, enabled = enabled) { a ->
                 update { it.copy(secrets = it.secrets + (secret to a)) }
+            }
+            if (secret == Secret.Phones && settings.access(secret) != Access.Off) NavRow(Sym.phone, "Whose phone is whose", onPhones)
+        }
+    }
+}
+
+/** Who may find which phone, and each phone's owner. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PhonesPage(services: AssistantServices, devices: Map<String, Device>, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val people by services.faces.people.collectAsState()
+    val phones = devices.values.filter { Phones.isPhone(it) }.sortedBy { it.name.lowercase() }
+    Text(
+        "Say \"${settings.nameOf(settings.persona)}, where's my phone?\" and it rings yours through Homey's Apple Find My app, even on silent. " +
+            "It knows whose phone to ring by your voice or face, so teach it under People and switch on Face and voice recognition.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    Label("Who may find a phone")
+    Segmented(PhoneSharing.entries, settings.phoneSharing, { it.label }) { p -> update { it.copy(phoneSharing = p) } }
+    Text(settings.phoneSharing.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+    if (settings.access(Secret.Faces) == Access.Off && settings.phoneSharing != PhoneSharing.Anyone) {
+        Text(
+            "Face and voice recognition is off, so it can't tell who is asking: only phones set to Shared can be rung.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.danger,
+        )
+    }
+    Label("Phones")
+    if (phones.isEmpty()) {
+        Text(
+            "No phones yet. Install Apple Find My on your Homey (Homey Pro), sign in with each person's Apple ID and add their iPhones as devices.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
+    }
+    val names = people.associate { it.id to it.name }
+    phones.forEach { phone ->
+        val chosen = settings.phoneOwners[phone.id]
+        val guessed = names.entries.firstOrNull { Phones.named(phone.name, it.value) }?.value
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(phone.name, style = MaterialTheme.typography.labelLarge, color = g.fg)
+            Text(
+                when {
+                    chosen == SHARED_PHONE -> "Shared: anyone at the tablet can ring and find it."
+                    chosen != null -> "${names[chosen] ?: "Someone removed from People"}'s phone."
+                    guessed != null -> "$guessed's phone, by its name."
+                    else -> "Nobody's yet: pick whose it is."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = g.muted,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                fun pick(owner: String?) = update { s -> s.copy(phoneOwners = if (owner == null) s.phoneOwners - phone.id else s.phoneOwners + (phone.id to owner)) }
+                Chip("By its name", chosen == null) { pick(null) }
+                people.forEach { p -> Chip(p.name, chosen == p.id) { pick(p.id) } }
+                Chip("Shared", chosen == SHARED_PHONE) { pick(SHARED_PHONE) }
             }
         }
     }

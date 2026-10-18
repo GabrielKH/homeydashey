@@ -105,6 +105,7 @@ enum class Secret(val title: String, val detail: String) {
     Cameras("Cameras and doorbells", "Read motion and rings. Never the pictures."),
     Variables("Homey variables", "Read Homey Logic variables, which often hold codes."),
     Faces("Face and voice recognition", "Know who is at the tablet, by face or by voice (first name only)."),
+    Phones("Find phones", "Ring a phone so it can be found, and say if it's home and its battery, through Homey's Apple Find My app. Never says where outside the home it is."),
 }
 
 /** How readily talking over an answer stops it; the wake name always does. */
@@ -189,6 +190,14 @@ data class AgentSettings(
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
     val guest: Boolean = false,
+    /** Set per question: who is asking, when the tablet knows them by voice or face. */
+    val asker: Asker? = null,
+    /** Set per question: the people the tablet knows, id to name, to tell whose phone is whose. */
+    val people: Map<String, String> = emptyMap(),
+    /** Whose phones may be rung and found; see [Phones]. */
+    val phoneSharing: PhoneSharing = PhoneSharing.Own,
+    /** Each phone's owner chosen in Settings, device id to person id or [SHARED_PHONE]; others go by the name in the phone's. */
+    val phoneOwners: Map<String, String> = emptyMap(),
     /** Questions are heard by Whisper on your own computer (whisper.cpp's server) instead of Google. */
     val useWhisper: Boolean = false,
     /** Whisper's address; empty means the Ollama computer on port 8080. */
@@ -274,7 +283,7 @@ data class AgentSettings(
     fun forRole(role: Role): AgentSettings = when (role) {
         Role.Owner -> this
         Role.Family -> copy(secrets = secrets.filterKeys { it !in FAMILY_BLOCKED })
-        Role.Guest -> copy(secrets = emptyMap(), guest = true)
+        Role.Guest -> copy(secrets = emptyMap(), guest = true, asker = null)
     }
 
     /** The connections to try for one question, in order. */
