@@ -44,8 +44,8 @@ internal fun MemoryPage(services: AssistantServices, settings: AgentSettings, up
     Segmented(Access.entries, settings.access(Secret.Memory), { it.label }) { a -> update { it.copy(secrets = it.secrets + (Secret.Memory to a)) } }
     Text(
         "${settings.persona.label} counts what each person asks for (music, lights, moods), and once a conversation has been quiet for 20 minutes " +
-            "the AI squeezes it into a few short facts. People can also write about themselves under People: birthday, likes, dislikes and more. "Local AI only" keeps all of it away from the internet AI, which then neither learns nor hears any of it. None of it is in the prompt: only a question that needs it (\"som vanligt\", \"min favorit\", " +
-            "\"igår\") gets the few facts it touches, so answers stay fast. A person's facts are only used for that person; " +
+            "the AI squeezes it into a few short facts. People can also write about themselves under People: birthday, likes, dislikes and more. \"Local AI only\" keeps all of it away from the internet AI, which then neither learns nor hears any of it. None of it is in the prompt: only a question that needs it (\"som vanligt\", \"min favorit\", " +
+            "\"igår\") gets the few facts it touches, so answers stay fast. What someone said or keeps private is only used for them; " +
             "without voice or face recognition only the house's facts are used. Say \"kom ihåg att…\" or \"glöm…\" to change it by voice.",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
