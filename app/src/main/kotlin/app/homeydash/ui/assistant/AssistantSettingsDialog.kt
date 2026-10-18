@@ -162,6 +162,7 @@ fun AssistantSettingsDialog(
                     "privacy" -> PrivacyPage(settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces, onPhones = { page = "phones" })
                     "spotify" -> Spotify(settings, update)
                     "logs" -> Logs(services, settings, update)
+                    "memory" -> MemoryPage(services, settings, update)
                     else -> Main(services, settings, update, onPage = { page = it }, onRoutines = { page = "routines" })
                 }
             }
@@ -177,6 +178,7 @@ private val PAGES = mapOf(
     "privacy" to "Privacy and security",
     "spotify" to "Spotify on Sonos",
     "logs" to "Logs for Claude",
+    "memory" to "Memory",
 )
 
 /** The main page: who the assistant is, its language, and the groups of settings. */
@@ -211,6 +213,7 @@ private fun Main(
     NavRow(Sym.mic, "Listening: wake word and who hears you", { onPage("listen") })
     NavRow(Sym.autoAwesome, "AI brains: ${settings.mode.label}", { onPage("brain") })
     NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
+    NavRow(Sym.lightbulb, "Memory: " + if (settings.memory) "${services.memory.data.value.facts.size} things remembered" else "off", { onPage("memory") })
     NavRow(Sym.shieldLock, "Privacy and security", { onPage("privacy") })
     NavRow(Sym.musicNote, "Spotify on Sonos", { onPage("spotify") })
     NavRow(Sym.send, "Logs for Claude", { onPage("logs") })

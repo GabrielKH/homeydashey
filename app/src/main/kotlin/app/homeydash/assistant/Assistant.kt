@@ -59,7 +59,9 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val chat = ChatClient(http)
     /** The owner's routines ("God morgon") and standing instructions for the assistant. */
     val routines = app.homeydash.agent.RoutineBook(File(appContext.filesDir, "assistant"))
-    val agent = Agent(chat, routines = { routines.data.value })
+    /** What the assistant remembers from earlier conversations, per person and for the house; kept out of the prompt. */
+    val memory = app.homeydash.agent.MemoryBook(File(appContext.filesDir, "assistant"))
+    val agent = Agent(chat, routines = { routines.data.value }, memory = memory)
     val input = SpeechInput(appContext)
     /** TARS's voice, downloaded to the tablet when TARS is chosen. */
     val tars = TarsVoice(appContext, http, scope)
@@ -92,6 +94,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
 
     init {
         scope.launch { routines.load() }
+        scope.launch { memory.load() }
     }
 
     fun trace(kind: String, text: String, localOnly: Boolean) {
@@ -314,7 +317,11 @@ class Assistant(
         scope.launch {
             while (true) {
                 delay(KEEP_WARM_MS)
-                if (state == AssistantState.Idle && !voiceActive) warmBrain(followUp = false)
+                if (state == AssistantState.Idle && !voiceActive) {
+                    // A conversation that has gone quiet is squeezed into a few facts first, then the rules are read ahead again.
+                    runCatching { services.agent.digest(settings) }.onFailure { if (it is CancellationException) throw it }
+                    warmBrain(followUp = false)
+                }
             }
         }
         // A low tablet complains every 20 minutes in the day, in the character's own voice.
@@ -869,6 +876,7 @@ class Assistant(
         recipes = services.kitchen?.let { k -> app.homeydash.agent.RecipeTools(k.book, k.cooking) { bridge.openPage("recipes") } },
         fridge = services.kitchen?.let { k -> app.homeydash.agent.FridgeTools(k.fridge) { bridge.openPage("fridge") } },
         routines = app.homeydash.agent.RoutineTools(services.routines),
+        memory = app.homeydash.agent.MemoryTools(services.memory),
     )
 
     private fun view(s: AgentSettings, local: Boolean): HomeView {

@@ -48,6 +48,8 @@ class AgentTools(
     private val fridge: FridgeTools? = null,
     /** The owner's routines and standing instructions; null when the dashboard has none. */
     private val routines: RoutineTools? = null,
+    /** What the assistant remembers from earlier conversations; null when it remembers nothing. */
+    private val memory: MemoryTools? = null,
 ) {
     /**
      * Set once this conversation has seen something kept to the local AI; from then on
@@ -174,6 +176,7 @@ class AgentTools(
             })
             if (!guest) addAll(r.specs())
         }
+        memory?.takeIf { !guest && view.settings.memory }?.let { addAll(it.specs()) }
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
@@ -230,6 +233,7 @@ class AgentTools(
             "run_routine" -> runRoutine(a.str("name"))
             else -> recipes?.run(call) ?: fridge?.run(call)
                 ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
+                ?: memory?.takeIf { !guest && view.settings.memory && call.name in it.names }?.run(call, view.settings.asker, view.local)
                 ?: ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {

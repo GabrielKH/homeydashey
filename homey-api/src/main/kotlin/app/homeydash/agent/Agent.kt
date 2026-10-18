@@ -55,13 +55,15 @@ class Agent(
     private val chat: ChatClient,
     /** The owner's routines and standing instructions. */
     private val routines: () -> RoutineData = { RoutineData() },
+    /** The long memory, per person and for the house, kept out of the prompt; null remembers nothing. */
+    private val memory: MemoryBook? = null,
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
     /**
      * One question and everything said after it. [noted] is what its note said was on, for a
      * local (true) or internet (false) brain, so the next note only says what changed.
      */
-    private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean, val noted: Noted? = null)
+    private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean, val noted: Noted? = null, val who: Asker? = null)
 
     /** What a note said: each device's line by alias, and the weather. [full] when it said all of it. */
     class Noted(val local: Boolean, val states: Map<String, String>, val weather: String?, val full: Boolean)
@@ -72,6 +74,12 @@ class Agent(
     private val history = ArrayDeque<Turn>()
     private var lastActivity = 0L
 
+    /** Conversations that are over, waiting to be squeezed into a few facts ([digest]). */
+    private val finished = ArrayDeque<Turn>()
+
+    /** Who asks the question being answered, when the tablet knows them. */
+    private var asking: Asker? = null
+
     var pending: PendingAction? = null
         private set
 
@@ -79,6 +87,10 @@ class Agent(
     var listener: AgentListener? = null
 
     fun reset() {
+        if (memory != null) {
+            finished.addAll(history)
+            while (finished.size > MAX_FINISHED) finished.removeFirst()
+        }
         history.clear()
         pending = null
     }
@@ -97,6 +109,7 @@ class Agent(
         context: AskContext = AskContext(),
         speech: ((String) -> Unit)? = null,
     ): AgentReply {
+        asking = settings.asker
         val heard = Watch(listener)
         heard.trace("question", text)
         val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech).copy(rounds = heard.rounds.toList())
@@ -145,7 +158,7 @@ class Agent(
         }
 
         // Plain on, off and dim commands are done straight away, without the AI.
-        if (context.routine == null) quick(text, view(true), tools, answersSwedish(settings))?.let { return it }
+        if (context.routine == null) quick(text, view(true), tools, settings)?.let { return it }
 
         // What a routine read for a local brain never goes to the internet one.
         val brains = settings.brains().filter { it.local || !context.routineLocalOnly }
@@ -271,11 +284,13 @@ class Agent(
                         } else {
                             toolbox.run(call).also { done[key] = it }
                         }
-                        changed = changed || when (call.name) {
-                            in LOOKS -> false
+                        val did = when (call.name) {
+                            in LOOKS, in MEMORY_TOOLS -> false
                             in SETS -> CHANGED.any { result.text.startsWith(it) } && !result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
                             else -> true // Timers, pages, recipes and the fridge answer in their own words.
                         }
+                        changed = changed || did
+                        if (did && before == null && call.name in SETS) learnHabit(call, homeView, settings)
                         actions += homeView.named("${call.name} ${call.arguments} → ${result.text.take(140)}")
                         localOnly = localOnly || result.localOnly
                         result.pending?.let { pending = it }
@@ -301,13 +316,15 @@ class Agent(
         return AgentReply(lastError ?: "No connection answered.", error = true)
     }
 
-    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools, swedish: Boolean?): AgentReply? {
+    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools, settings: AgentSettings): AgentReply? {
+        val swedish = answersSwedish(settings)
         // Said in the answer language when one is set, so TARS never reads out Swedish in his English voice.
         val action = QuickCommand.parse(text, view)?.let { a -> swedish?.let { a.copy(swedish = it) } ?: a } ?: return null
         val call = QuickCommand.call(action)
         val result = tools(view).run(call)
         val stuck = result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
         val ok = (result.text.startsWith("Done") || result.text.startsWith("Changed")) && !stuck
+        if (ok) learnHabit(call, view, settings)
         val reply = when {
             ok -> QuickCommand.done(action, view)
             stuck || result.text.startsWith(QuickCommand.UNREACHABLE_PREFIX) ->
@@ -334,6 +351,7 @@ class Agent(
     ): AgentReply {
         lastActivity = System.currentTimeMillis()
         pending = null
+        asking = settings.asker
         val heard = Watch(listener)
         heard.trace("routine", "${routine.name} (heard: $text)")
         @Suppress("NAME_SHADOWING") val tools = heard.tools(tools)
@@ -384,7 +402,7 @@ class Agent(
         }
         history.lastOrNull()?.let { last ->
             history.removeLast()
-            history.addLast(Turn(last.messages + ChatMessage("assistant", text), last.localOnly))
+            history.addLast(Turn(last.messages + ChatMessage("assistant", text), last.localOnly, last.noted, last.who))
         }
         return AgentReply(text, actions = if (yes) listOf("confirmed: ${p.question}") else emptyList())
     }
@@ -419,7 +437,7 @@ class Agent(
 
     private fun remember(turn: List<ChatMessage>, localOnly: Boolean) {
         val noted = opened?.takeIf { it.first === turn.firstOrNull() }?.second
-        history.addLast(Turn(turn.toList(), localOnly, noted))
+        history.addLast(Turn(turn.toList(), localOnly, noted, asking))
         while (history.size > MAX_TURNS) history.removeFirst()
     }
 
@@ -465,9 +483,73 @@ class Agent(
     private fun opening(settings: AgentSettings, view: HomeView, context: AskContext, question: String, tools: Tools, since: Noted? = null): ChatMessage {
         val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
         val states = view.stateLines()
-        val message = ChatMessage.user(situation(settings, view, context, since) + extra + QUESTION + question)
+        val message = ChatMessage.user(situation(settings, view, context, since) + extra + remembered(settings, view, question) + QUESTION + question)
         opened = message to Noted(view.local, states, context.weather, full = since == null)
         return message
+    }
+
+    /**
+     * What the memory holds about [question], only when it asks for something from before ("som
+     * vanligt", "my favourite", "yesterday"): a few lines in this question's note, found on the
+     * tablet in no time, so the AI needn't spend a round on recall. Nothing otherwise, so the
+     * prompt stays as short as it was.
+     */
+    private fun remembered(settings: AgentSettings, view: HomeView, question: String): String {
+        val book = memory?.takeIf { settings.memory && !settings.guest } ?: return ""
+        if (!Memory.CUES.containsMatchIn(question)) return ""
+        val found = Memory.recall(book.data.value, question, settings.asker?.id, view.local, System.currentTimeMillis(), limit = 3)
+        if (found.isEmpty()) return ""
+        listener?.trace("memory", "Recalled for the question: " + found.joinToString("; ") { Memory.line(it) }, found.any { it.localOnly })
+        return "\nRemembered from earlier (use it if it fits):\n" + found.joinToString("\n") { "- " + Memory.line(it) }
+    }
+
+    /** Counts what was just done for whoever asked, so "som vanligt" can be answered later. */
+    private suspend fun learnHabit(call: ToolCall, view: HomeView, settings: AgentSettings) {
+        val book = memory?.takeIf { settings.memory && !settings.guest } ?: return
+        val fact = Memory.habit(call, view, settings.asker, now()) ?: return
+        runCatching { book.learn(listOf(fact)) }
+    }
+
+    /**
+     * Squeezes conversations that are over into a few facts for the memory graph, using the
+     * local AI when there is one. Called while nobody is talking; a conversation counts as over
+     * once it has been quiet for [FORGET_AFTER_MS]. Only the questions and the spoken answers
+     * are sent, and what only a local AI may see never goes to an internet one. Returns how
+     * many facts it kept.
+     */
+    suspend fun digest(settings: AgentSettings): Int {
+        val book = memory ?: return 0
+        if (history.isNotEmpty() && System.currentTimeMillis() - lastActivity > FORGET_AFTER_MS) reset()
+        if (!settings.memory) {
+            finished.clear()
+            return 0
+        }
+        if (finished.isEmpty()) return 0
+        val brains = settings.brains()
+        val brain = brains.firstOrNull { it.local } ?: brains.firstOrNull() ?: return 0
+        val turns = finished.toList()
+        finished.clear()
+        var kept = 0
+        for ((who, group) in turns.groupBy { it.who?.id }.values.map { it.first().who to it }) {
+            val usable = if (brain.local) group else group.filter { !it.localOnly }
+            val transcript = Memory.transcriptOf(usable.map { it.messages }, QUESTION_LABEL)
+            if (transcript.length < MIN_DIGEST_CHARS) continue
+            val localOnly = usable.any { it.localOnly }
+            val known = Memory.recall(book.data.value, transcript, who?.id, brain.local, System.currentTimeMillis(), limit = 12)
+            val reply = try {
+                chat.complete(brain, Memory.digestPrompt(transcript, who, known), emptyList())
+            } catch (e: IOException) {
+                listener?.trace("memory", "Couldn't learn from the last conversation: ${e.message}")
+                continue
+            }
+            val facts = Memory.parseDigest(reply.content.orEmpty(), who, localOnly)
+            book.learn(facts)
+            kept += facts.size
+            listener?.trace("memory", if (facts.isEmpty()) "Nothing new to remember from the last conversation." else "Learned: " + facts.joinToString("; ") { Memory.line(it) }, localOnly)
+        }
+        // The server read something else in between, so the next warm-up reads the rules again.
+        warmed = null
+        return kept
     }
 
     /**
@@ -490,7 +572,7 @@ class Agent(
                 val wanted = buildSet {
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
-                    if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS)
+                    if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS + MEMORY_PACK)
                 }
                 core = all.filter { it.name !in PACKS }
                 extra = all.filter { it.name in PACKS && it.name in wanted }
@@ -646,6 +728,11 @@ class Agent(
         append("follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found. ")
         append("When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.\n")
         append(BatteryNag.rule(settings.batteryReminders)).append('\n')
+        if (memory != null && settings.memory && !settings.guest) {
+            append("You have a long memory of earlier conversations and habits, kept outside this prompt: when the user refers to before, ")
+            append("\"the usual\", favourites or something they told you, use the note's \"Remembered\" lines or call recall. ")
+            append("When they ask you to remember a fact (\"kom ihåg att…\"), call remember; standing instructions on how to answer go to remember_instruction.\n")
+        }
         val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (standing.isNotEmpty()) {
             append("The owner's standing instructions; follow them unless a rule above forbids it:\n")
@@ -764,7 +851,10 @@ class Agent(
         val RECIPE_TOOLS = setOf("find_recipes", "open_recipe", "read_recipe", "recipe_step", "close_recipe", "recipe_timers")
         val FRIDGE_TOOLS = setOf("fridge_contents", "add_to_fridge", "update_fridge_item", "remove_from_fridge")
         val ROUTINE_TOOLS = setOf("list_routines", "save_routine", "delete_routine", "remember_instruction", "forget_instruction")
-        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS
+        /** Remembering and forgetting facts only come with "kom ihåg", "glöm" and the like; recall is always there. */
+        val MEMORY_PACK = setOf("remember", "forget_memory")
+        val MEMORY_TOOLS = MEMORY_PACK + "recall"
+        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK
         val RECIPE_WORDS = Regex("""$W(recept\w*|recipe\w*|laga\w*|cook\w*|baka\w*|middag|lunch|frukost|dinner|ingrediens\w*|ingredient\w*|steg|step|timers?)$E""", RegexOption.IGNORE_CASE)
         val FRIDGE_WORDS = Regex("""$W(kyl\w*|frys\w*|skafferi\w*|fridge|freezer|pantry|köpt\w*|bought|åt|ate|slut|utgång\w*|bäst före|expir\w*|öppnat|opened|mat|food|hemma)$E""", RegexOption.IGNORE_CASE)
         val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
@@ -774,6 +864,10 @@ class Agent(
         const val WARM_UP = ToolText.START
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
+        /** Conversations kept for [digest] when the AI couldn't be asked yet. */
+        const val MAX_FINISHED = 60
+        /** Shorter than this ("tänd i köket", "Done") has nothing to learn from. */
+        const val MIN_DIGEST_CHARS = 60
     }
 }
 

@@ -88,6 +88,9 @@ object StepText {
             "variables" -> "Reading Homey's variables"
             "ask_internet" -> "Searching the internet"
             "run_routine" -> "Running ${str("name")}"
+            "recall" -> "Remembering ${str("about")}".trimEnd()
+            "remember" -> "Noting that down"
+            "forget_memory" -> "Forgetting ${str("about")}".trimEnd()
             else -> call.name.replace('_', ' ').replaceFirstChar(Char::uppercase) + args(a)
         }
     }
