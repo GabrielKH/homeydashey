@@ -411,6 +411,10 @@ object RoutineText {
         if (later.isNotEmpty()) {
             append("Right after your answer the app will ").append(later.joinToString(", ") { RoutineTools.stepText(it) }).append("; don't do that yourself.\n")
         }
+        if (run.info.any { it.first == "Weather" }) {
+            append("When you tell the weather, say how many degrees it is now and what it feels like (chilly, cold, mild, warm), ")
+            append("whether the wind is blowing (over about 5 m/s is windy, under 2 calm), and today's high and low and any rain, in a sentence or two.\n")
+        }
         if (run.said.isNotEmpty()) append("Your answer is said right after \"").append(run.said.joinToString(" ")).append("\", so don't repeat that.\n")
         append("The routine's instructions: ").append(routine.instructions.ifBlank { "Tell the user briefly what the information above says." })
     }
