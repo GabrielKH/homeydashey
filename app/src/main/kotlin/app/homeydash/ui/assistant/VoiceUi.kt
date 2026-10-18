@@ -317,7 +317,11 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
         WakeSound.entries.forEach { sound ->
             Chip(sound.label, sound == settings.wakeSound) {
                 update { it.copy(wakeSound = sound) }
-                services.playWakeSound(sound)
+                // "Ja?" in the voice, once it's made; the hum until then.
+                val swedish = settings.answers != app.homeydash.agent.Language.English
+                val options = app.homeydash.agent.ThinkingSounds.answers(settings.persona, swedish)
+                if (sound == WakeSound.Voice) services.output.prepareSounds(options, swedish, settings.voice)
+                services.playWakeSound(sound, if (sound == WakeSound.Voice) services.output.prepared(options.first(), swedish, settings.voice) else null)
             }
         }
     }

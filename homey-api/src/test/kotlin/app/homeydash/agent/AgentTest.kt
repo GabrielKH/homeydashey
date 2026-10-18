@@ -598,7 +598,7 @@ class AgentTest {
         assertEquals("TARS", tars.wakeName)
         val nova = tars.asCharacter(Persona.Nova)
         assertEquals(VoiceStyle.Natural, nova.voice)
-        assertEquals(WakeSound.Hum, nova.wakeSound)
+        assertEquals(WakeSound.Voice, nova.wakeSound)
         assertEquals("Nova", nova.wakeName)
         assertEquals("Kim", AgentSettings(wakeName = "Kim").asCharacter(Persona.Nova).wakeName)
     }

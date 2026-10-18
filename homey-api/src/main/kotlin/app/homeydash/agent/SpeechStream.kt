@@ -107,9 +107,26 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
 
 /** Short sounds a person makes while thinking, said when an answer takes a moment. */
 object ThinkingSounds {
-    private val NOVA_SV = listOf("Hmm…", "Mm, låt se.", "Hmm, ett ögonblick.")
-    private val NOVA_EN = listOf("Hmm…", "Let me see.", "Mm, one moment.")
-    private val TARS = listOf("Hmm.", "Processing.", "Give me a second.", "Thinking. It happens.")
+    // Real words only: a voice reads "Hmm" or "Mm" letter by letter ("h, m, m").
+    private val NOVA_SV = listOf("Mja, låt se.", "Ehm, ett ögonblick.", "Låt mig kolla.")
+    private val NOVA_EN = listOf("Um, let me see.", "One moment.", "Let me check.")
+    private val TARS = listOf("Processing.", "Give me a second.", "Thinking. It happens.")
+
+    private val ANSWER_SV = listOf("Ja?", "Japp?", "Ja, du?")
+    private val ANSWER_EN = listOf("Yes?", "Yeah?", "I'm listening.")
+    private val ANSWER_TARS = listOf("Yes?", "Go ahead.", "Listening.")
+
+    /** What it says in its own voice when it hears its name ([WakeSound.Voice]). */
+    fun answers(persona: Persona, swedish: Boolean): List<String> = when {
+        persona == Persona.Tars -> ANSWER_TARS
+        swedish -> ANSWER_SV
+        else -> ANSWER_EN
+    }
+
+    private val HUMS = Regex("""(?i)(?<![\p{L}])(h+m+|m{2,})(?![\p{L}])""")
+
+    /** A hum the AI wrote ("Hmm, det vet jag inte") as a word a voice can say, not "h, m, m". */
+    fun sayable(text: String, swedish: Boolean): String = HUMS.replace(text) { if (swedish) "ehm" else "um" }
 
     fun all(persona: Persona, swedish: Boolean): List<String> = when {
         persona == Persona.Tars -> TARS

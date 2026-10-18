@@ -83,7 +83,7 @@ class VoiceTest {
             // Starts and ends quietly, so it doesn't click.
             assertTrue(abs(pcm.first().toInt()) < 2000 && abs(pcm.last().toInt()) < 2000)
         }
-        assertSame(WakeSound.Hum, AgentSettings().wakeSound)
+        assertSame(WakeSound.Voice, AgentSettings().wakeSound)
     }
 
     @Test

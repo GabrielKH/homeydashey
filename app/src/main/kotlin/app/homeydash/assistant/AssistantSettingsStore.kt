@@ -65,7 +65,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         face = enumOr(p[FACE], FaceStyle.Orb),
         view = enumOr(p[VIEW], app.homeydash.agent.AssistantView.Full),
         voice = enumOr(p[VOICE], VoiceStyle.Natural),
-        wakeSound = enumOr(p[WAKE_SOUND], app.homeydash.agent.WakeSound.Hum),
+        wakeSound = enumOr(p[WAKE_SOUND], app.homeydash.agent.WakeSound.Voice),
         persona = enumOr(p[PERSONA], app.homeydash.agent.Persona.Nova),
         humor = p[HUMOR]?.toIntOrNull()?.coerceIn(0, 100) ?: 75,
         traits = app.homeydash.agent.Persona.entries.mapNotNull { c -> p[traitsKey(c)]?.takeIf { it.isNotBlank() }?.let { c to it } }.toMap(),

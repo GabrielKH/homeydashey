@@ -224,4 +224,14 @@ class SpeechStreamTest {
         out.next()
         assertEquals("", out.heardThisRound())
     }
+
+    @Test
+    fun `a hum is said as a word, never spelled out`() {
+        assertEquals("ehm, det vet jag inte.", ThinkingSounds.sayable("Hmm, det vet jag inte.", true))
+        assertEquals("um… let me see", ThinkingSounds.sayable("Hmmm… let me see", false))
+        assertEquals("Hampus och Emma", ThinkingSounds.sayable("Hampus och Emma", true))
+        for (p in Persona.entries) for (sv in listOf(true, false)) {
+            (ThinkingSounds.all(p, sv) + ThinkingSounds.answers(p, sv)).forEach { assertEquals(it, ThinkingSounds.sayable(it, sv)) }
+        }
+    }
 }

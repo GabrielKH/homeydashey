@@ -202,7 +202,7 @@ data class AgentSettings(
     /** Says every 20 minutes in the day that the tablet needs charging, when its battery is low; see [BatteryNag]. */
     val batteryReminders: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
-    val wakeSound: WakeSound = WakeSound.Hum,
+    val wakeSound: WakeSound = WakeSound.Voice,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */
     val persona: Persona = Persona.Nova,
     val humor: Int = 75,
@@ -276,7 +276,7 @@ data class AgentSettings(
         Persona.Nova -> copy(
             persona = p,
             voice = if (voice == VoiceStyle.Tars) novaVoice(language) else voice,
-            wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Hum else wakeSound,
+            wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Voice else wakeSound,
             wakeName = if (wakeName.trim().equals(TARS_WAKE_NAME, ignoreCase = true)) novaName else wakeName,
         )
     }

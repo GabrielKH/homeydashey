@@ -253,7 +253,7 @@ class SpeechOutput(
 
     /** [text] as it should be heard: dates in words, not "2026 dash 10 dash 18". */
     private fun spoken(text: String, swedish: Boolean) =
-        app.homeydash.agent.SpokenDates.speakable(text, swedish, java.time.LocalDate.now().year)
+        app.homeydash.agent.SpokenDates.speakable(app.homeydash.agent.ThinkingSounds.sayable(text, swedish), swedish, java.time.LocalDate.now().year)
 
     /** The owner's speaking speed, as a factor of each voice's own. */
     private fun pace(): Float = settings().pace.coerceIn(app.homeydash.agent.PACE_RANGE) / 100f
@@ -398,6 +398,9 @@ class SpeechOutput(
     private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) = "${voice.name}|${settings().pace}|$swedish|$text"
 
     private fun phrase(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrases[phraseKey(text, swedish, voice)]
+
+    /** [text] in [voice] as made ahead of time by [prepareSounds]; null until then. */
+    fun prepared(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrase(text, swedish, voice)
 
     /** Whether [text] is made ahead of time in [voice], so it can be said without waiting. */
     fun hasSound(text: String, swedish: Boolean, voice: VoiceStyle): Boolean = phrases.containsKey(phraseKey(text, swedish, voice))

@@ -140,9 +140,13 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
 
     private val wakeSounds = mutableMapOf<app.homeydash.agent.WakeSound, ShortArray>()
 
-    /** Plays the sound for hearing the wake name and returns how long it lasts, in milliseconds. */
-    fun playWakeSound(sound: app.homeydash.agent.WakeSound): Long {
-        val pcm = synchronized(wakeSounds) { wakeSounds.getOrPut(sound) { app.homeydash.agent.WakeSounds.render(sound) } }
+    /**
+     * Plays the sound for hearing the wake name and returns how long it lasts, in milliseconds.
+     * [voiced] is the answer in the assistant's own voice ("Ja?"), when [sound] is that one and it's made.
+     */
+    fun playWakeSound(sound: app.homeydash.agent.WakeSound, voiced: app.homeydash.agent.Pcm? = null): Long {
+        val rate = voiced?.sampleRate ?: app.homeydash.agent.WakeSounds.RATE
+        val pcm = voiced?.samples ?: synchronized(wakeSounds) { wakeSounds.getOrPut(sound) { app.homeydash.agent.WakeSounds.render(sound) } }
         if (pcm.isEmpty()) return 0
         val track = runCatching {
             android.media.AudioTrack.Builder()
@@ -155,7 +159,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
                 .setAudioFormat(
                     android.media.AudioFormat.Builder()
                         .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(app.homeydash.agent.WakeSounds.RATE)
+                        .setSampleRate(rate)
                         .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
                         .build(),
                 )
@@ -164,7 +168,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
                 .build()
                 .also { it.write(pcm, 0, pcm.size); it.play() }
         }.getOrNull() ?: return 0
-        val ms = pcm.size * 1000L / app.homeydash.agent.WakeSounds.RATE
+        val ms = pcm.size * 1000L / rate
         logScope.launch { delay(ms + 300); runCatching { track.release() } }
         return ms
     }
@@ -717,10 +721,26 @@ class Assistant(
         scope.launch {
             delay(WAKE_SOUND_AFTER_MS)
             if (!waking) return@launch
-            val ms = services.playWakeSound(settings.wakeSound)
+            val ms = services.playWakeSound(settings.wakeSound, wakeAnswer())
             delay(ms + 60)
             if (waking && state == AssistantState.Idle) listen() else waking = false
         }
+    }
+
+    /** The last "Ja?", so the next one is different. */
+    private var lastWakeAnswer: String? = null
+
+    /** "Ja?" in the voice that talks now, when that wake sound is chosen and already made; else null (the hum plays). */
+    private fun wakeAnswer(): app.homeydash.agent.Pcm? {
+        val s = settings
+        if (s.wakeSound != app.homeydash.agent.WakeSound.Voice) return null
+        val swedish = s.answers != app.homeydash.agent.Language.English
+        val options = app.homeydash.agent.ThinkingSounds.answers(s.persona, swedish)
+        val ready = options.filter { services.output.hasSound(it, swedish, s.voice) }
+        if (ready.size < options.size) services.output.prepareSounds(options, swedish, s.voice)
+        val text = app.homeydash.agent.ThinkingSounds.pick(ready, lastWakeAnswer) ?: return null
+        lastWakeAnswer = text
+        return services.output.prepared(text, swedish, s.voice)
     }
 
     /** Counts who wakes which character, for the memory, once the house has more than one in use. */
