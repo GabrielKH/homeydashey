@@ -19,11 +19,11 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
       - name: Test and build
-        run: ./gradlew :homey-api:test :app:assembleDebug
+        run: ./gradlew :homey-api:test :app:assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: homey-dashboard-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: homey-dashboard
+          path: app/build/outputs/apk/release/*.apk
       # Keeps one stable download link for the newest test build:
       # https://github.com/<owner>/<repo>/releases/download/dev/homey-dashboard.apk
       - name: Publish test build
@@ -31,11 +31,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk homey-dashboard.apk
+          cp app/build/outputs/apk/release/app-release.apk homey-dashboard.apk
           # The app compares this with its own build number to offer updates.
           echo "${{ github.run_number }}" > version.txt
           git tag -f dev
           git push -f origin refs/tags/dev
           gh release view dev >/dev/null 2>&1 || gh release create dev --prerelease --title "Latest test build" \
-            --notes "Newest debug build of the dashboard. Download homey-dashboard.apk below and open it on the tablet."
+            --notes "Newest build of the dashboard. Download homey-dashboard.apk below and open it on the tablet."
           gh release upload dev homey-dashboard.apk version.txt --clobber

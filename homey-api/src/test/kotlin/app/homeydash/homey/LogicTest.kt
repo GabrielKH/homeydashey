@@ -122,4 +122,38 @@ class LogicTest {
         assertEquals(false, after.getValue("d-lamp").capability("onoff")?.booleanValue)
         assertSame(devices.getValue("d-plug"), after.getValue("d-plug"))
     }
+
+    @Test fun `a burst of realtime changes becomes one snapshot, in order`() {
+        val http = OkHttpClient()
+        val store = HomeyStore(
+            HomeyClient("http://127.0.0.1", "k", http),
+            HomeyRealtime("http://127.0.0.1", "k", "id", http),
+            TestScope(),
+        )
+        devices.values.forEach { store.apply(HomeyEvent.DeviceChanged(it)) }
+        val before = store.snapshot.value
+        var snapshots = 0
+        val count = { if (store.snapshot.value !== before) snapshots++ }
+
+        store.applyAll(
+            listOf(
+                HomeyEvent.CapabilityChanged("d-lamp", "onoff", JsonPrimitive(false)),
+                HomeyEvent.CapabilityChanged("d-lamp", "onoff", JsonPrimitive(true)),
+                HomeyEvent.CapabilityChanged("d-lamp", "onoff", JsonPrimitive(false)),
+                HomeyEvent.CapabilityChanged("d-gone", "onoff", JsonPrimitive(true)),
+            ),
+        )
+        count()
+
+        val after = store.snapshot.value.devices
+        assertEquals(1, snapshots)
+        assertEquals(false, after.getValue("d-lamp").capability("onoff")?.booleanValue)
+        assertSame(devices.getValue("d-plug"), after.getValue("d-plug"))
+        assertTrue("d-gone" !in after)
+
+        // Nothing that changes anything keeps the very same snapshot.
+        val same = store.snapshot.value
+        store.applyAll(listOf(HomeyEvent.CapabilityChanged("d-lamp", "onoff", JsonPrimitive(false))))
+        assertSame(same, store.snapshot.value)
+    }
 }

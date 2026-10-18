@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.window.DialogProperties
 import app.homeydash.ui.theme.GlassColors
 import app.homeydash.ui.theme.GlassTheme
@@ -238,11 +240,45 @@ fun screenSizeDp(): DpSize {
 /** Largest share of the screen's height a popup takes, so the dashboard still shows above and below it. */
 const val DialogHeightShare = 0.8f
 
-/** A popup's size: [preferred] width when the screen has room for it, and never taller than [DialogHeightShare] of the screen. */
+/**
+ * A popup's size: [preferred] width when the screen has room for it, and never taller than
+ * [DialogHeightShare] of the screen. [tall] popups (the settings) may use nearly the whole
+ * height, so long pages need less scrolling.
+ */
 @Composable
-fun Modifier.dialogSize(preferred: Dp): Modifier {
+fun Modifier.dialogSize(preferred: Dp, tall: Boolean = false): Modifier {
     val screen = screenSizeDp()
-    return this.width(minOf(preferred, screen.width - 48.dp)).heightIn(max = screen.height * DialogHeightShare)
+    val maxHeight = screen.height * (if (tall) TallDialogHeightShare else DialogHeightShare)
+    return this.width(minOf(preferred, screen.width - 48.dp)).heightIn(max = maxHeight)
+}
+
+/** Largest share of the screen's height the settings popups take. */
+const val TallDialogHeightShare = 0.94f
+
+/**
+ * Touches anywhere in the app, popups included. A popup is a window of its own, so the
+ * activity never sees its touches; without this the screen dimmed while someone was busy in
+ * Settings.
+ */
+object UserActivity {
+    @Volatile var onTouch: () -> Unit = {}
+}
+
+/** A popup window whose touches count as using the tablet (see [UserActivity]). */
+@Composable
+fun AppDialog(onDismissRequest: () -> Unit, content: @Composable () -> Unit) {
+    Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            Modifier.pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        UserActivity.onTouch()
+                    }
+                }
+            },
+        ) { content() }
+    }
 }
 
 /** A floating glass panel over the dimmed dashboard, for lamps, the remote and music. */
@@ -253,7 +289,7 @@ fun GlassDialog(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val g = GlassTheme.colors
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    AppDialog(onDismiss) {
         Column(
             Modifier
                 .dialogSize(width)

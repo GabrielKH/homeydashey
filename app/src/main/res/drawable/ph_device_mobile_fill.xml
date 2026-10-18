@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A phone, drawn in the Phosphor style (filled) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256">
+    <path android:fillColor="#FF000000" android:fillType="evenOdd" android:pathData="M88,16H168A24,24,0,0,1,192,40V216A24,24,0,0,1,168,240H88A24,24,0,0,1,64,216V40A24,24,0,0,1,88,16ZM112,48H144A8,8,0,0,1,144,64H112A8,8,0,0,1,112,48Z"/>
+</vector>

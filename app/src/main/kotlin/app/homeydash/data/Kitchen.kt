@@ -3,13 +3,16 @@ package app.homeydash.data
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.LruCache
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import app.homeydash.fridge.Fridge
+import app.homeydash.fridge.OpenFoodFacts
+import app.homeydash.fridge.ProductResearch
+import app.homeydash.fridge.UpcItemDb
 import app.homeydash.recipes.Cooking
 import app.homeydash.recipes.ImportResult
 import app.homeydash.recipes.ParsedRecipe
@@ -34,9 +37,16 @@ import kotlin.coroutines.resume
 
 /**
  * The recipes on the tablet: the book, the recipe being cooked, importing from links and
- * Recipe Keeper exports, and the photos. One instance lives as long as the app.
+ * Recipe Keeper exports, and the photos; and what is in the fridge. One instance lives as
+ * long as the app.
  */
-class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
+class Kitchen(
+    context: Context,
+    http: OkHttpClient,
+    scope: CoroutineScope,
+    /** Sends one prompt to the internet AI with web search on; null back when none is set up. */
+    internet: suspend (String) -> String? = { null },
+) {
     private val appContext = context.applicationContext
 
     val book = RecipeBook(File(appContext.filesDir, "recipes"), http, shrink = { shrinkPhoto(it) })
@@ -45,8 +55,18 @@ class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
     /** A link shared to the app from a browser ("Share → Homey Dashboard"), waiting to be imported. */
     val sharedLink = MutableStateFlow<String?>(null)
 
+    /**
+     * What is in the fridge, freezer and pantry. Barcodes are looked up in Open Food Facts, then
+     * UPCitemdb, then by the internet AI searching the web (GS1 ProductSearch, Swedish shops).
+     */
+    val fridge = Fridge(File(appContext.filesDir, "fridge"), listOf(OpenFoodFacts(http), UpcItemDb(http)), ProductResearch(internet))
+
+    /** Set by the overview's fridge card to open the scanner as soon as the fridge page shows. */
+    val scanRequest = MutableStateFlow(false)
+
     init {
         scope.launch { book.load() }
+        scope.launch { fridge.load() }
     }
 
     /**
@@ -96,19 +116,19 @@ class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
         photos.get(key)?.let { return it }
         return withContext(Dispatchers.IO) {
             val file = book.imageFile(recipe) ?: return@withContext null
-            decode(file.readBytes(), maxSide)?.asImageBitmap()
+            decodeScaled(file.readBytes(), maxSide)?.asImageBitmap()
         }?.also { photos.put(key, it) }
     }
 
     /** Downloads a photo for the preview before saving; the bytes are saved with the recipe so it isn't fetched twice. */
     suspend fun downloadPhoto(url: String): Pair<ByteArray, ImageBitmap>? = runCatching {
         val bytes = book.download(url)
-        val bitmap = withContext(Dispatchers.Default) { decode(bytes, 900) } ?: return@runCatching null
+        val bitmap = withContext(Dispatchers.Default) { decodeScaled(bytes, 900) } ?: return@runCatching null
         bytes to bitmap.asImageBitmap()
     }.getOrNull()
 
     /** A picked photo, decoded for the editor's preview. */
-    suspend fun previewPhoto(bytes: ByteArray): ImageBitmap? = withContext(Dispatchers.Default) { decode(bytes, 900)?.asImageBitmap() }
+    suspend fun previewPhoto(bytes: ByteArray): ImageBitmap? = withContext(Dispatchers.Default) { decodeScaled(bytes, 900)?.asImageBitmap() }
 
     @SuppressLint("SetJavaScriptEnabled")
     private suspend fun loadInBrowser(url: String): String? = withContext(Dispatchers.Main) {
@@ -149,22 +169,13 @@ class Kitchen(context: Context, http: OkHttpClient, scope: CoroutineScope) {
 
         /** Photos are kept at most [MAX_SIDE] px on the long side, as JPEG. */
         fun shrinkPhoto(bytes: ByteArray): ByteArray {
-            val bitmap = decode(bytes, MAX_SIDE) ?: throw IllegalArgumentException("That isn't a photo the tablet can read.")
+            val bitmap = decodeScaled(bytes, MAX_SIDE) ?: throw IllegalArgumentException("That isn't a photo the tablet can read.")
             val scale = MAX_SIDE.toFloat() / maxOf(bitmap.width, bitmap.height)
             val sized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
             return ByteArrayOutputStream().use { out ->
                 sized.compress(Bitmap.CompressFormat.JPEG, 85, out)
                 out.toByteArray()
             }
-        }
-
-        fun decode(bytes: ByteArray, maxSide: Int): Bitmap? {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            if (bounds.outWidth <= 0) return null
-            var sample = 1
-            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
         }
     }
 }

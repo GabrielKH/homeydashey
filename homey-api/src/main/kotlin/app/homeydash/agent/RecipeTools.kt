@@ -61,15 +61,22 @@ class RecipeTools(
         }
     }
 
+    /** Every time named in the open recipe's steps, with its step number (from 1). */
+    fun stepTimers(): List<Pair<Int, app.homeydash.recipes.StepTimer>> {
+        val (r, _) = cooking.current() ?: return emptyList()
+        return r.steps.flatMapIndexed { i, step -> Cooking.timers(step.text).map { (i + 1) to it } }
+    }
+
     /**
      * "Next step", "nästa steg", "what's next", "step 4" and the like while a recipe is open,
      * done straight away without the AI so the kitchen gets an instant answer. Null when
      * [text] isn't such a command or no recipe is open.
      */
-    fun quick(text: String): String? {
+    fun quick(text: String, answerSwedish: Boolean? = null): String? {
         if (cooking.current() == null) return null
         val command = CookingCommand.parse(text) ?: return null
-        val swedish = Confirmation.looksSwedish(text) || command.swedish
+        // [answerSwedish] is the language answers are given in, when that is set (TARS: English).
+        val swedish = answerSwedish ?: (Confirmation.looksSwedish(text) || command.swedish)
         val before = cooking.state.value?.step
         when (command.action) {
             "next" -> cooking.next()

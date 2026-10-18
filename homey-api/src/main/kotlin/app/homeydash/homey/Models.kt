@@ -48,15 +48,29 @@ data class Device(
     val driverUri: String? = null,
     /** How the Homey app draws the device: `components` lists capabilities per control (`toggle`, `button`, `picker`, …). */
     val ui: JsonObject? = null,
+    /** What the app knows the device by, e.g. a Sonos speaker's `RINCON_…` id. */
+    val data: JsonObject? = null,
+    /** The device's settings; some apps keep its address here. */
+    val settings: JsonObject? = null,
+    /** What the owner says the device is, on this tablet, when Homey's class is wrong. */
+    @kotlinx.serialization.Transient val classOverride: String? = null,
+    /** Other names the owner gave it on this tablet, for the assistant ("Frame", "tv:n"). */
+    @kotlinx.serialization.Transient val nicknames: List<String> = emptyList(),
+    /** The card group the owner put it in on this tablet ("Taklampor"). */
+    @kotlinx.serialization.Transient val userGroup: String? = null,
 ) {
-    /** Class used for picking a card: a socket switching a lamp reports `virtualClass = light`. */
-    val effectiveClass: String get() = virtualClass ?: deviceClass
+    /** The class Homey gives: a socket switching a lamp reports `virtualClass = light`. */
+    val homeyClass: String get() = virtualClass ?: deviceClass
+
+    /** Class used for picking a card and for the assistant: the owner's choice, else Homey's. */
+    val effectiveClass: String get() = classOverride ?: homeyClass
 
     fun capability(id: String): Capability? = capabilitiesObj[id]
 
     /** Returns a copy with one capability value replaced, as a realtime update does. */
     fun withCapabilityValue(capabilityId: String, value: JsonElement): Device {
         val current = capabilitiesObj[capabilityId] ?: return this
+        if (current.value == value) return this
         return copy(capabilitiesObj = capabilitiesObj + (capabilityId to current.copy(value = value)))
     }
 }

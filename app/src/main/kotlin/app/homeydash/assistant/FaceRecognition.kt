@@ -202,11 +202,26 @@ class FaceService(private val context: Context) {
     private fun analyze(image: ImageProxy) {
         image.use { proxy ->
             val now = SystemClock.elapsedRealtime()
-            val interval = if (enrolling != null) 250L else 500L
+            // Twice a second while nobody is there, so a face is noticed at once; once someone
+            // has been recognised, every 1.5 s is enough to know they're still there.
+            val known = _seen.value?.let { it.person != null && now - it.at < RECOGNISED_FOR_MS } == true
+            val interval = when {
+                enrolling != null -> 250L
+                known -> 1_500L
+                else -> 500L
+            }
             if (now - lastFrame < interval) return
             lastFrame = now
-            val frame = runCatching { rotate(proxy.toBitmap(), proxy.imageInfo.rotationDegrees) }.getOrNull() ?: return
-            val sample = runCatching { engine.sample(frame) }.getOrNull()
+            val raw = runCatching { proxy.toBitmap() }.getOrNull() ?: return
+            val frame = runCatching { rotate(raw, proxy.imageInfo.rotationDegrees) }.getOrNull()
+            if (frame !== raw) raw.recycle()
+            frame ?: return
+            val sample = try {
+                runCatching { engine.sample(frame) }.getOrNull()
+            } finally {
+                // Each frame is over a megabyte; freeing it at once spares the tablet garbage-collection pauses.
+                frame.recycle()
+            }
             enrolling?.let { it(sample); return }
             if (sample == null) return
             val person = FaceMatcher.match(sample.embedding, _people.value.filter { it.samples.isNotEmpty() })
@@ -247,6 +262,19 @@ class FaceService(private val context: Context) {
         save()
     }
 
+    /** Adds voiceprints (see [app.homeydash.agent.VoiceId]) said with [wakeName] to someone's. */
+    fun addPrints(id: String, wakeName: String, more: List<FloatArray>) {
+        if (more.isEmpty()) return
+        _people.update { list -> list.map { if (it.id == id) it.withPrints(wakeName, more) else it } }
+        save()
+    }
+
+    /** The character and voice someone talks with; null for the house's. */
+    fun setCharacter(id: String, character: app.homeydash.agent.Persona?, voice: app.homeydash.agent.VoiceStyle?) {
+        _people.update { list -> list.map { if (it.id == id) it.copy(character = character, voiceStyle = voice) else it } }
+        save()
+    }
+
     fun setRole(id: String, role: Role) {
         _people.update { list -> list.map { if (it.id == id) it.copy(role = role) else it } }
         save()
@@ -266,6 +294,10 @@ class FaceService(private val context: Context) {
                     put("role", p.role.name)
                     put("samples", vectors(p.samples))
                     put("voice", vectors(p.voice))
+                    put("prints", buildJsonObject { p.prints.forEach { (wake, list) -> put(wake, vectors(list)) } })
+                    put("printsBy", PRINTS_BY)
+                    p.character?.let { put("character", it.name) }
+                    p.voiceStyle?.let { put("voiceStyle", it.name) }
                 })
             }
         }
@@ -289,7 +321,18 @@ class FaceService(private val context: Context) {
                 role = Role.entries.firstOrNull { it.name == o["role"]?.jsonPrimitive?.contentOrNull } ?: Role.Family,
                 samples = vectors(o["samples"]),
                 voice = vectors(o["voice"]),
+                // Voiceprints made before they came from sherpa-onnx don't compare with today's; they are
+                // dropped, and the person is shown as not taught for that name until taught again.
+                character = app.homeydash.agent.Persona.entries.firstOrNull { it.name == o["character"]?.jsonPrimitive?.contentOrNull },
+                voiceStyle = app.homeydash.agent.VoiceStyle.entries.firstOrNull { it.name == o["voiceStyle"]?.jsonPrimitive?.contentOrNull },
+                prints = if (o["printsBy"]?.jsonPrimitive?.contentOrNull == PRINTS_BY) (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }.orEmpty() else emptyMap(),
             )
         }
     }
 }
+
+/** Which model made the stored voiceprints; prints from another can't be compared. */
+private const val PRINTS_BY = "sherpa-wespeaker-resnet34"
+
+/** How long after recognising someone face recognition looks less often. */
+private const val RECOGNISED_FOR_MS = 10_000L

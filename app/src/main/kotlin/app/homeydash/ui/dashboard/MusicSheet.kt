@@ -45,6 +45,7 @@ import app.homeydash.homey.AutocompleteItem
 import app.homeydash.homey.DashboardLayout
 import app.homeydash.homey.Device
 import app.homeydash.homey.FlowCards
+import app.homeydash.homey.MusicSource
 import app.homeydash.homey.Zone
 import app.homeydash.ui.components.DialogHeader
 import app.homeydash.ui.components.GlassDialog
@@ -56,7 +57,6 @@ import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
-import kotlinx.serialization.json.JsonObject
 
 /** Speakers whose apps can play something picked from a list (Sonos favourites, playlists…). */
 fun musicSpeakers(devices: Collection<Device>, actions: DashboardActions): List<Device> =
@@ -95,7 +95,7 @@ fun MusicSheet(
         )
         if (target == null) {
             Text(
-                "No speaker here can play favourites or playlists yet. Install the Sonos (local) app on your Homey and give the API key the Flow permission.",
+                "No speaker here can play favourites or playlists yet. Sonos speakers on the same Wi-Fi as the tablet show up here by themselves.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = g.muted,
             )
@@ -136,14 +136,11 @@ fun MusicSheet(
             if (source.arg.type == "autocomplete") SearchField(query, { query = it }, Modifier.weight(1f))
         }
 
-        val results by produceState<List<AutocompleteItem>?>(null, target.id, source.card.id, query) {
+        // Each item remembers the card that listed it, since a tab can fall back to a twin's card.
+        val results by produceState<List<Pair<MusicSource, AutocompleteItem>>?>(null, target.id, source.card.id, query) {
             value = null
             if (query.isNotEmpty()) delay(350)
-            value = if (source.arg.type == "dropdown") {
-                FlowCards.dropdownItems(source.arg).filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-            } else {
-                actions.autocomplete(source.card, source.arg.name, query)
-            }
+            value = actions.musicItems(source, query)
         }
         // Read once here: the grid builds its items later, when the list may already be reloading.
         val list = results
@@ -151,7 +148,11 @@ fun MusicSheet(
             when {
                 list == null -> CircularProgressIndicator(color = g.fg)
                 list.isEmpty() -> Text(
-                    if (query.isBlank()) "Nothing in ${source.title.lowercase()} yet." else "Nothing matches \"$query\".",
+                    when {
+                        query.isNotBlank() -> "Nothing matches \"$query\"."
+                        source.catalogue -> "Search for any song, album, artist or playlist."
+                        else -> "Nothing in ${source.title.lowercase()} yet."
+                    },
                     style = MaterialTheme.typography.bodyLarge,
                     color = g.muted,
                 )
@@ -162,9 +163,9 @@ fun MusicSheet(
                     contentPadding = PaddingValues(bottom = 8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(list) { item ->
+                    items(list) { (from, item) ->
                         MusicItem(item, actions) {
-                            actions.run(source.card, JsonObject(mapOf(source.arg.name to FlowCards.argValue(source.arg, item))))
+                            actions.run(from.card, FlowCards.musicArgs(from, item))
                             onDismiss()
                         }
                     }

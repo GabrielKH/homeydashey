@@ -5,7 +5,7 @@ It talks to the Homey directly over the local network with an API key, builds it
 
 ## Install
 
-Every push builds a debug APK. The newest one is always at **Releases → Latest test build** (`releases/download/dev/homey-dashboard.apk`); sideload it on the tablet.
+Every push builds the APK the tablet runs (an unshrunk release build, signed with the shared key). The newest one is always at **Releases → Latest test build** (`releases/download/dev/homey-dashboard.apk`); sideload it on the tablet.
 
 Every build is signed with the same key (`app/signing/homeydash.jks`) and numbered by its CI run, so a new APK installs over the old one and keeps the settings. The app checks the release's `version.txt` every few hours and offers to install a newer build (Android asks once to allow installs from the app). The key is in the repo because this is a sideloaded kiosk app; use a private key before publishing it anywhere.
 
@@ -64,6 +64,22 @@ The Recipes page (side menu) is the kitchen's recipe book, kept on the tablet (`
 - Filter by course, category or favourites, and search by name or ingredient.
 - A recipe's page has the photo, ingredients to tick off and the steps; tap a step to mark where you are. **Start cooking** shows one step at a time in big type, with Back and Next (or swipe), a timer button for times in the step ("bake 25–30 minutes" starts a 30 minute timer), and the ingredients alongside.
 - The voice assistant knows which recipe is open and which step you are on, so "what's next?", "nästa steg", "go back", "step 4" or "how much flour?" just work. Step commands are answered at once without the AI and move the screen along; it can also find and open a saved recipe ("open the lasagne").
+
+### Fridge
+
+The Fridge page (side menu) and the overview's fridge card track what is in the fridge, freezer and pantry, kept on the tablet (`files/fridge/fridge.json`). Homey has nowhere to keep a food list, so it lives on the tablet like the recipes. Research and the shelf-life table: `plan/fridge-research.md` in the project files.
+
+- **Scan** with the front camera (or the back one): hold the barcode 15 to 25 cm in front of the camera above the screen, then turn the pack to show its date. Google ML Kit reads EAN/UPC barcodes, QR codes and Data Matrix offline, zooms in by itself when a code is too small, and focuses on the middle (tap the picture to focus elsewhere); on the front camera the screen goes to full brightness to light the pack.
+- **Dates** are read off the pack with ML Kit's offline text recognition after each barcode, until the date is found, the next barcode is scanned or "Skip date" is tapped ("Bäst före 20.10.2026", "BF 201026", "Sista förbrukningsdag 2026-10-20", "Best before 20 OCT 26"). Two frames must agree.
+- **Sizes** are kept in the unit that fits: milk, juice and drinks in litres (dl, cl, ml), eggs by the piece, the rest in grams and kilos ("1000 ml" shows as "1 l", "0,5 kg" as "500 g"). The edit dialog has a number field and unit buttons.
+- **Looking products up**: first what the tablet already knows about that barcode, then [Open Food Facts](https://world.openfoodfacts.org) (open data, ODbL), then UPCitemdb's free lookup, then, when none knows it or can't say what kind of food it is, the internet AI from the assistant's settings searches the web (GS1 Sweden ProductSearch, ICA, Coop, Willys and other Swedish shops) for the name and how long it keeps unopened and opened. What it finds is saved, so each product is looked up once. GS1's Validoo and Barcode Lookup have no free API the tablet could call. The AI lookup needs an internet AI set up and the assistant not on "Local only".
+- **Learning**: you confirm a new product once and the tablet remembers that barcode, so the next scan adds it at once (with an undo). Each pack saved with a printed date teaches how many days that product keeps from purchase (the middle of the last six packs), used for packs scanned without a date.
+- **Eaten or finished**: scan something that is already in the fridge again and one is taken out (the last one takes the line away), with "Put back" and "Add one instead". A code added in the last 15 minutes adds another instead, so scanning three yoghurts after shopping adds three. When the assistant's memory is on, it remembers what the house finishes and how many days it lasted.
+- **Weighed packs** from the meat, fish and cheese counter carry an in-store barcode (starting with 2) that no database knows: name it once and the tablet remembers it by the store's item number.
+- **GS1 2D codes** (Data Matrix, GS1 QR, GS1 Digital Link) on fresh food can carry the use-by or best-before date and weight; those are filled in from the scan.
+- **Shelf life**: the date printed on the pack when known, otherwise the purchase date plus how long that product (learned or looked up) or that kind of food keeps (mince 2 days, chicken 2, fish 1, milk 7, hard cheese 2 months…); once opened, the shorter of that and the opened shelf life (milk 5 days, yoghurt 7, cold cuts 4). The freezer stops the clock; taking it out gives thawed food a day or two. Meat, fish, mince, cold cuts, ready meals and leftovers are "use by": past it they're marked Expired. Everything else is "best before": past it, look, smell and taste.
+- The kind is guessed from Open Food Facts' categories, then Swedish and English words in the name ("kycklingfärs" is mince, "prästost" is cheese), and can be changed.
+- The voice assistant can list what's there and what goes off first, add things ("lägg till två paket köttfärs i kylen"), mark them opened or frozen, and take them out ("we finished the milk"). Its instructions include the few things to eat first, so "what should we cook tonight?" can use them.
 
 Type is Inter (OFL), the closest open typeface to Apple's SF Pro. Icons are [Phosphor](https://phosphoricons.com) (MIT): each icon's Regular and Fill SVGs from `@phosphor-icons/core` are converted to vector drawables `res/drawable/ph_<name>.xml` and `ph_<name>_fill.xml`, and listed in `Sym` in `ui/components/Icons.kt`.
 

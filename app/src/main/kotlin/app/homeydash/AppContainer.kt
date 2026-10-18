@@ -8,6 +8,7 @@ import app.homeydash.data.CalendarRepository
 import app.homeydash.data.WeatherRepository
 import app.homeydash.data.DisplaySettings
 import app.homeydash.data.HomeyDiscovery
+import app.homeydash.data.SonosFinder
 import app.homeydash.data.Kitchen
 import app.homeydash.data.SavedHomey
 import app.homeydash.data.SettingsRepository
@@ -22,9 +23,16 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import app.homeydash.sonos.SonosCards
+import app.homeydash.sonos.SonosClient
+import app.homeydash.sonos.SpotifyApp
+import app.homeydash.sonos.SpotifySearch
+import java.util.Locale
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -48,15 +56,38 @@ class AppContainer(context: Context) {
     private val connector = HomeyConnector(http)
 
     val discovery = HomeyDiscovery(context, http)
-    val updater = AppUpdater(context, http)
+    val updater = AppUpdater(context, http, scope)
     val calendar = CalendarRepository(context, settings, scope)
 
     val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
 
     val assistant = AssistantServices(context, http, scope)
 
+    /** Finds any song on Spotify for the Sonos speakers, once keys are added in the assistant's settings. */
+    private val spotify = SpotifySearch(
+        http,
+        app = {
+            assistant.settings.value.let { s ->
+                if (s.spotifyClientId.isBlank() || s.spotifySecret.isBlank()) null else SpotifyApp(s.spotifyClientId, s.spotifySecret)
+            }
+        },
+        market = Locale.getDefault().country.takeIf { it.length == 2 } ?: "SE",
+    )
+    private val sonos = SonosCards(SonosClient(http), SonosFinder(context, http)::find, spotify)
+
     /** Recipes, and the one being cooked; the voice assistant reads it too. */
-    val kitchen = Kitchen(context, http, scope).also { assistant.kitchen = it }
+    val kitchen = Kitchen(context, http, scope) { prompt ->
+        assistant.web.raw(assistant.settings.value.webSearch(), prompt)
+    }.also { k ->
+        assistant.kitchen = k
+        // Eaten and finished food goes into the assistant's memory, when memory is on.
+        k.fridge.onUsed = { item, left ->
+            if (assistant.settings.value.access(app.homeydash.agent.Secret.Memory) != app.homeydash.agent.Access.Off) {
+                val lasted = item.boughtDate()?.takeIf { left == 0 }?.let { java.time.temporal.ChronoUnit.DAYS.between(it, java.time.LocalDate.now()).toInt() }
+                assistant.memory.learn(app.homeydash.agent.Memory.finished(item.name, lasted, java.time.ZonedDateTime.now()))
+            }
+        }
+    }
 
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
@@ -71,6 +102,16 @@ class AppContainer(context: Context) {
                 updater.check()
                 delay(UPDATE_CHECK_MS)
             }
+        }
+        // New Spotify keys add (or take away) the speakers' "Play from Spotify" without a restart.
+        // The keys can also load after the speakers' cards were made, so compare with what they got.
+        scope.launch {
+            assistant.settings.map { it.spotifyClientId.isNotBlank() && it.spotifySecret.isNotBlank() }
+                .distinctUntilChanged()
+                .collect { keys ->
+                    val shown = sonos.spotifyShown
+                    if (shown != null && shown != keys) (_session.value as? SessionState.Ready)?.store?.reload()
+                }
         }
         scope.launch {
             val saved = settings.saved.first()
@@ -114,7 +155,7 @@ class AppContainer(context: Context) {
     }
 
     private fun HomeySession.newStore(saved: SavedHomey) = SessionState.Ready(
-        store = HomeyStore(client, newRealtime(saved.apiKey, http), scope),
+        store = HomeyStore(client, newRealtime(saved.apiKey, http), scope, extraCards = listOf(sonos)),
         info = info,
     )
 }

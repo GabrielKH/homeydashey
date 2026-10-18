@@ -8,9 +8,17 @@ package app.homeydash.agent
  */
 object QuickCommand {
     /** What to do: [device] or every light in [roomId], set to [on] or to [dim] (0..1). */
-    data class Action(val device: AgentDevice?, val roomId: String?, val on: Boolean?, val dim: Double?, val swedish: Boolean)
+    data class Action(
+        val device: AgentDevice?,
+        val roomId: String?,
+        val on: Boolean?,
+        val dim: Double?,
+        val swedish: Boolean,
+        /** One of the owner's card groups ("Taklampor"), instead of a room. */
+        val group: String? = null,
+    )
 
-    private val ON = Regex("""^(?:kan du |snälla |please |can you )?(tänd|tända|sätt på|sätta på|slå på|slå på|starta|turn on|switch on|put on)\s+(.+)$""")
+    private val ON = Regex("""^(?:kan du |snälla |please |can you )?(tänd|tända|sätt på|sätta på|slå på|starta|start|turn on|switch on|put on)\s+(.+)$""")
     private val ON_AFTER = Regex("""^(?:sätt|sätta|slå|turn|switch)\s+(.+?)\s+(på|on)$""")
     private val OFF = Regex("""^(?:kan du |snälla |please |can you )?(släck|släcka|stäng av|stänga av|slå av|turn off|switch off|shut off)\s+(.+)$""")
     private val OFF_AFTER = Regex("""^(?:stäng|stänga|slå|turn|switch)\s+(.+?)\s+(av|off)$""")
@@ -46,6 +54,11 @@ object QuickCommand {
         val cap = if (dim != null) "dim" else "onoff"
         // "lamporna", "the lights", "allt" or a bare "i köket" mean the whole room, not one lamp.
         val wholeRoom = MANY.containsMatchIn(w) || w.startsWith("i ") || w.startsWith("in ")
+        // "tänd taklamporna": a group of cards the owner made comes before a single lamp.
+        view.group(w.replace(ROOM_WORDS, " ").trim())?.let { g ->
+            val members = view.devices.filter { it.group == g && it.secret == null && it.capability(cap)?.setable == true }
+            if (members.isNotEmpty()) return Action(null, null, on, dim, swedish, group = g)
+        }
         if (!wholeRoom) {
             view.device(w)?.let { d ->
                 val c = d.capability(cap)
@@ -60,7 +73,7 @@ object QuickCommand {
         val roomId = view.room(roomPart) ?: return null
         if (NameMatch.score(roomPart, view.rooms[roomId].orEmpty()) < 0.95) return null
         val lights = view.devices.filter {
-            it.roomId == roomId && it.deviceClass == "light" && it.secret == null && !it.hiddenOnDashboard && it.capability(cap)?.setable == true
+            view.inRoom(it, roomId) && it.deviceClass == "light" && it.secret == null && !it.hiddenOnDashboard && it.capability(cap)?.setable == true
         }
         return if (lights.isEmpty()) null else Action(null, roomId, on, dim, swedish)
     }
@@ -68,7 +81,7 @@ object QuickCommand {
     /** The tool call that does [a]. */
     fun call(a: Action): ToolCall {
         val args = buildMap {
-            if (a.device != null) put("device", a.device.alias) else {
+            if (a.device != null) put("device", a.device.alias) else if (a.group != null) put("room", a.group) else {
                 put("room", a.roomId!!)
                 put("device_class", "light")
             }
@@ -81,13 +94,25 @@ object QuickCommand {
 
     /** What to say when it's done. */
     fun done(a: Action, view: HomeView): String {
-        val what = a.device?.name ?: view.rooms[a.roomId].orEmpty().let { if (a.swedish) "lamporna i $it" else "the lights in $it" }
+        val what = a.device?.name ?: a.group ?: view.rooms[a.roomId].orEmpty().let { if (a.swedish) "lamporna i $it" else "the lights in $it" }
+        val many = a.device == null
         return when {
             a.dim != null -> if (a.swedish) "${cap(what)} är på ${(a.dim * 100).toInt()} procent." else "${cap(what)} is at ${(a.dim * 100).toInt()} percent."
-            a.on == true -> if (a.swedish) "${cap(what)} är tänd." else "${cap(what)} is on."
-            else -> if (a.swedish) "${cap(what)} är släckt." else "${cap(what)} is off."
+            a.on == true -> if (a.swedish) "${cap(what)} är ${if (many) "tända" else "tänd"}." else "${cap(what)} ${if (many) "are" else "is"} on."
+            else -> if (a.swedish) "${cap(what)} är ${if (many) "släckta" else "släckt"}." else "${cap(what)} ${if (many) "are" else "is"} off."
         }
     }
+
+    /** What to say when Homey couldn't reach the device, or the device didn't change. */
+    fun notChanged(a: Action, view: HomeView): String {
+        val what = a.device?.name ?: a.group ?: view.rooms[a.roomId].orEmpty()
+        return if (a.swedish) "${cap(what)} svarar inte i Homey, så den ändrades inte. Den kan vara strömlös eller utom räckhåll."
+        else "${cap(what)} isn't responding in Homey, so it didn't change. It may be switched off at the wall or out of range."
+    }
+
+    /** How the tools begin a message about a change that didn't happen. */
+    const val NOT_CHANGED_PREFIX = "Homey accepted it, but"
+    const val UNREACHABLE_PREFIX = "Homey can't reach"
 
     private fun cap(s: String) = s.replaceFirstChar { it.uppercase() }
 }

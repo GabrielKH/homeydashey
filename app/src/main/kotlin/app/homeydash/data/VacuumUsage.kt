@@ -65,7 +65,7 @@ class VacuumUsage(context: Context) {
             val step = (now - last).coerceAtMost(MAX_STEP_MS)
             last = now
             snapshot.value.devices.values.filter(Vacuums::isVacuum).forEach { device ->
-                val state = Vacuums.controls(device, emptyList()).state
+                val state = Vacuums.state(device)
                 if (device.id !in _usage.value) update(device.id) { it }
                 if (state == VacuumState.Cleaning) update(device.id) { it.copy(hours = it.hours + step / 3_600_000.0) }
             }
