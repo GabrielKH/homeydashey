@@ -222,6 +222,10 @@ class Agent(
                     answer.stats?.let { st ->
                         heard.rounds += st
                         heard.trace("speed", "round ${heard.rounds.size}: ${st.text()}")
+                        if (brain.local && heard.rounds.size > 1 && keepsNothing(st)) {
+                            if (System.currentTimeMillis() >= unkeptUntil) heard.trace("speed", UNKEPT)
+                            unkeptUntil = System.currentTimeMillis() + UNKEPT_PAUSE_MS
+                        }
                     }
                     val keepLocal = localOnly || toolbox.privateContext
                     answer.content?.takeIf { it.isNotBlank() }?.let { heard.trace("model", it, keepLocal) }
@@ -584,9 +588,12 @@ class Agent(
      */
     fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null): String =
         shared(settings, view.local) +
-            (compactTools?.let { "\n" + ToolText.HOW + "\nTools:\n" + ToolText.lines(it) + "\n" } ?: "") +
             "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
-            "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n\n" + character(settings) +
+            "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n" +
+            // The tools after the devices: which ones there are depends on who asks (a guest has
+            // fewer), and everything before this point is then the same for everyone.
+            (compactTools?.let { "\n" + ToolText.HOW + "\nTools:\n" + ToolText.lines(it) + "\n" } ?: "") +
+            "\n" + forWho(settings, view.local) + character(settings) +
             // Said last, after who it is: a small model reads the end most closely, and with the
             // character last it would otherwise chat about a change instead of making it.
             if (compactTools != null) TOOLS_LAST_WRITTEN else TOOLS_LAST
@@ -594,6 +601,14 @@ class Agent(
     /** What the last warm-up sent, so an unchanged start isn't sent again, and when. */
     private var warmed: Int? = null
     private var warmedAt = 0L
+
+    /**
+     * Until when warm-ups are skipped because the server kept nothing it read: a later round of
+     * a question, which starts with all of the round before, was read from scratch. A warm-up
+     * then only makes the question wait behind 20 seconds of reading (oMLX answers one request
+     * at a time).
+     */
+    private var unkeptUntil = 0L
 
     /**
      * Works through the rules and the home's devices ahead of the question, while it is still
@@ -622,6 +637,7 @@ class Agent(
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
         val quiet = System.currentTimeMillis() - maxOf(warmedAt, lastActivity) > REWARM_AFTER_MS
         if (key == warmed && !quiet) return
+        if (System.currentTimeMillis() < unkeptUntil) return
         warmed = key
         warmedAt = System.currentTimeMillis()
         // Logged either way, so a slow first question shows whether the warm-up ran.
@@ -667,7 +683,7 @@ class Agent(
         fixed(settings, view) + "\n" + situation(settings, view, context)
 
     /** How to behave, and as whom. */
-    fun rules(settings: AgentSettings, local: Boolean = true): String = shared(settings, local) + character(settings)
+    fun rules(settings: AgentSettings, local: Boolean = true): String = shared(settings, local) + forWho(settings, local) + character(settings)
 
     /**
      * Who is talking: the name, the language and the personality. Kept apart from [shared] so it
@@ -702,7 +718,6 @@ class Agent(
         append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
         append("Talk like a person in a conversation, not like a screen: put the answer itself in a short first sentence, use everyday spoken words, ")
         append("react to what they just said, and remember what was said earlier. Ask a short question back only when you really need to know something.\n")
-        if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
         append("The home's devices are listed after these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
         append("devices the note leaves out are off or idle, and get_device reads anything else (power, battery, other sensors). ")
         append("Notes before earlier questions were true then; only the last note is how things are now. ")
@@ -753,15 +768,26 @@ class Agent(
         append("follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found. ")
         append("When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.\n")
         append(BatteryNag.rule(settings.batteryReminders)).append('\n')
-        if (remembers(settings, local)) {
-            append("You have a long memory of earlier conversations and habits, kept outside this prompt: when the user refers to before, ")
-            append("\"the usual\", favourites or something they told you, use the note's \"Remembered\" lines or call recall. ")
-            append("When they ask you to remember a fact (\"kom ihåg att…\"), call remember; standing instructions on how to answer go to remember_instruction.\n")
-        }
         val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (standing.isNotEmpty()) {
             append("The owner's standing instructions; follow them unless a rule above forbids it:\n")
             standing.forEach { append("- ").append(it).append('\n') }
+        }
+    }
+
+
+    /**
+     * What depends on who is asking (a guest, or someone whose memory is off). Sent after the
+     * devices and tools, not among the rules: a local model can only reuse what it read when
+     * the start is the same, and a guest line near the top made every question after someone
+     * else's read all 5 000 tokens again.
+     */
+    fun forWho(settings: AgentSettings, local: Boolean = true): String = buildString {
+        if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
+        if (remembers(settings, local)) {
+            append("You have a long memory of earlier conversations and habits, kept outside this prompt: when the user refers to before, ")
+            append("\"the usual\", favourites or something they told you, use the note's \"Remembered\" lines or call recall. ")
+            append("When they ask you to remember a fact (\"kom ihåg att…\"), call remember; standing instructions on how to answer go to remember_instruction.\n")
         }
     }
 
@@ -868,6 +894,13 @@ class Agent(
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val REWARM_AFTER_MS = 5 * 60 * 1000L
+        const val UNKEPT_PAUSE_MS = 15 * 60 * 1000L
+        const val UNKEPT = "The AI server on the computer kept nothing it had read: this round started with the whole round before " +
+            "and still read everything (0 cached). Restart it, or check its memory and cache settings. Warm-ups are paused for 15 minutes, " +
+            "since they'd only make questions wait."
+
+        /** A round read from scratch although it starts with everything the round before it sent. */
+        fun keepsNothing(st: ChatStats): Boolean = st.cachedTokens == 0 && (st.promptTokens ?: 0) > 1000
         const val WARM_UP = ToolText.START
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L

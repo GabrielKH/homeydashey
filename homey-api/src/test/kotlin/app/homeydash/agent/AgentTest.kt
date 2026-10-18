@@ -1091,6 +1091,24 @@ class AgentTest {
     }
 
     @Test
+    fun `a guest's prompt starts the same as the owner's, so the server keeps it`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val owner = AgentSettings()
+        val guest = owner.forRole(Role.Guest)
+        val a = agent.fixed(owner, view(owner), compactTools = emptyList())
+        val b = agent.fixed(guest, view(guest), compactTools = emptyList())
+        assertTrue(a.commonPrefixWith(b).contains("The home ("))
+        assertTrue(b.indexOf("A guest is using the tablet") > b.indexOf("The home ("))
+    }
+
+    @Test
+    fun `a later round read from scratch means the server keeps nothing`() {
+        assertTrue(Agent.keepsNothing(ChatStats(totalMs = 1, promptTokens = 5456, cachedTokens = 0)))
+        assertTrue(!Agent.keepsNothing(ChatStats(totalMs = 1, promptTokens = 5028, cachedTokens = 4096)))
+        assertTrue(!Agent.keepsNothing(ChatStats(totalMs = 1, promptTokens = 5028, cachedTokens = null)))
+    }
+
+    @Test
     fun `the owner's own words replace a character's personality`() {
         val agent = Agent(ChatClient(okhttp3.OkHttpClient()))
         val nova = AgentSettings()
