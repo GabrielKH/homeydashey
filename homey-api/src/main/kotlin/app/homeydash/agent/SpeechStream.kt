@@ -75,7 +75,7 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
         const val SHORTEST = 20
         private val THINK = Regex("<think>[\\s\\S]*?(</think>|$)")
         /** Where tool-call text starts: a CALL line, Qwen's tags, a bare JSON object or a code fence. */
-        private val NOT_SPOKEN = Regex("""(?m)(^[ \t*`]*(CALL[ \t]|\{|```)|<tool_call|<function=)""")
+        private val NOT_SPOKEN = Regex("""(?m)(^[ \t*`]*(CALL[ \t]|\{|```)|(?<=\s)CALL[ \t]+[a-z_]|<tool_call|<function=)""")
         private val END = Regex("""[.!?…](["')\]]*)\s+|\n+""")
 
         /** The text that may be heard so far, and whether something not to be heard began. */

@@ -1111,4 +1111,23 @@ class AgentTest {
         assertTrue(agent.rules(tars).contains("Personality: a calm butler\nYour humor setting is 40 %."))
         assertTrue(agent.rules(nova.asCharacter(Persona.Tars)).contains("you are TARS"))
     }
+
+    @Test
+    fun `a CALL written after a sentence is still run, and not spoken`() {
+        val (calls, rest) = ChatClient.callsInText("I can try to find that for you. CALL ask_internet {\"query\": \"Sveriges statsminister\"}")
+        assertEquals("ask_internet", calls.single().name)
+        assertEquals("Sveriges statsminister", (calls.single().arguments["query"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("I can try to find that for you.", rest)
+        assertTrue(ChatClient.callsInText("Ring CALL CENTER om det behövs.").first.isEmpty())
+        assertEquals("I can try. " to true, SpeechStream.speakable("I can try. CALL ask_internet {}"))
+    }
+
+    @Test
+    fun `the tool rule comes after the character`() {
+        val agent = Agent(ChatClient(okhttp3.OkHttpClient()))
+        val fixed = agent.fixed(AgentSettings(), view(), compactTools = emptyList())
+        assertTrue(fixed.trimEnd().endsWith(Agent.TOOLS_LAST_WRITTEN.trimEnd()))
+        assertTrue(fixed.indexOf("Personality:") < fixed.indexOf(Agent.TOOLS_LAST_WRITTEN))
+        assertTrue(Agent.CLAIM.containsMatchIn("Jag tändde alla lampor i vardagsrummet åt dig!"))
+    }
 }

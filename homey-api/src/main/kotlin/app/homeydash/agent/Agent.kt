@@ -599,7 +599,10 @@ class Agent(
         shared(settings, view.local) +
             (compactTools?.let { "\n" + ToolText.HOW + "\nTools:\n" + ToolText.lines(it) + "\n" } ?: "") +
             "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
-            "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n\n" + character(settings)
+            "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n\n" + character(settings) +
+            // Said last, after who it is: a small model reads the end most closely, and with the
+            // character last it would otherwise chat about a change instead of making it.
+            if (compactTools != null) TOOLS_LAST_WRITTEN else TOOLS_LAST
 
     /** What the last warm-up sent, so an unchanged start isn't sent again, and when. */
     private var warmed: Int? = null
@@ -817,6 +820,11 @@ class Agent(
         val CHANGED = listOf("Done", "Changed", "Started", "Playing")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
             "Call the right tool now, or tell the user plainly what went wrong.)"
+        const val TOOLS_LAST = "Whatever the character, the home only changes through your tools: call the tool first, then say what it did; " +
+            "never say something is done, on or off without a tool call for it.\n"
+        const val TOOLS_LAST_WRITTEN = "Whatever the character, the home only changes through your tools: to change, find or look up anything, " +
+            "reply first with only the CALL lines, then answer in words once the results are back; " +
+            "never say something is done, on or off without a CALL line for it.\n"
         const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
         const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +
@@ -831,9 +839,9 @@ class Agent(
         )
         /** Saying something was changed: "Taklampan är tänd", "I've turned it off", "Done". */
         val CLAIM = Regex(
-            """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|on (its|the) way|heading (back|home)|switched (on|off)|done|""" +
+            """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|on (its|the) way|heading (back|home)|switched (on|off)|dimmed|adjusted|synchroni[sz]ed|done|""" +
                 """har (tänt|släckt|satt|slagit|startat|stängt|dimmat|ändrat)|är (nu )?(tänd|tända|släckt|släckta|avstängd|avstängda|igång)|""" +
-                """tänt|släckt|tände|släckte|slog (på|av)|satte på|startade|stängde av|dimmade|klart|fixat)$E""",
+                """tänt|släckt|tände|tändde|släckte|slog (på|av)|satte på|startade|stängde av|dimmade|klart|fixat)$E""",
             RegexOption.IGNORE_CASE,
         )
         /** Repeating the request back as an order ("Stop the vacuum, send it back to its dock") instead of doing it. */

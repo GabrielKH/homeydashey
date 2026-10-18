@@ -477,7 +477,9 @@ class ChatClient(http: OkHttpClient) {
             return jsonCallsInText(content)
         }
 
-        private val CALL_LINE = Regex("""(?m)^[ \t*`]*CALL[ \t]+([\w.-]+)[ \t]*""")
+        // A call usually starts its own line, but small models also write it after a sentence
+        // ("I'll look that up. CALL ask_internet {…}"); then it must name a tool in lower case.
+        private val CALL_LINE = Regex("""(?m)(?:^[ \t*`]*|(?<=\s)[*`]*(?=CALL[ \t]+[a-z_]))CALL[ \t]+([\w.-]+)[ \t]*""")
 
         private val CODE_FENCE = Regex("""(?m)^[ \t]*```\w*[ \t]*$""")
 
