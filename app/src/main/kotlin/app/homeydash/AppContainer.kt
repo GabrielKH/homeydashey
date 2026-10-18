@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
@@ -94,10 +93,14 @@ class AppContainer(context: Context) {
             }
         }
         // New Spotify keys add (or take away) the speakers' "Play from Spotify" without a restart.
+        // The keys can also load after the speakers' cards were made, so compare with what they got.
         scope.launch {
             assistant.settings.map { it.spotifyClientId.isNotBlank() && it.spotifySecret.isNotBlank() }
-                .distinctUntilChanged().drop(1)
-                .collect { (_session.value as? SessionState.Ready)?.store?.reload() }
+                .distinctUntilChanged()
+                .collect { keys ->
+                    val shown = sonos.spotifyShown
+                    if (shown != null && shown != keys) (_session.value as? SessionState.Ready)?.store?.reload()
+                }
         }
         scope.launch {
             val saved = settings.saved.first()

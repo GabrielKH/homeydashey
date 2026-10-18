@@ -79,6 +79,40 @@ class SonosTest {
         assertEquals(mapOf("a" to "Kök", "b" to "Sovrum", "c" to "Vardagsrum"), matched)
     }
 
+    @Test fun `speakers are found by their Sonos id, MAC or address whatever they are called`() {
+        val speakers = SonosClient.parseTopology(topology)
+        fun dev(id: String, data: String, settings: String = "{}") = Device(
+            id, "Högtalare $id", deviceClass = "speaker", driverUri = "homey:app:com.sonos:speaker",
+            data = kotlinx.serialization.json.Json.parseToJsonElement(data) as kotlinx.serialization.json.JsonObject,
+            settings = kotlinx.serialization.json.Json.parseToJsonElement(settings) as kotlinx.serialization.json.JsonObject,
+        )
+        val devices = listOf(
+            dev("a", """{"id":"RINCON_K"}"""),
+            dev("b", "{}", """{"address":"10.0.0.6"}"""),
+            dev("c", """{"id":"x"}""", """{"ip":"10.0.0.99"}"""),
+        )
+        val matched = SonosCards.match(devices, emptyMap(), speakers).mapValues { it.value.room }
+        assertEquals("Kök", matched["a"])
+        assertEquals("Vardagsrum", matched["b"])
+        // The one left over on each side are paired.
+        assertEquals("Sovrum", matched["c"])
+    }
+
+    @Test fun `rooms named Sonos Kök and a lone Beam still find their Homey speakers`() {
+        val speakers = SonosClient.parseTopology(topology).map { s ->
+            s.copy(room = when (s.room) { "Kök" -> "Sonos Kök"; "Sovrum" -> "Beam"; else -> s.room })
+        }
+        val zones = mapOf("z-k" to Zone("z-k", "Kök"), "z-s" to Zone("z-s", "Sovrum"))
+        val devices = listOf(
+            Device("a", "Kök", zone = "z-k", deviceClass = "speaker", driverUri = "homey:app:com.sonos:speaker"),
+            Device("b", "Sovrum", zone = "z-s", deviceClass = "speaker", driverUri = "homey:app:com.sonos:speaker"),
+            Device("b2", "Sovrum", zone = "z-s", deviceClass = "speaker", driverUri = "homey:app:nl.sonos.localapi:speaker"),
+            Device("c", "Vardagsrum", zone = "z-s", deviceClass = "speaker", driverUri = "homey:app:com.sonos:speaker"),
+        )
+        val matched = SonosCards.match(devices, zones, speakers).mapValues { it.value.room }
+        assertEquals(mapOf("a" to "Sonos Kök", "b" to "Beam", "b2" to "Beam", "c" to "Vardagsrum"), matched)
+    }
+
     @Test fun `plays a playlist through the queue on the group leader`() = runTest {
         val server = MockWebServer().apply { start() }
         val host = server.hostName

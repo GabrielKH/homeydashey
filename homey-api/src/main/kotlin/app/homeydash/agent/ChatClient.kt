@@ -20,8 +20,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** A tool call the model asked for; [arguments] is already parsed. */
-data class ToolCall(val id: String, val name: String, val arguments: JsonObject)
+/**
+ * A tool call the model asked for; [arguments] is already parsed. [extra] is what the server
+ * sent with it to be sent back unchanged, like Gemini's thought signature, which Gemini 3
+ * refuses the next turn without.
+ */
+data class ToolCall(val id: String, val name: String, val arguments: JsonObject, val extra: JsonObject? = null)
 
 /** One message of a conversation, in the OpenAI chat format. */
 data class ChatMessage(
@@ -31,6 +35,8 @@ data class ChatMessage(
     val toolCallId: String? = null,
     /** Why the model stopped ("stop", "length", "tool_calls"), when the server says; only for the logs. */
     val finish: String? = null,
+    /** How fast it came, for the screen and the logs; null for messages the AI didn't write. */
+    val stats: ChatStats? = null,
 ) {
     companion object {
         fun system(text: String) = ChatMessage("system", text)
@@ -68,7 +74,7 @@ class ChatClient(http: OkHttpClient) {
     }
 
     private suspend fun send(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>, requireTool: Boolean): ChatMessage = withContext(Dispatchers.IO) {
-        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama, gemini = connection.provider == Provider.Gemini)
         val body = (if (requireTool) JsonObject(full + ("tool_choice" to JsonPrimitive("required"))) else full).toString()
         val request = Request.Builder()
             .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
@@ -76,10 +82,12 @@ class ChatClient(http: OkHttpClient) {
             .post(body.toRequestBody(JSON))
             .build()
         val http = if (connection.local) localHttp else cloudHttp
+        val started = System.nanoTime()
         http.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw BrainException("${connection.provider.label} answered ${response.code}: ${errorText(text)}")
-            parseResponse(text)
+            val answer = parseResponse(text)
+            answer.copy(stats = statsOf(text, answer, started))
         }
     }
 
@@ -113,8 +121,15 @@ class ChatClient(http: OkHttpClient) {
         requireTool: Boolean,
         onText: (String) -> Unit,
     ): ChatMessage = withContext(Dispatchers.IO) {
-        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
-        val body = JsonObject(full + ("stream" to JsonPrimitive(true)) + (if (requireTool) mapOf("tool_choice" to JsonPrimitive("required")) else emptyMap())).toString()
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama, gemini = connection.provider == Provider.Gemini)
+        // Asks for the token counts at the end, for the speed shown with each answer; a server
+        // that refuses the option is asked again without it, and not asked with it again.
+        val usage = connection.baseUrl !in noUsage
+        val body = JsonObject(
+            full + ("stream" to JsonPrimitive(true)) +
+                (if (usage) mapOf("stream_options" to buildJsonObject { put("include_usage", true) }) else emptyMap()) +
+                (if (requireTool) mapOf("tool_choice" to JsonPrimitive("required")) else emptyMap()),
+        ).toString()
         val request = Request.Builder()
             .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
             .apply { if (connection.apiKey.isNotBlank()) header("Authorization", "Bearer ${connection.apiKey}") }
@@ -125,19 +140,28 @@ class ChatClient(http: OkHttpClient) {
         val call = http.newCall(request)
         // The read blocks; stopping the question (a wake word, a tap) closes the connection instead.
         val stop = coroutineContext[Job]?.invokeOnCompletion { call.cancel() }
+        val started = System.nanoTime()
         try {
             call.execute().use { response ->
-                if (!response.isSuccessful) throw BrainException("${connection.provider.label} answered ${response.code}: ${errorText(response.body?.string().orEmpty())}")
+                if (!response.isSuccessful) {
+                    val error = response.body?.string().orEmpty()
+                    if (usage && response.code in 400..422 && error.contains("stream_options", ignoreCase = true)) {
+                        noUsage += connection.baseUrl
+                        return@withContext sendStreaming(connection, messages, tools, requireTool, onText)
+                    }
+                    throw BrainException("${connection.provider.label} answered ${response.code}: ${errorText(error)}")
+                }
                 val source = response.body?.source() ?: throw BrainException("${connection.provider.label} sent an empty answer")
                 // Some servers stream without saying so; a reply in one go starts with "{".
                 val streamed = response.header("Content-Type").orEmpty().contains("event-stream") ||
                     runCatching { source.peek().readUtf8Line()?.trimStart()?.startsWith("{") == false }.getOrDefault(false)
                 if (!streamed) {
-                    val answer = parseResponse(source.readUtf8())
+                    val text = source.readUtf8()
+                    val answer = parseResponse(text)
                     answer.content?.takeIf { it.isNotEmpty() }?.let(onText)
-                    return@withContext answer
+                    return@withContext answer.copy(stats = statsOf(text, answer, started))
                 }
-                val answer = StreamedAnswer()
+                val answer = StreamedAnswer(started)
                 while (true) {
                     ensureActive()
                     val line = source.readUtf8Line() ?: break
@@ -150,14 +174,21 @@ class ChatClient(http: OkHttpClient) {
         }
     }
 
+    /** Servers that refused `stream_options`, by address. */
+    private val noUsage = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /**
      * Puts a streamed answer back together from its server-sent events (`data: {...}` lines
      * with a `delta` each, ending with `data: [DONE]`): the text, and tool calls whose
      * arguments arrive in pieces by their `index`.
      */
-    internal class StreamedAnswer {
+    internal class StreamedAnswer(private val started: Long = System.nanoTime()) {
         private val text = StringBuilder()
-        private class Call(var id: String = "", var name: String = "", val arguments: StringBuilder = StringBuilder())
+        /** When the first piece of the answer came (nanoTime), and how many pieces with something in them. */
+        private var firstAt = 0L
+        private var pieces = 0
+        private var usage: Usage? = null
+        private class Call(var id: String = "", var name: String = "", val arguments: StringBuilder = StringBuilder(), var extra: JsonObject? = null)
         private val calls = sortedMapOf<Int, Call>()
         private var finish: String? = null
 
@@ -167,10 +198,17 @@ class ChatClient(http: OkHttpClient) {
             if (data == "[DONE]") return false
             val root = runCatching { Lenient.parseToJsonElement(data) as? JsonObject }.getOrNull() ?: return true
             (root["error"] as? JsonObject)?.let { throw BrainException(findMessage(root) ?: "The AI stopped with an error") }
+            usageOf(root)?.let { usage = it }
             val choice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return true
             (choice["finish_reason"] as? JsonPrimitive)?.contentOrNull?.let { finish = it }
             val delta = choice["delta"] as? JsonObject ?: return true
-            (delta["content"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }?.let {
+            val content = (delta["content"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
+            val reasoning = (delta["reasoning_content"] as? JsonPrimitive ?: delta["reasoning"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
+            if (content != null || reasoning != null || (delta["tool_calls"] as? JsonArray)?.isNotEmpty() == true) {
+                if (firstAt == 0L) firstAt = System.nanoTime()
+                pieces++
+            }
+            content?.let {
                 text.append(it)
                 onText(it)
             }
@@ -179,6 +217,7 @@ class ChatClient(http: OkHttpClient) {
                 val index = (obj["index"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: calls.size
                 val call = calls.getOrPut(index) { Call() }
                 (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { call.id = it }
+                (obj["extra_content"] as? JsonObject)?.let { call.extra = it }
                 val fn = obj["function"] as? JsonObject ?: return@forEach
                 (fn["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { call.name = it }
                 when (val args = fn["arguments"]) {
@@ -204,6 +243,7 @@ class ChatClient(http: OkHttpClient) {
                                 put("name", c.name)
                                 put("arguments", c.arguments.toString())
                             })
+                            c.extra?.let { put("extra_content", it) }
                         })
                     }
                 })
@@ -216,9 +256,24 @@ class ChatClient(http: OkHttpClient) {
                     })
                 })
             }
-            return parseResponse(root.toString())
+            val answer = parseResponse(root.toString())
+            val now = System.nanoTime()
+            val u = usage
+            val stats = ChatStats(
+                totalMs = (now - started) / 1_000_000,
+                firstMs = firstAt.takeIf { it != 0L }?.let { (it - started) / 1_000_000 },
+                promptTokens = u?.prompt,
+                cachedTokens = u?.cached,
+                outputTokens = u?.output ?: pieces,
+                // Without counts from the server, each piece is about one token.
+                counted = u?.output != null,
+            )
+            return answer.copy(stats = stats)
         }
     }
+
+    /** Token counts a server sends with its answer. */
+    internal data class Usage(val prompt: Int?, val cached: Int?, val output: Int?)
 
     private var warmed = 0L
 
@@ -245,23 +300,34 @@ class ChatClient(http: OkHttpClient) {
      * through them now and only has to read what comes after them when the real question
      * arrives (Ollama keeps the start of the last conversation it read). Failures don't matter.
      */
-    suspend fun prefill(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>) = withContext(Dispatchers.IO) {
-        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama)
+    suspend fun prefill(connection: Connection, messages: List<ChatMessage>, tools: List<ToolSpec>): ChatStats? = withContext(Dispatchers.IO) {
+        val full = requestBody(connection.model, messages, tools, noThinking = connection.provider == Provider.Ollama, gemini = connection.provider == Provider.Gemini)
         val body = JsonObject(full + ("max_tokens" to JsonPrimitive(1))).toString()
         val request = Request.Builder()
             .url(connection.baseUrl.trimEnd('/') + "/chat/completions")
             .apply { if (connection.apiKey.isNotBlank()) header("Authorization", "Bearer ${connection.apiKey}") }
             .post(body.toRequestBody(JSON))
             .build()
-        runCatching { localHttp.newCall(request).execute().close() }
+        val started = System.nanoTime()
+        runCatching {
+            localHttp.newCall(request).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) return@use null
+                val u = runCatching { usageOf(Lenient.parseToJsonElement(text) as JsonObject) }.getOrNull()
+                ChatStats(totalMs = (System.nanoTime() - started) / 1_000_000, promptTokens = u?.prompt, cachedTokens = u?.cached, outputTokens = u?.output ?: 1, counted = u?.output != null)
+            }
+        }.getOrNull()
     }
 
     /** Checks a connection with a tiny question; returns null when it works, else what went wrong. */
-    suspend fun test(connection: Connection): String? = try {
-        complete(connection, listOf(ChatMessage.user("Reply with the word OK.")), emptyList())
-        null
+    suspend fun test(connection: Connection): String? = speedTest(connection).exceptionOrNull()?.let { it.message ?: it.toString() }
+
+    /** Asks a tiny question and says how fast the answer came, or what went wrong. */
+    suspend fun speedTest(connection: Connection): Result<ChatStats?> = try {
+        val answer = stream(connection, listOf(ChatMessage.user("Count from 1 to 20, as words, on one line.")), emptyList()) {}
+        Result.success(answer.stats)
     } catch (e: IOException) {
-        e.message ?: e.toString()
+        Result.failure(e)
     }
 
     companion object {
@@ -269,13 +335,50 @@ class ChatClient(http: OkHttpClient) {
         private const val WARM_EVERY_MS = 5 * 60 * 1000L
         private val Lenient = Json { ignoreUnknownKeys = true; isLenient = true }
 
+        private fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toInt()
+
+        /**
+         * The token counts in an answer: OpenAI's `usage` (with `prompt_tokens_details.cached_tokens`,
+         * as OpenAI, Gemini and vLLM-style servers send), or llama.cpp's `timings` (`prompt_n`, `cache_n`).
+         */
+        internal fun usageOf(root: JsonObject): Usage? {
+            (root["usage"] as? JsonObject)?.let { u ->
+                val cached = (u["prompt_tokens_details"] as? JsonObject)?.int("cached_tokens") ?: u.int("cached_tokens")
+                val prompt = u.int("prompt_tokens")
+                val output = u.int("completion_tokens")
+                if (prompt != null || output != null) return Usage(prompt, cached, output)
+            }
+            (root["timings"] as? JsonObject)?.let { t ->
+                val read = t.int("prompt_n")
+                val cache = t.int("cache_n")
+                return Usage(read?.let { it + (cache ?: 0) }, cache, t.int("predicted_n"))
+            }
+            return null
+        }
+
+        /** Stats for an answer that came in one go: no first word, only the whole time. */
+        private fun statsOf(text: String, answer: ChatMessage, started: Long): ChatStats {
+            val u = runCatching { usageOf(Lenient.parseToJsonElement(text) as JsonObject) }.getOrNull()
+            return ChatStats(
+                totalMs = (System.nanoTime() - started) / 1_000_000,
+                promptTokens = u?.prompt,
+                cachedTokens = u?.cached,
+                outputTokens = u?.output ?: ((answer.content.orEmpty().length + 3) / 4),
+                counted = u?.output != null,
+            )
+        }
+
         /**
          * [noThinking] turns off a local model's reasoning step, so spoken answers come quickly.
          * It's said four ways, since servers and models each listen to a different one:
          * `reasoning_effort`, Ollama's own `think`, the chat template's `enable_thinking`
          * (MLX servers such as vMLX, and Qwen 3.5), and Qwen's `/no_think` in the system prompt.
          */
-        fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>, noThinking: Boolean = false): JsonObject = buildJsonObject {
+        /**
+         * [gemini]: tool calls Gemini didn't write itself (from the local AI, earlier in the
+         * conversation) get the placeholder signature Gemini 3 accepts in place of its own.
+         */
+        fun requestBody(model: String, messages: List<ChatMessage>, tools: List<ToolSpec>, noThinking: Boolean = false, gemini: Boolean = false): JsonObject = buildJsonObject {
             put("model", model)
             put("temperature", 0.3)
             if (noThinking) {
@@ -286,7 +389,7 @@ class ChatClient(http: OkHttpClient) {
             val sent = if (!noThinking) messages else messages.mapIndexed { i, m ->
                 if (i == 0 && m.role == "system") m.copy(content = m.content.orEmpty() + "\n\n/no_think") else m
             }
-            put("messages", buildJsonArray { sent.forEach { add(encode(it)) } })
+            put("messages", buildJsonArray { sent.forEach { add(encode(it, gemini)) } })
             if (tools.isNotEmpty()) {
                 put("tools", buildJsonArray {
                     tools.forEach { t ->
@@ -303,7 +406,10 @@ class ChatClient(http: OkHttpClient) {
             }
         }
 
-        private fun encode(m: ChatMessage): JsonObject = buildJsonObject {
+        private val SKIP_SIGNATURE = buildJsonObject { put("google", buildJsonObject { put("thought_signature", "skip_thought_signature_validator") }) }
+
+        private fun encode(m: ChatMessage, gemini: Boolean = false): JsonObject = buildJsonObject {
+            val unsigned = gemini && m.toolCalls.isNotEmpty() && m.toolCalls.none { it.extra != null }
             put("role", m.role)
             // OpenAI wants content present (null allowed) on assistant messages with tool calls.
             put("content", m.content?.let(::JsonPrimitive) ?: JsonPrimitive(""))
@@ -318,6 +424,7 @@ class ChatClient(http: OkHttpClient) {
                                 put("name", c.name)
                                 put("arguments", c.arguments.toString())
                             })
+                            (c.extra ?: SKIP_SIGNATURE.takeIf { unsigned && c === m.toolCalls.first() })?.let { put("extra_content", it) }
                         })
                     }
                 })
@@ -334,7 +441,7 @@ class ChatClient(http: OkHttpClient) {
                 val fn = obj["function"] as? JsonObject ?: return@mapIndexedNotNull null
                 val name = (fn["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapIndexedNotNull null
                 val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: "call_$i"
-                ToolCall(id, name, parseArguments(fn["arguments"]))
+                ToolCall(id, name, parseArguments(fn["arguments"]), obj["extra_content"] as? JsonObject)
             }
             val finish = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("finish_reason")?.let { (it as? JsonPrimitive)?.contentOrNull }
             if (calls.isEmpty() && content != null) {

@@ -403,11 +403,17 @@ class RoutineTools(private val book: RoutineBook) {
 /** How a routine's run is put in words: for the AI to answer from, or spoken as is when there is no AI. */
 object RoutineText {
     fun forBrain(routine: Routine, run: RoutineRun, later: List<RoutineStep>): String = buildString {
-        append("Routine \"").append(routine.name).append("\", made by the owner. The app has already done its steps; don't do them again.\n")
+        append("Routine \"").append(routine.name).append("\", made by the owner. The app has done its steps and read what is below; answer now in words, ")
+        append("without tools unless the instructions ask for something not done yet. Don't mention the routine, its steps or this note: just talk to the user. ")
+        append("Say dates and times as a person would (\"today\", \"on Sunday\", \"at nine\"); an event that started on an earlier day is still going on.\n")
         run.done.forEach { append("Done: ").append(it).append('\n') }
         run.info.forEach { (heading, text) -> append(heading).append(":\n").append(text).append('\n') }
         if (later.isNotEmpty()) {
             append("Right after your answer the app will ").append(later.joinToString(", ") { RoutineTools.stepText(it) }).append("; don't do that yourself.\n")
+        }
+        if (run.info.any { it.first == "Weather" }) {
+            append("When you tell the weather, say how many degrees it is now and what it feels like (chilly, cold, mild, warm), ")
+            append("whether the wind is blowing (over about 5 m/s is windy, under 2 calm), and today's high and low and any rain, in a sentence or two.\n")
         }
         if (run.said.isNotEmpty()) append("Your answer is said right after \"").append(run.said.joinToString(" ")).append("\", so don't repeat that.\n")
         append("The routine's instructions: ").append(routine.instructions.ifBlank { "Tell the user briefly what the information above says." })

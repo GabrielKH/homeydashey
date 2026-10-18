@@ -160,7 +160,9 @@ class SpeechStreamTest {
         assertEquals(reply.actions.toString(), listOf("d onoff true"), home.sets)
         assertEquals(listOf("Done, the kitchen lamp is on."), said)
         assertTrue(reply.spoken)
-        assertFalse(server.takeRequest().body.readUtf8().contains("\"stream\""))
+        // Streamed for the timing, but nothing was said before the tool did it.
+        assertTrue(server.takeRequest().body.readUtf8().contains("\"stream\":true"))
+        assertEquals(3, reply.rounds.size)
         server.shutdown()
     }
 

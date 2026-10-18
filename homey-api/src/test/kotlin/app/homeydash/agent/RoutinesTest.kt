@@ -206,7 +206,7 @@ class RoutinesTest {
         assertEquals(listOf("d-sonos" to ""), home.played)
         val first = server.takeRequest().body.readUtf8()
         assertFalse(first.contains("\"tools\""))
-        assertTrue(first.contains("play_music(player, query?)"))
+        assertTrue(first.contains("play_music(player, query?, kind?)"))
         // Fridge tools only come along when the question is about food.
         assertFalse(first.contains("add_to_fridge"))
         val second = server.takeRequest().body.readUtf8()

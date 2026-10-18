@@ -16,7 +16,7 @@ data class Connection(
 ) {
     val local: Boolean get() = provider.local
 
-    /** Ollama needs no key; the internet providers do. */
+    /** A local server needs a key only if it asks for one (oMLX does); the internet providers always do. */
     val usable: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank() && (local || apiKey.isNotBlank())
 }
 
@@ -130,6 +130,10 @@ const val TARS_WAKE_NAME = "TARS"
 const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
 const val VOICE_SERVER_PORT = 8090
 
+/** How fast the voice talks by default, in %: a touch slower than the voices' own speed. */
+const val DEFAULT_PACE = 90
+val PACE_RANGE = 70..130
+
 data class AgentSettings(
     val enabled: Boolean = true,
     val local: Connection? = null,
@@ -170,6 +174,10 @@ data class AgentSettings(
     /** How the face shows up when someone starts talking to it. */
     val view: AssistantView = AssistantView.Full,
     val voice: VoiceStyle = VoiceStyle.Natural,
+    /** How fast the voice talks, in % of its own speed; a little slower than normal is easier to follow across the kitchen. */
+    val pace: Int = DEFAULT_PACE,
+    /** Says every 20 minutes in the day that the tablet needs charging, when its battery is low; see [BatteryNag]. */
+    val batteryReminders: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
     val wakeSound: WakeSound = WakeSound.Hum,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */

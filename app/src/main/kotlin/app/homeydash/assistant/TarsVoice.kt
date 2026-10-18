@@ -145,9 +145,9 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
     }
 
     /** [text] in TARS's voice, or null before the voice is downloaded. */
-    suspend fun speak(text: String, inSwedish: Boolean): Pcm? = withContext(Dispatchers.Default) {
+    suspend fun speak(text: String, inSwedish: Boolean, speed: Float = 1f): Pcm? = withContext(Dispatchers.Default) {
         if (_state.value != State.Ready || text.isBlank()) return@withContext null
-        runCatching { synth(text, inSwedish) }.getOrNull()
+        runCatching { synth(text, inSwedish, speed) }.getOrNull()
     }
 
     /** Whether his voice is on the tablet. */
@@ -179,11 +179,11 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
         }
 
     @Synchronized
-    private fun synth(text: String, inSwedish: Boolean): Pcm {
+    private fun synth(text: String, inSwedish: Boolean, speed: Float): Pcm {
         val tts = engine(inSwedish)
         // The calm mood of TARS's eight sounds most like the film.
         val sid = neutral ?: PiperModel.speakerId(Json.parseToJsonElement(config.readText()).jsonObject, "neutral").also { neutral = it }
-        val audio = tts.generate(text, sid = sid, speed = 1f)
+        val audio = tts.generate(text, sid = sid, speed = speed)
         val samples = ShortArray(audio.samples.size) { i -> (audio.samples[i].coerceIn(-1f, 1f) * 32767).toInt().toShort() }
         return Pcm(audio.sampleRate, samples)
     }

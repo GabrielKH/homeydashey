@@ -20,6 +20,8 @@ data class AgentReply(
     val then: (suspend () -> List<String>)? = null,
     /** The whole answer was already handed to the voice while it was written (see [Agent.ask]'s speech). */
     val spoken: Boolean = false,
+    /** How fast each round of the AI came, in order; empty when it answered without the AI. */
+    val rounds: List<ChatStats> = emptyList(),
 )
 
 /** Context for one question that isn't about the home itself. */
@@ -55,7 +57,17 @@ class Agent(
     private val routines: () -> RoutineData = { RoutineData() },
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
-    private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean)
+    /**
+     * One question and everything said after it. [noted] is what its note said was on, for a
+     * local (true) or internet (false) brain, so the next note only says what changed.
+     */
+    private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean, val noted: Noted? = null)
+
+    /** What a note said: each device's line by alias, and the weather. [full] when it said all of it. */
+    class Noted(val local: Boolean, val states: Map<String, String>, val weather: String?, val full: Boolean)
+
+    /** The note of the question being answered, until its turn is remembered. */
+    private var opened: Pair<ChatMessage, Noted>? = null
 
     private val history = ArrayDeque<Turn>()
     private var lastActivity = 0L
@@ -87,7 +99,7 @@ class Agent(
     ): AgentReply {
         val heard = Watch(listener)
         heard.trace("question", text)
-        val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech)
+        val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech).copy(rounds = heard.rounds.toList())
         heard.trace(
             when {
                 reply.ignored -> "ignored"
@@ -127,13 +139,13 @@ class Agent(
         }
 
         // "Next step" while cooking is answered straight away, without the AI.
-        if (context.routine == null && context.kitchen != null) tools(view(true)).cookingQuick(text)?.let { reply ->
+        if (context.routine == null && context.kitchen != null) tools(view(true)).cookingQuick(text, answersSwedish(settings))?.let { reply ->
             remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
             return AgentReply(reply, actions = listOf("recipe step (without the AI)"))
         }
 
         // Plain on, off and dim commands are done straight away, without the AI.
-        if (context.routine == null) quick(text, view(true), tools)?.let { return it }
+        if (context.routine == null) quick(text, view(true), tools, answersSwedish(settings))?.let { return it }
 
         // What a routine read for a local brain never goes to the internet one.
         val brains = settings.brains().filter { it.local || !context.routineLocalOnly }
@@ -154,13 +166,16 @@ class Agent(
             val compact = brain.local && settings.compactTools
             val earlier = history.filter { brain.local || !it.localOnly }.flatMap { it.messages }
             val tools = Tools(specs, compact, text, earlier, context)
-            val turn = mutableListOf(ChatMessage.user(text))
+            val turn = mutableListOf(opening(settings, homeView, context, text, tools, since(brain.local)))
             var localOnly = false
             var acted = false
             // A tool actually changed something; a failed or wrong call doesn't count.
             var changed = false
             var nudged = false
             var emptied = false
+            var reasked = false
+            // Calls it asked for again after they were done: twice means it's going round in circles.
+            var repeats = 0
             val actions = mutableListOf<String>()
             // What each call did this turn, so the same change asked for twice isn't done twice.
             val done = mutableMapOf<String, ToolResult>()
@@ -168,15 +183,15 @@ class Agent(
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
                 repeat(MAX_ROUNDS) {
-                    val messages = conversation(settings, homeView, context, earlier, turn, tools)
+                    val messages = conversation(settings, homeView, earlier, turn, tools)
                     val step = StepIds.next()
                     val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
                     out?.next()
                     val live = out?.takeIf { !command || changed }
+                    // Always streamed, also when nothing is spoken yet, so the first word can be timed.
                     val answer = try {
-                        if (live != null) chat.stream(brain, messages, tools.sent, requireTool = nudged && !acted, onText = live::feed)
-                        else chat.complete(brain, messages, tools.sent, requireTool = nudged && !acted)
+                        chat.stream(brain, messages, tools.sent, requireTool = nudged && !acted, onText = { piece: String -> live?.feed(piece) })
                     } catch (e: IOException) {
                         heard.step(AgentStep(step, thinking, StepState.Failed, e.message, thinking = true))
                         throw e
@@ -185,13 +200,27 @@ class Agent(
                         throw e
                     }
                     heard.step(AgentStep(step, thinking, StepState.Done, thinking = true))
+                    answer.stats?.let { st ->
+                        heard.rounds += st
+                        heard.trace("speed", "round ${heard.rounds.size}: ${st.text()}")
+                    }
                     val keepLocal = localOnly || toolbox.privateContext
                     answer.content?.takeIf { it.isNotBlank() }?.let { heard.trace("model", it, keepLocal) }
                     if (answer.toolCalls.isEmpty()) heard.trace("model stopped", answer.finish ?: "no reason given", keepLocal)
                     if (answer.toolCalls.isNotEmpty()) heard.trace("model calls", answer.toolCalls.joinToString("; ") { "${it.name} ${it.arguments}" }, keepLocal)
                     turn += answer
                     if (answer.toolCalls.isEmpty()) {
-                        if (!acted && answer.content.orEmpty().contains(IGNORE)) return AgentReply("", brain, ignored = true)
+                        if (!acted && answer.content.orEmpty().contains(IGNORE)) {
+                            // Small models ignore far too much ("Säg något roligt" after an answer): what is
+                            // plainly said to the assistant gets answered, once asked again.
+                            if (!reasked && Addressed.matches(text, settings.wakeName)) {
+                                reasked = true
+                                heard.trace("guard", "It ignored something said to it; asked it to answer.")
+                                turn += ChatMessage.user(NUDGE_ADDRESSED)
+                                return@repeat
+                            }
+                            return AgentReply("", brain, ignored = true)
+                        }
                         // An empty answer: the server hid what the model wrote (vMLX drops tool tags
                         // when no tool schemas were sent), or it wrote nothing. Ask once, then say so.
                         if (answer.content.isNullOrBlank()) {
@@ -230,8 +259,13 @@ class Agent(
                     for (call in answer.toolCalls) {
                         acted = true
                         val key = "${call.name} ${call.arguments}"
-                        val before = done[key]?.takeIf { call.name !in LOOKS && !StepText.failed(it.text) }
-                        val result = if (before != null) {
+                        val before = done[key]?.takeIf { call.name !in LOOKS }
+                        val result = if (before != null && StepText.failed(before.text)) {
+                            // The same failing call over and over only made the user wait (P1 radio: four times).
+                            heard.trace("guard", "Asked for $key again after it failed; not tried again.")
+                            ToolResult("That exact call just failed: ${before.text} Don't try it again; try another way or tell the user what went wrong.", before.localOnly)
+                        } else if (before != null) {
+                            repeats++
                             heard.trace("guard", "Asked for $key again; not done twice.")
                             ToolResult("Already done a moment ago: ${before.text} Don't do it again; answer the user.", before.localOnly)
                         } else {
@@ -246,6 +280,11 @@ class Agent(
                         localOnly = localOnly || result.localOnly
                         result.pending?.let { pending = it }
                         turn += ChatMessage.tool(call.id, result.text)
+                    }
+                    if (repeats >= MAX_REPEATS) {
+                        heard.trace("guard", "Kept asking for calls already done; stopped.")
+                        remember(turn, localOnly)
+                        return AgentReply("Sorry, I got stuck going round in circles.", brain, pending, error = true, actions = actions)
                     }
                 }
                 remember(turn, localOnly)
@@ -262,8 +301,9 @@ class Agent(
         return AgentReply(lastError ?: "No connection answered.", error = true)
     }
 
-    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools): AgentReply? {
-        val action = QuickCommand.parse(text, view) ?: return null
+    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools, swedish: Boolean?): AgentReply? {
+        // Said in the answer language when one is set, so TARS never reads out Swedish in his English voice.
+        val action = QuickCommand.parse(text, view)?.let { a -> swedish?.let { a.copy(swedish = it) } ?: a } ?: return null
         val call = QuickCommand.call(action)
         val result = tools(view).run(call)
         val stuck = result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
@@ -350,6 +390,13 @@ class Agent(
     }
 
     /** Whether a fixed answer to [text] is in Swedish; TARS answers in English whatever was said. */
+    /** Whether fixed answers must be Swedish (true) or English (false); null when they follow what was said. */
+    private fun answersSwedish(settings: AgentSettings): Boolean? = when (settings.answers) {
+        Language.Swedish -> true
+        Language.English -> false
+        Language.Auto -> null
+    }
+
     private fun swedish(text: String, settings: AgentSettings): Boolean = when (settings.answers) {
         Language.Swedish -> true
         Language.English -> false
@@ -371,32 +418,56 @@ class Agent(
         if (swedish(text, settings)) "Tryck på Ja på surfplattan för att bekräfta." else "Tap Yes on the tablet to confirm."
 
     private fun remember(turn: List<ChatMessage>, localOnly: Boolean) {
-        history.addLast(Turn(turn.toList(), localOnly))
+        val noted = opened?.takeIf { it.first === turn.firstOrNull() }?.second
+        history.addLast(Turn(turn.toList(), localOnly, noted))
         while (history.size > MAX_TURNS) history.removeFirst()
+    }
+
+    /**
+     * The last note a [local] brain saw, when the conversation still has a note that said
+     * everything, so a new note can say only what changed since. Null starts afresh.
+     */
+    private fun since(local: Boolean): Noted? {
+        val seen = history.filter { local || !it.localOnly }.mapNotNull { t -> t.noted?.takeIf { it.local == local } }
+        return seen.lastOrNull()?.takeIf { seen.any { it.full } }
     }
 
     private fun failure(brain: Connection, message: String?): String =
         "${brain.provider.label} didn't answer: ${message ?: "unknown error"}"
 
     /**
-     * What is sent: the rules and the list of devices first, then the earlier turns, then a
-     * short note with what is on right now together with the question. The start only changes
-     * when the devices do, so a local model keeps it worked through from last time and only
-     * reads the note and the question (see [warm]).
+     * What is sent: the rules and the list of devices first, then the earlier turns, then this
+     * question's turn, which starts with its [opening]. The start only changes when the devices
+     * do, and earlier turns are sent exactly as they were the first time, notes included, so
+     * each request begins with the whole of the last one: a local model only reads what is new
+     * (see [warm]). A model like Qwen3.5 can only pick up where an earlier request ended, so a
+     * change anywhere before that (an earlier question sent without its note) made it read
+     * everything after the rules again.
      */
     private fun conversation(
         settings: AgentSettings,
         view: HomeView,
-        context: AskContext,
         earlier: List<ChatMessage>,
         turn: List<ChatMessage>,
         tools: Tools,
     ): List<ChatMessage> {
-        val question = turn.first()
+        val start = listOf(ChatMessage.system(fixed(settings, view, tools.core)))
+        // Written tools: one fixed user line after the rules, the same one the warm-up sends (see ToolText.written).
+        return if (tools.compact) ToolText.written(start + ChatMessage.user(ToolText.START) + earlier + turn) else start + earlier + turn
+    }
+
+    /**
+     * The question with a short note before it: what is on right now, and any tools only this
+     * question needs. After the first question the note only says what changed since [since]:
+     * the earlier notes are still in the conversation, and the full list cost a local model
+     * about five seconds of reading every time.
+     */
+    private fun opening(settings: AgentSettings, view: HomeView, context: AskContext, question: String, tools: Tools, since: Noted? = null): ChatMessage {
         val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
-        val now = ChatMessage.user(situation(settings, view, context) + extra + QUESTION + question.content.orEmpty())
-        val all = listOf(ChatMessage.system(fixed(settings, view, tools.core))) + earlier + now + turn.drop(1)
-        return if (tools.compact) ToolText.written(all) else all
+        val states = view.stateLines()
+        val message = ChatMessage.user(situation(settings, view, context, since) + extra + QUESTION + question)
+        opened = message to Noted(view.local, states, context.weather, full = since == null)
+        return message
     }
 
     /**
@@ -415,7 +486,7 @@ class Agent(
                 core = null
                 extra = emptyList()
             } else {
-                val said = question + " " + earlier.lastOrNull { it.role == "user" }?.content.orEmpty()
+                val said = question + " " + earlier.lastOrNull { it.role == "user" }?.content.orEmpty().substringAfterLast(QUESTION_LABEL)
                 val wanted = buildSet {
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
@@ -434,14 +505,17 @@ class Agent(
             "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
             "(read) only reads; get_device has the rest):\n" + view.catalog()
 
-    /** What the last warm-up sent, so an unchanged start isn't sent again. */
+    /** What the last warm-up sent, so an unchanged start isn't sent again, and when. */
     private var warmed: Int? = null
+    private var warmedAt = 0L
 
     /**
      * Works through the rules and the home's devices ahead of the question, while it is still
      * being said, so a local model only has the short note and the question left to read.
-     * Only sent when that start changed since last time: a server that answers one request at
-     * a time (vMLX) would otherwise make the question wait behind it.
+     * Only sent when that start changed since last time, or nothing was asked for a while (the
+     * server may have let it go: after two quiet hours oMLX read all 4 800 tokens again): a
+     * server that answers one request at a time (vMLX) would otherwise make the question wait
+     * behind it.
      */
     suspend fun warm(
         settings: AgentSettings,
@@ -460,9 +534,46 @@ class Agent(
         val messages = listOf(ChatMessage.system(fixed(settings, homeView, tools.core)))
         val specs = tools.sent
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
-        if (key == warmed) return
+        val quiet = System.currentTimeMillis() - maxOf(warmedAt, lastActivity) > REWARM_AFTER_MS
+        if (key == warmed && !quiet) return
         warmed = key
-        chat.prefill(brain, messages, specs)
+        warmedAt = System.currentTimeMillis()
+        // Logged either way, so a slow first question shows whether the warm-up ran.
+        // With a user line after the rules: Qwen's chat template refuses a request without one,
+        // which is why oMLX turned every warm-up away.
+        val st = chat.prefill(brain, messages + ChatMessage.user(WARM_UP), specs)
+        listener?.trace("speed", st?.let { "warm-up (rules and devices read ahead): ${it.text()}" } ?: "warm-up didn't work (the server refused it or didn't answer)")
+    }
+
+    /**
+     * Times each connection with the assistant's real prompt and a short question, twice: the
+     * second time shows whether the server kept the start worked through (its prefix cache).
+     * Returns one line per connection, and puts them in the logs.
+     */
+    suspend fun speedTest(
+        settings: AgentSettings,
+        view: (local: Boolean) -> HomeView,
+        tools: (HomeView) -> AgentTools,
+    ): List<String> {
+        val brains = listOfNotNull(settings.local?.takeIf { it.usable }, settings.internet?.takeIf { it.usable })
+        if (brains.isEmpty()) return listOf("Set up an AI first.")
+        val question = if (settings.language == Language.English) "What time is it?" else "Vad är klockan?"
+        return brains.map { brain ->
+            val homeView = view(brain.local)
+            val compact = brain.local && settings.compactTools
+            val t = Tools(tools(homeView).specs(), compact, question, emptyList(), AskContext())
+            val messages = conversation(settings, homeView, emptyList(), listOf(opening(settings, homeView, AskContext(), question, t)), t)
+            val name = "${brain.provider.label} ${brain.model}"
+            val line = try {
+                val first = chat.stream(brain, messages, t.sent) {}.stats
+                val second = chat.stream(brain, messages, t.sent) {}.stats
+                "$name\n1st: ${first?.text() ?: "no timing"}\n2nd: ${second?.text() ?: "no timing"}"
+            } catch (e: IOException) {
+                "$name: didn't answer (${e.message})"
+            }
+            listener?.trace("speed test", line)
+            line
+        }
     }
 
     /** Everything the assistant is told for a question, as one text (for tests and the settings preview). */
@@ -491,14 +602,22 @@ class Agent(
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
         append("The home's devices are listed at the end of these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
         append("devices the note leaves out are off or idle, and get_device reads anything else (power, battery, other sensors). ")
+        append("Notes before earlier questions were true then; only the last note is how things are now. ")
         append("Only the part after \"$QUESTION_LABEL\" is what the user said. ")
         append("If the note says it was heard while the microphone stayed open after your last answer and it clearly isn't said to you ")
         append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
-        append("Rules: use device aliases (like light_3) in tool calls, but in answers call things by their names, never the alias. People name things loosely, in Swedish or English ")
+        append("Rules: in tool calls name a device exactly as the list writes it in quotes, adding its room after a comma when several devices share that name (\"Taklampa, Sovrum\"); in answers too call things by their names, never the alias (light_3). ")
+        append("Read the name the user said word by word: \"Annas nattlampa\" is \"Nattlampa Anna\", never \"Nattlampa Erik\"; when they name a room, the device must be in that room. ")
+        append("Speech to text can mishear a name (\"startlampan\" for \"taklampan\"): pick the listed name it sounds like. People name things loosely, in Swedish or English ")
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
         append("use one of the devices it suggests or ask which one. ")
         append("A device may be named by its room or app rather than what it is: the app is shown in brackets, e.g. a TV called \"Vardagsrum\" (apple tv) is the Apple TV. ")
-        append("For TV channels, opening an app, Sonos favourites, playlists, radio and remote buttons, call device_actions and then run_device_action; play_music is a shortcut for music and also plays any song, album or artist asked for (\"spela Dancing Queen\"). ")
+        append("For music, radio stations (\"P1\", \"P3\"), Sonos favourites and playlists, call play_music with the name: it searches the speaker's favourites, playlists and radio, and also plays any song, album or artist asked for (\"spela Dancing Queen\"). ")
+        append("For TV channels, opening an app and remote buttons, call device_actions and then run_device_action. Never make up a stream URL. ")
+        append("For music, keep what they asked for in play_music's query and give its kind: a mood, genre, chart or \"hits\" is a playlist. ")
+        append("Speech to text sometimes translates an English title into Swedish (\"spela dåligt med Michael Jackson\" is Bad by Michael Jackson): search the real title. ")
+        append("A mood is the owner's scene for its own room: use it only for that room, and give set_mood the room the user said. ")
+        append("When they ask for a feeling in a room (mysigt, fest, romantiskt, film, lugnt, fokus) and no mood of that room fits, call set_scene with the room and the look; never use another room's mood instead. ")
         append("Only use devices, rooms and moods in the home list; ")
         append("if nothing fits, say you can't see it. dim, volume_set and similar 0..1 values mean 0-100%. ")
         append("Do things straight away when asked; don't ask for permission unless a tool says to. ")
@@ -526,6 +645,7 @@ class Agent(
         append("The owner has routines: when the note says a routine was started, the app has already done its steps; ")
         append("follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found. ")
         append("When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.\n")
+        append(BatteryNag.rule(settings.batteryReminders)).append('\n')
         val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (standing.isNotEmpty()) {
             append("The owner's standing instructions; follow them unless a rule above forbids it:\n")
@@ -573,12 +693,21 @@ class Agent(
     }
 
     /** The moment, for one question: what is on in the home right now, the clock and the rest. */
-    fun situation(settings: AgentSettings, view: HomeView, context: AskContext): String = buildString {
-        append("(From the app, not the user.)\nOn right now (everything else is off or idle):\n")
-        append(view.states().trimEnd().ifBlank { "nothing" })
+    fun situation(settings: AgentSettings, view: HomeView, context: AskContext, since: Noted? = null): String = buildString {
+        append("(From the app, not the user.)\n")
+        if (since == null) {
+            append("On right now (everything else is off or idle):\n")
+            append(view.states().trimEnd().ifBlank { "nothing" })
+        } else {
+            val now = view.stateLines()
+            val changed = now.filter { (alias, line) -> since.states[alias] != line }.values +
+                (since.states.keys - now.keys).map { since.states.getValue(it).substringBefore("\":") + "\": off or idle" }
+            if (changed.isEmpty()) append("On right now: the same as the last note.")
+            else append("Changed since the last note (everything else is as it said):\n").append(changed.joinToString("\n"))
+        }
         context.kitchen?.let { append("\nCooking: ").append(it) }
         context.fridge?.let { append("\nFridge: ").append(it) }
-        context.weather?.let { append("\nWeather (the dashboard's weather card):\n").append(it) }
+        context.weather?.takeIf { since == null || it != since.weather }?.let { append("\nWeather (the dashboard's weather card):\n").append(it) }
         append("\nNow: ").append(nowLine(now())).append(".")
         context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
         // Who is at the tablet is itself a secret ("Face recognition" switch).
@@ -599,13 +728,16 @@ class Agent(
         private const val W = """(?<![\p{L}\d_])"""
         private const val E = """(?![\p{L}\d_])"""
         /** Tools that only look. */
+        /** Repeated calls before it stops instead of using up every round. */
+        const val MAX_REPEATS = 2
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines")
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
-        val SETS = setOf("set_device", "set_room", "run_flow", "play_music", "run_device_action", "press_remote")
+        val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "run_device_action", "press_remote")
         /** How tool results that changed something begin. */
         val CHANGED = listOf("Done", "Changed", "Started", "Playing")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
             "Call the right tool now, or tell the user plainly what went wrong.)"
+        const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
         const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +
             "like CALL play_music {\"player\": \"player_1\"}, never in <tool_call> tags; or answer the user in words.)"
@@ -638,6 +770,8 @@ class Agent(
         val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
+        const val REWARM_AFTER_MS = 5 * 60 * 1000L
+        const val WARM_UP = ToolText.START
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
     }
@@ -667,3 +801,25 @@ object Confirmation {
 internal fun nowLine(t: ZonedDateTime): String =
     t.format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy (yyyy-MM-dd)", Locale.ENGLISH)) +
         ", week " + t.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR) + ", " + t.format(DateTimeFormatter.ofPattern("HH:mm"))
+
+/**
+ * Whether something heard while the microphone stayed open is plainly said to the assistant:
+ * it names it, asks something, or starts by telling it to do something.
+ */
+internal object Addressed {
+    // "You" alone isn't enough: "jag ringer dig sen" on the phone is said to someone else.
+    private val YOU = Regex("""(?<![\p{L}\d_])(tars|nova)(?![\p{L}\d_])""", RegexOption.IGNORE_CASE)
+    private val ASKS = Regex("""^\s*(vad|var|vem|vilken|vilket|vilka|när|hur|varför|kan|kommer|är|har|ska|what|where|who|which|when|how|why|can|could|will|would|is|are|do|does|did)(?![\p{L}\d_])""", RegexOption.IGNORE_CASE)
+    private val TELLS = Regex(
+        """^\s*(säg|berätta|spela|sätt|tänd|släck|gör|visa|öppna|stäng|starta|stoppa|pausa|höj|sänk|dimma|skruva|byt|hitta|sök|läs|ring|påminn|kolla|ta|ge|fortsätt|""" +
+            """say|tell|play|turn|set|make|show|open|close|start|stop|pause|dim|raise|lower|change|find|search|read|remind|check|give|continue|put)(?![\p{L}\d_])""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    fun matches(text: String, wakeName: String = ""): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        if (wakeName.isNotBlank() && t.contains(wakeName.trim(), ignoreCase = true)) return true
+        return t.endsWith("?") || YOU.containsMatchIn(t) || ASKS.containsMatchIn(t) || TELLS.containsMatchIn(t)
+    }
+}

@@ -38,6 +38,8 @@ internal object StepIds {
 internal class Watch(private val base: AgentListener?) : AgentListener {
     var local = false
         private set
+    /** How fast each round of the AI came, for this question. */
+    val rounds = mutableListOf<ChatStats>()
 
     override fun step(step: AgentStep) { base?.step(step) }
 

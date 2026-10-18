@@ -88,17 +88,41 @@ class HomeView(
     }
 
     /**
-     * A device by its alias, or by its name said loosely ("lampan i köket"), which small
-     * models and speech recognition often give instead. Null when nothing clearly matches.
+     * A device by its name as listed ("Nattlampa Gabriel", with its room when several share
+     * the name: "Taklampa, Sovrum"), by its alias, or by its name said loosely ("lampan i
+     * köket"), which small models and speech recognition often give instead. When an alias
+     * comes with a name that is another device's ("light_7 Nattlampa Gabriel"), the name
+     * wins: small models mix up the numbers far more than the names. Null when nothing
+     * clearly matches, also when a name is shared and no room says which.
      */
     fun device(alias: String): AgentDevice? {
-        val q = alias.trim()
+        val q = alias.trim().trim('"').trim()
         byAlias[q.lowercase()]?.let { return it }
-        devices.firstOrNull { it.name.equals(q, ignoreCase = true) }?.let { return it }
-        devices.filter { d -> d.nicknames.any { it.equals(q, ignoreCase = true) } }.singleOrNull()?.let { return it }
+        ALIAS.find(q)?.takeIf { it.range.first == 0 }?.let { m ->
+            val rest = q.substring(m.range.last + 1).trim(' ', '"', ':', '-', '(', ')').trim()
+            val said = byAlias["${m.groupValues[1].lowercase()}_${m.groupValues[2]}"]
+            return if (rest.isEmpty()) said else named(rest, devices) ?: said
+        }
+        ROOMED.matchEntire(q)?.let { m ->
+            val name = m.groupValues[1].trim()
+            val roomName = (m.groups[2] ?: m.groups[3])!!.value.trim()
+            val roomId = room(roomName)
+            val inRoom = devices.filter { roomId != null && it.roomId == roomId }
+            if (inRoom.isNotEmpty()) named(name, inRoom)?.let { return it }
+        }
+        return named(q, devices)
+    }
+
+    private fun named(q: String, among: List<AgentDevice>): AgentDevice? {
+        val exact = among.filter { it.name.equals(q, ignoreCase = true) }
+        if (exact.size == 1) return exact.single()
+        if (exact.size > 1) return null
+        among.filter { d -> d.nicknames.any { it.equals(q, ignoreCase = true) } }.singleOrNull()?.let { return it }
         val norm = NameMatch.normalize(q)
-        devices.filter { NameMatch.normalize(it.name) == norm }.singleOrNull()?.let { return it }
-        return NameMatch.best(q, devices) { score(q, it) }
+        val same = among.filter { NameMatch.normalize(it.name) == norm }
+        if (same.size == 1) return same.single()
+        if (same.size > 1) return null
+        return NameMatch.best(q, among) { score(q, it) }
     }
 
     /** Devices whose names come closest to [query], for suggesting what was meant. */
@@ -197,6 +221,10 @@ class HomeView(
             append('\n')
         }
     }
+
+    /** [states] by device alias, to tell what changed between two notes. */
+    fun stateLines(): Map<String, String> =
+        states().lines().filter { it.isNotBlank() }.associateBy { it.substringBefore(' ') }
 
     private fun live(d: AgentDevice): List<String> {
         fun on(id: String) = (d.capability(id)?.value as? JsonPrimitive)?.content == "true"
@@ -352,6 +380,8 @@ class HomeView(
             return AgentCapability(c.id, c.title, c.type, value, c.units, c.min, c.max, c.setable, c.values?.map { it.id })
         }
 
+        /** "Taklampa, Sovrum" or "Taklampa (Sovrum)": a name with the room that tells it apart. */
+        private val ROOMED = Regex("""^(.+?)\s*(?:\((.+)\)|,\s*(.+))$""")
         private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)[_ ](\d+)\b""", RegexOption.IGNORE_CASE)
 
         private fun aliasPrefix(cls: String): String = when (cls) {

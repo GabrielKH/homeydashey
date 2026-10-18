@@ -46,6 +46,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -136,20 +138,26 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
         return ms
     }
 
+    private val sending = Mutex()
+
     /** Sends what hasn't been sent yet; returns what happened, in words. */
     suspend fun sendLog(): String {
         val s = settings.value
         val result = when {
             s.logToken.isBlank() -> "Add a GitHub token first."
-            else -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val entries = log.unsent()
-                if (entries.isEmpty()) return@withContext "Nothing new to send."
-                try {
-                    github.post(s.logToken, s.logRepo.trim().ifBlank { AgentLog.DEFAULT_REPO }, log.markdown(entries, android.os.Build.MODEL))
-                    log.sent(entries.size)
-                    "Sent ${entries.size} lines at " + java.time.LocalTime.now().withNano(0).toString().take(5) + "."
-                } catch (e: java.io.IOException) {
-                    e.message ?: "Couldn't send the logs."
+            // One send at a time, and a new line cancelling the wait mustn't cut a send short: the
+            // comment would be posted but the lines kept as unsent, so they went to GitHub twice.
+            else -> sending.withLock {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
+                    val entries = log.unsent()
+                    if (entries.isEmpty()) return@withContext "Nothing new to send."
+                    try {
+                        github.post(s.logToken, s.logRepo.trim().ifBlank { AgentLog.DEFAULT_REPO }, log.markdown(entries, android.os.Build.MODEL))
+                        log.sent(entries.size)
+                        "Sent ${entries.size} lines at " + java.time.LocalTime.now().withNano(0).toString().take(5) + "."
+                    } catch (e: java.io.IOException) {
+                        e.message ?: "Couldn't send the logs."
+                    }
                 }
             }
         }
@@ -173,6 +181,8 @@ data class Line(
     val speechSettings: Boolean = false,
     /** What the assistant did for this answer and what Homey said, shown small under it. */
     val actions: List<String> = emptyList(),
+    /** How long hearing, thinking and speaking took, like "Heard 0.4 s · AI first word 0.9 s, 42 tok/s". */
+    val speed: String? = null,
     /** The same, as the steps shown while it worked. */
     val steps: List<AgentStep> = emptyList(),
 )
@@ -267,6 +277,26 @@ class Assistant(
     /** When the conversation stops listening for a next question (elapsed realtime). */
     private var conversationUntil = 0L
     private val settings: AgentSettings get() = services.settings.value
+
+    /** When the last spoken question ended (elapsed realtime) and how long writing it down took, for its [Timing]. */
+    private var speechEnd: Long? = null
+    private var hearMs: Long? = null
+    private var pauseMs: Long? = null
+
+    /** How long the question being answered takes, part by part (elapsed realtime). */
+    private class Timing(val speechEnd: Long?, val hearMs: Long?, val pauseMs: Long?, val askedAt: Long) {
+        @Volatile var sentenceAt = 0L
+        @Volatile var soundAt = 0L
+        @Volatile var filler = false
+
+        fun sound(isFiller: Boolean = false) {
+            if (soundAt == 0L) {
+                soundAt = SystemClock.elapsedRealtime()
+                filler = isFiller
+            }
+        }
+    }
+    private var timing: Timing? = null
     private val home = StoreHomeControl(store) { store.snapshot.value.deviceCards }
 
     init {
@@ -279,6 +309,51 @@ class Assistant(
 
             override fun trace(kind: String, text: String, localOnly: Boolean) = services.trace(kind, text, localOnly)
         }
+        // Kept warm while nobody talks: a warm-up started by the wake word ran on the Mac at the
+        // same time as Whisper (7 s of speech to text, 20 s to the first word after a quiet spell).
+        scope.launch {
+            while (true) {
+                delay(KEEP_WARM_MS)
+                if (state == AssistantState.Idle && !voiceActive) warmBrain(followUp = false)
+            }
+        }
+        // A low tablet complains every 20 minutes in the day, in the character's own voice.
+        scope.launch {
+            while (true) {
+                delay(BATTERY_CHECK_MS)
+                runCatching { nagAboutBattery() }
+            }
+        }
+    }
+
+    private var lastNagAt: Long? = null
+    private var lastNag: String? = null
+
+    private suspend fun nagAboutBattery() {
+        val s = settings
+        val bm = services.appContext.getSystemService(android.os.BatteryManager::class.java) ?: return
+        val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+        val charging = bm.isCharging
+        // Charged up again: the next low battery starts its own reminders straight away.
+        if (charging || (level ?: 100) >= app.homeydash.agent.BatteryNag.BELOW) lastNagAt = null
+        val since = lastNagAt?.let { SystemClock.elapsedRealtime() - it }
+        if (!app.homeydash.agent.BatteryNag.due(s.batteryReminders, level, charging, java.time.LocalTime.now(), since)) return
+        // Never talks over someone or an answer; tries again next minute.
+        if (state != AssistantState.Idle || voiceActive) return
+        val swedish = when (s.answers) {
+            app.homeydash.agent.Language.Swedish -> true
+            app.homeydash.agent.Language.English -> false
+            app.homeydash.agent.Language.Auto -> lines.lastOrNull { it.fromUser }?.let { app.homeydash.agent.Confirmation.looksSwedish(it.text) } ?: true
+        }
+        val text = app.homeydash.agent.BatteryNag.line(s.persona, swedish, level ?: return, lastNag)
+        lastNagAt = SystemClock.elapsedRealtime()
+        lastNag = text
+        services.trace("battery", "Reminded to charge at $level %.", false)
+        services.onActive?.invoke()
+        open = true
+        lines += Line(false, text)
+        say(text)
+        state = AssistantState.Idle
     }
 
     /** The steps worth showing: what it does in the home, and the AI only while it thinks. */
@@ -300,6 +375,7 @@ class Assistant(
 
     /** Listens for a question; [heard] is sound already heard of it (someone talked over the answer). */
     fun listen(heard: ShortArray? = null) {
+        if (!open && !conversing) freshScreen()
         services.output.stop()
         // The wake name may have been listened for while it talked; the question gets the microphone.
         if (!services.wake.enrolling) services.wake.stop()
@@ -330,7 +406,12 @@ class Assistant(
         services.input.start(language, preferOnDevice = local, listener = object : SpeechInput.Listener {
             override fun onLevel(level: Float) = meter(floatArrayOf(level, level, level * 0.8f, level * 0.6f))
             override fun onPartial(text: String) { partial = text }
-            override fun onResult(text: String) = heard(text)
+            override fun onResult(text: String) {
+                speechEnd = SystemClock.elapsedRealtime()
+                hearMs = null
+                pauseMs = null
+                heard(text)
+            }
             override fun onError(message: String) = failed(message)
             override fun onUnavailable(message: String) {
                 // Google's speech service is down or unreachable: hear this (and the next few) offline.
@@ -355,7 +436,7 @@ class Assistant(
         }
         val hint = hint(s)
         // What Whisper made of the question up to the latest pause, while recording goes on.
-        var early: Pair<Int, String>? = null
+        var early: Early? = null
         services.recorder.record(
             gain = app.homeydash.agent.MicSensitivity.gain(s.micSensitivity),
             start = heard,
@@ -363,6 +444,7 @@ class Assistant(
             onPause = { wav, pause, held ->
                 // A pause: answer now if what was said reads as finished, else wait for the rest,
                 // like a person would through an "öhh" or "and…".
+                val noticed = SystemClock.elapsedRealtime()
                 scope.launch {
                     val text = try {
                         services.transcriber.transcribe(s, wav, code, hint).text
@@ -370,11 +452,12 @@ class Assistant(
                         return@launch
                     }
                     if (!recording || state != AssistantState.Listening || services.recorder.pausedAt != pause) return@launch
-                    early = pause to text
+                    early = Early(pause, text, noticed)
                     TurnEnd.clean(text).takeIf { it.isNotEmpty() }?.let { partial = it }
                     if (TurnEnd.complete(text, s.wakeName, held)) {
                         recording = false
                         services.recorder.stop()
+                        timeHeard(noticed, PAUSE_MS)
                         heard(text)
                     } else {
                         services.trace("listen", "Waiting for the rest: \"$text\"" + if (held) " (a held sound before the pause)" else "", true)
@@ -388,14 +471,17 @@ class Assistant(
                     return@done
                 }
                 // Nothing more was said after the last pause: what was heard then is the question.
-                early?.let { (pause, text) ->
+                early?.let { (pause, text, noticed) ->
                     if (services.recorder.pausedAt == pause) {
+                        // Heard at the pause; the wait since then for more is part of the time.
+                        timeHeard(noticed, PAUSE_MS)
                         heard(text)
                         return@done
                     }
                 }
                 partial = "…"
                 job?.cancel()
+                val noticed = SystemClock.elapsedRealtime()
                 job = scope.launch {
                     val text = try {
                         services.transcriber.transcribe(s, wav, code, hint).text
@@ -405,7 +491,10 @@ class Assistant(
                         failed("Couldn't make out the question (${e.message}). Google's speech recognition hears the next few.")
                         return@launch
                     }
-                    if (state == AssistantState.Listening) heard(text)
+                    if (state == AssistantState.Listening) {
+                        timeHeard(noticed, PAUSE_MS)
+                        heard(text)
+                    }
                 }
             },
             onError = { message ->
@@ -413,6 +502,16 @@ class Assistant(
                 failed(message)
             },
         )
+    }
+
+    /** What Whisper made of the question at a pause, and when the pause was noticed. */
+    private data class Early(val pause: Int, val text: String, val noticed: Long)
+
+    /** The question ended at [noticed] (after [pause] ms of quiet) and has just been written down. */
+    private fun timeHeard(noticed: Long, pause: Long?) {
+        speechEnd = noticed
+        hearMs = SystemClock.elapsedRealtime() - noticed
+        pauseMs = pause
     }
 
     /** Names worth expecting in a question: the wake name, rooms and devices. */
@@ -474,8 +573,12 @@ class Assistant(
     private fun warmUp() {
         // TARS's voice is loaded while the question is said, so he speaks without a pause.
         if (settings.speak) services.output.warm(settings.voice)
+        warmBrain(conversing)
+    }
+
+    /** Reads the rules and devices ahead on the local AI; the agent skips it when nothing changed. */
+    private fun warmBrain(followUp: Boolean) {
         val local = settings.local?.takeIf { it.usable && settings.mode != BrainMode.Internet } ?: return
-        val followUp = conversing
         scope.launch {
             services.chat.warm(local)
             runCatching {
@@ -530,6 +633,8 @@ class Assistant(
     /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
     fun wake(person: KnownPerson?) {
         voice = Seen(person, SystemClock.elapsedRealtime())
+        // Woken again after it was stopped: a new talk, so the last one's answers aren't still on screen.
+        if (!conversing && state == AssistantState.Idle) freshScreen()
         // Said while it was thinking or talking: like a person, it stops and listens.
         if (state == AssistantState.Thinking || state == AssistantState.Speaking) {
             services.trace("wake", "Interrupted while ${state.name.lowercase()}.", false)
@@ -573,6 +678,14 @@ class Assistant(
         state = AssistantState.Idle
         keepConversation()
         listen(heard)
+    }
+
+    /** Clears what the last talk left on screen; the assistant still remembers it. */
+    private fun freshScreen() {
+        lines.clear()
+        activity.clear()
+        pending = null
+        scene = null
     }
 
     /** Small from the start when the island or side window was chosen; never forces full screen. */
@@ -622,6 +735,11 @@ class Assistant(
         if (WEATHER_WORDS.containsMatchIn(text)) scene = bridge.weatherScene(TOMORROW.containsMatchIn(text))
         job?.cancel()
         answering = false
+        val clock = Timing(speechEnd.takeIf { byVoice }, hearMs.takeIf { byVoice }, pauseMs.takeIf { byVoice }, SystemClock.elapsedRealtime())
+        speechEnd = null
+        hearMs = null
+        pauseMs = null
+        timing = clock
         job = scope.launch {
             state = AssistantState.Thinking
             // Talking like a person: the answer is spoken while the AI still writes it, and a
@@ -635,7 +753,7 @@ class Assistant(
             val begun = java.util.concurrent.atomic.AtomicBoolean(false)
             val speaking = live?.let { pieces ->
                 launch {
-                    services.output.speakLive(pieces, swedish, settings.voice, onStart = { state = AssistantState.Speaking }, onFrame = ::meter)
+                    services.output.speakLive(pieces, swedish, settings.voice, onStart = { clock.sound(isFiller = !begun.get()); state = AssistantState.Speaking }, onFrame = ::meter)
                 }
             }
             // Not for follow-ups: those may turn out to be people talking to each other.
@@ -659,7 +777,12 @@ class Assistant(
                     view = { local -> view(s, local) },
                     tools = { v -> tools(v) },
                     context = askContext(s, person, followUp),
-                    speech = live?.let { pieces -> { sentence: String -> begun.set(true); answering = true; pieces.trySend(sentence); Unit } },
+                    speech = live?.let { pieces ->
+                        { sentence: String ->
+                            if (clock.sentenceAt == 0L) clock.sentenceAt = SystemClock.elapsedRealtime()
+                            begun.set(true); answering = true; pieces.trySend(sentence); Unit
+                        }
+                    },
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -796,7 +919,12 @@ class Assistant(
         pending = services.agent.pending
         val brain: Connection? = reply.brain
         lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions, steps = steps())
-        if (settings.speak && !reply.error && !reply.spoken) say(reply.text)
+        val clock = timing?.also { timing = null }
+        if (settings.speak && !reply.error && !reply.spoken) {
+            if (clock != null && clock.sentenceAt == 0L) clock.sentenceAt = SystemClock.elapsedRealtime()
+            say(reply.text) { clock?.sound() }
+        }
+        clock?.let { timed(it, reply) }
         // A routine's last steps, like starting the radio, wait until the answer has been said.
         reply.then?.let { then ->
             val done = try { then() } catch (e: CancellationException) { throw e } catch (e: Exception) { listOf("That failed: ${e.message}") }
@@ -814,14 +942,37 @@ class Assistant(
         }
     }
 
-    /** Says [text] on the chosen speaker, or on the tablet when there is none or it fails. */
-    private suspend fun say(text: String) {
+    /**
+     * Shows under the answer how long each part took, and puts it in the logs: writing down
+     * what was said, the AI's first word and speed, and when the voice started.
+     */
+    private fun timed(clock: Timing, reply: AgentReply) {
+        fun since(at: Long) = at.takeIf { it != 0L }?.let { it - clock.askedAt }
+        val speed = app.homeydash.agent.Speed(
+            hearMs = clock.hearMs,
+            pauseMs = clock.pauseMs,
+            brain = reply.brain?.let { "${it.provider.label} ${it.model}" },
+            rounds = reply.rounds,
+            sentenceMs = since(clock.sentenceAt),
+            voiceMs = since(clock.soundAt),
+            filler = clock.filler,
+            replyMs = clock.speechEnd?.let { end -> clock.soundAt.takeIf { it != 0L }?.let { it - end } },
+        )
+        val short = speed.short()
+        if (short.isBlank()) return
+        services.trace("timing", speed.long(), false)
+        val i = lines.indexOfLast { !it.fromUser }
+        if (i >= 0) lines[i] = lines[i].copy(speed = short)
+    }
+
+    /** Says [text] on the chosen speaker, or on the tablet when there is none or it fails; [onStart] when it starts. */
+    private suspend fun say(text: String, onStart: () -> Unit = {}) {
         state = AssistantState.Speaking
         answering = true
         val s = settings
         val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
-        if (speaker != null && sayOn(speaker.second, text, s)) return
-        services.output.speak(text, s.answers, s.voice, ::meter)
+        if (speaker != null && sayOn(speaker.second, text, s, onStart)) return
+        services.output.speak(text, s.answers, s.voice, ::meter, onStart)
     }
 
     /** The voice's level and its low, middle and high parts, for the face. */
@@ -832,7 +983,7 @@ class Assistant(
         high = frame[3]
     }
 
-    private suspend fun sayOn(card: AnnounceCard, text: String, s: AgentSettings): Boolean = try {
+    private suspend fun sayOn(card: AnnounceCard, text: String, s: AgentSettings, onStart: () -> Unit = {}): Boolean = try {
         var spoken: Spoken? = null
         val content = when (card.kind) {
             AnnounceCard.Kind.Text -> text
@@ -844,6 +995,8 @@ class Assistant(
         }
         if (content == null) false else {
             store.runAction(card.card, card.args(content, s.speakerVolume))
+            // The speaker starts a little after Homey has it, so this is about when it is heard.
+            onStart()
             // Move along with the speaker; it starts after a short buffer.
             spoken?.let { follow(it.track, startAfterMs = SPEAKER_DELAY_MS) }
             true
@@ -916,6 +1069,9 @@ class Assistant(
 
     private companion object {
         const val SPEAKER_DELAY_MS = 800L
+        /** How often to check whether the local AI needs warming while it waits (see Agent.REWARM_AFTER_MS). */
+        const val KEEP_WARM_MS = 2 * 60 * 1000L
+        const val BATTERY_CHECK_MS = 60 * 1000L
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */
         const val WAKE_SOUND_AFTER_MS = 200L
@@ -923,6 +1079,8 @@ class Assistant(
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
         const val HINT_CHARS = 400
         const val FILLER_HINT = "Öh, ehm, hmm… "
+        /** The quiet [app.homeydash.agent.Endpointer] waits for before it counts a pause. */
+        const val PAUSE_MS = 700L
         val WEATHER_WORDS = Regex("väder|vädr|regn|snö|soligt|solen|prognos|temperatur|grader ute|weather|rain|snow|sunny|forecast", RegexOption.IGNORE_CASE)
         val TOMORROW = Regex("tomorrow|imorgon|i morgon", RegexOption.IGNORE_CASE)
     }
