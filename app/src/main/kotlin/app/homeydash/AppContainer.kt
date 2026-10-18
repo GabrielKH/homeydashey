@@ -53,6 +53,7 @@ class AppContainer(context: Context) {
         .build()
 
     private val settings = SettingsRepository(context)
+    private val householdDir = java.io.File(context.filesDir, "household")
     private val connector = HomeyConnector(http)
 
     val discovery = HomeyDiscovery(context, http)
@@ -126,6 +127,7 @@ class AppContainer(context: Context) {
 
     fun forget() {
         (_session.value as? SessionState.Ready)?.store?.stop()
+        learning?.cancel()
         _session.value = SessionState.NeedsSetup
         scope.launch { settings.clear() }
     }
@@ -138,15 +140,20 @@ class AppContainer(context: Context) {
         }
     }
 
+    /** Teaches the assistant's memory from the current Homey's presence and alarms. */
+    private var learning: kotlinx.coroutines.Job? = null
+
     private fun start(ready: SessionState.Ready) {
         ready.store.start()
+        learning?.cancel()
+        learning = scope.launch { assistant.learnFrom(ready.store.household) }
         _session.value = ready
         // The weather may use the Homey's location, known only now.
         weather.refresh()
     }
 
     private fun HomeySession.newStore(saved: SavedHomey) = SessionState.Ready(
-        store = HomeyStore(client, newRealtime(saved.apiKey, http), scope, extraCards = listOf(sonos)),
+        store = HomeyStore(client, newRealtime(saved.apiKey, http), scope, extraCards = listOf(sonos), householdDir = householdDir),
         info = info,
     )
 }

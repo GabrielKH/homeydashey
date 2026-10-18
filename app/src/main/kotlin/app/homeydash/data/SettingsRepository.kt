@@ -294,12 +294,20 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { if (flow == null) it.remove(GOODNIGHT_FLOW) else it[GOODNIGHT_FLOW] = flow }
     }
 
+    /** Whether Goodnight marks everyone home as asleep in Homey. */
+    val goodnightAsleep: Flow<Boolean> = context.dataStore.data.map { it[GOODNIGHT_ASLEEP] ?: true }
+
+    suspend fun setGoodnightAsleep(on: Boolean) {
+        context.dataStore.edit { it[GOODNIGHT_ASLEEP] = on }
+    }
+
     private companion object {
         val OVERVIEW_DEVICES = stringPreferencesKey("overview_devices")
         val LAST_PLAYER = stringPreferencesKey("last_player")
         val OVERVIEW_ORDER = stringPreferencesKey("overview_order")
         val GOODNIGHT_KEEP = stringSetPreferencesKey("goodnight_keep")
         val GOODNIGHT_FLOW = stringPreferencesKey("goodnight_flow")
+        val GOODNIGHT_ASLEEP = booleanPreferencesKey("goodnight_asleep")
         val WEATHER_DAYS = intPreferencesKey("weather_days")
         val PALETTE = stringPreferencesKey("palette")
         val FLAT = booleanPreferencesKey("flat")

@@ -98,7 +98,8 @@ enum class Access(val label: String) { Off("Off"), LocalOnly("Local AI only"), O
 enum class Secret(val title: String, val detail: String, val default: Access = Access.Off) {
     Calendar("Calendar", "Read event titles and times."),
     CalendarDetails("Calendar details", "Also read where events are."),
-    Presence("Who is home", "Read whether each Homey user is home or asleep."),
+    Presence("Who is home", "Read whether each Homey user is home or asleep, and mark people home, away or asleep."),
+    WakeAlarms("Wake-up alarms", "Read, set and switch off Homey's wake-up alarms (\"väck mig 6:15\").", Access.On),
     Locks("Locks", "Read whether doors are locked, and lock them."),
     Unlock("Unlock doors", "Unlock doors; always asks you to tap Yes on the tablet first."),
     Alarm("Alarm", "Read the home alarm and arm it. It can never disarm it."),

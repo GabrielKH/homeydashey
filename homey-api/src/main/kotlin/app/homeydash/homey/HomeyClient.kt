@@ -54,6 +54,32 @@ class HomeyClient(
     /** Homey users with whether they are home; for the assistant, behind its "Who is home" switch. */
     suspend fun users(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/users/user").get().build()))
 
+    /** Homey's wake-up alarms (needs "View alarms" on the API key). */
+    suspend fun alarms(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/alarms/alarm").get().build()))
+
+    /** Makes an alarm from a [Household.body]; Homey answers with the new alarm. Needs "Alarms". */
+    suspend fun createAlarm(body: JsonObject): JsonElement =
+        HomeyJson.parseToJsonElement(execute(request("api/manager/alarms/alarm").post(body.toString().toRequestBody(JSON_TYPE)).build()).ifBlank { "{}" })
+
+    suspend fun updateAlarm(id: String, body: JsonObject): JsonElement =
+        HomeyJson.parseToJsonElement(execute(request("api/manager/alarms/alarm/$id").put(body.toString().toRequestBody(JSON_TYPE)).build()).ifBlank { "{}" })
+
+    suspend fun deleteAlarm(id: String) {
+        execute(request("api/manager/alarms/alarm/$id").delete().build())
+    }
+
+    /** Marks a user home or away (needs "Presence" on the API key). */
+    suspend fun setPresent(userId: String, present: Boolean) {
+        val body = buildJsonObject { put("value", kotlinx.serialization.json.JsonPrimitive(present)) }.toString()
+        execute(request("api/manager/presence/$userId/present").put(body.toRequestBody(JSON_TYPE)).build())
+    }
+
+    /** Marks a user asleep or awake (needs "Presence" on the API key). */
+    suspend fun setAsleep(userId: String, asleep: Boolean) {
+        val body = buildJsonObject { put("value", kotlinx.serialization.json.JsonPrimitive(asleep)) }.toString()
+        execute(request("api/manager/presence/$userId/asleep").put(body.toRequestBody(JSON_TYPE)).build())
+    }
+
     /** Logic variables; for the assistant, behind its "Homey variables" switch. */
     suspend fun logicVariables(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/logic/variable").get().build()))
 

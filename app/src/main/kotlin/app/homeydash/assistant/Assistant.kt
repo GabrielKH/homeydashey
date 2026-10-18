@@ -97,6 +97,32 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
         scope.launch { memory.load() }
     }
 
+    /**
+     * Feeds Homey's presence and the wake-up alarms set on the tablet into the memory graph,
+     * as habits counted without the AI, while the Homey connection lasts. Nothing is kept when
+     * Memory or the matching privacy switch is off.
+     */
+    suspend fun learnFrom(household: app.homeydash.homey.HouseholdStore) = kotlinx.coroutines.coroutineScope {
+        fun people() = faces.people.value.associate { it.id to it.name }
+        launch {
+            household.changes.collect { change ->
+                val s = settings.value
+                if (s.access(Secret.Memory) == Access.Off || s.access(Secret.Presence) == Access.Off) return@collect
+                val fact = app.homeydash.agent.HouseholdMemory.presence(change, java.time.ZoneId.systemDefault(), s.access(Secret.Presence) == Access.LocalOnly)
+                    ?: return@collect
+                runCatching { memory.learn(listOf(fact)) }
+            }
+        }
+        launch {
+            household.alarmSaved.collect { alarm ->
+                val s = settings.value
+                if (s.access(Secret.Memory) == Access.Off || s.access(Secret.WakeAlarms) == Access.Off) return@collect
+                val fact = app.homeydash.agent.HouseholdMemory.alarm(alarm, people(), null, java.time.ZonedDateTime.now(), s.access(Secret.WakeAlarms) == Access.LocalOnly)
+                runCatching { memory.learn(listOf(fact)) }
+            }
+        }
+    }
+
     fun trace(kind: String, text: String, localOnly: Boolean) {
         // Kept in order; a line appended to a small file.
         log.add(kind, text, localOnly)
