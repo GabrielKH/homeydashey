@@ -302,6 +302,12 @@ class Agent(
                         result.pending?.let { pending = it }
                         turn += ChatMessage.tool(call.id, result.text)
                     }
+                    // It talked before its calls ("Jag tänder lamporna"); the answer after them
+                    // repeated it, so it's told what was heard and to only add what's new.
+                    live?.takeIf { it.spokeThisRound && answer.toolCalls.isNotEmpty() }?.heardThisRound()?.takeIf { it.isNotEmpty() }?.let { said ->
+                        val last = turn.removeAt(turn.lastIndex)
+                        turn += ChatMessage.tool(last.toolCallId.orEmpty(), last.content.orEmpty() + "\n" + alreadySaid(said))
+                    }
                     if (repeats >= MAX_REPEATS) {
                         heard.trace("guard", "Kept asking for calls already done; stopped.")
                         remember(turn, localOnly)
@@ -811,6 +817,8 @@ class Agent(
         const val TOOLS_LAST_WRITTEN = "Whatever the character, the home only changes through your tools: to change, find or look up anything, " +
             "reply first with only the CALL lines, then answer in words once the results are back; " +
             "never say something is done, on or off without a CALL line for it.\n"
+        fun alreadySaid(said: String) = "(From the app: the user already heard you say \"$said\" Don't say that again; " +
+            "answer with only what these results add, in a few words, or just confirm it briefly.)"
         const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
         const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +

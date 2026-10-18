@@ -22,6 +22,12 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
     var spokeThisRound = false
         private set
 
+    /** What of this round was said, so the next round isn't told to say it again. */
+    private val heard = StringBuilder()
+
+    @Synchronized
+    fun heardThisRound(): String = heard.toString().trim()
+
     /** Takes the next piece of the answer and says every sentence it completes. */
     @Synchronized
     fun feed(piece: String) {
@@ -54,6 +60,7 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
         said = 0
         quiet = false
         spokeThisRound = false
+        heard.setLength(0)
     }
 
     /** Says the finished sentences of [speakable] not said yet, or everything with [all]. */
@@ -67,6 +74,7 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
         if (sentence.isEmpty() || sentence.none { it.isLetterOrDigit() }) return
         started = true
         spokeThisRound = true
+        heard.append(sentence).append(' ')
         say(polish(sentence))
     }
 

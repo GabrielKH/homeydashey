@@ -212,4 +212,16 @@ class SpeechStreamTest {
         assertEquals("Hmm…", ThinkingSounds.pick(listOf("Hmm…"), "Hmm…"))
         assertEquals(null, ThinkingSounds.pick(emptyList(), null))
     }
+
+    @Test
+    fun `what a round said is kept for the next round, and cleared after`() {
+        val said = mutableListOf<String>()
+        val out = SpeechStream({ said += it })
+        out.feed("Jag tänder lamporna i vardagsrummet. ")
+        out.feed("CALL set_room {}")
+        out.finish()
+        assertEquals("Jag tänder lamporna i vardagsrummet.", out.heardThisRound())
+        out.next()
+        assertEquals("", out.heardThisRound())
+    }
 }

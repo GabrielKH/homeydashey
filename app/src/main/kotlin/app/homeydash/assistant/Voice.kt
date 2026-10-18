@@ -382,13 +382,14 @@ class SpeechOutput(
         voice: VoiceStyle,
         onStart: () -> Unit,
         onFrame: (FloatArray) -> Unit,
+        onSentence: (String) -> Unit = {},
     ): Boolean = coroutineScope {
         // Long pieces are cut into sentences, so the first one starts sooner.
         val sentences = produce(capacity = kotlinx.coroutines.channels.Channel.UNLIMITED) {
             for (piece in pieces) app.homeydash.agent.Sentences.split(spoken(piece, swedish)).forEach { send(it) }
         }
         val live = File(appContext.cacheDir, "live.wav")
-        stream(sentences, { sentence -> phrase(sentence, swedish, voice) ?: pcmOf(sentence, swedish, voice, live) }, onFrame, onStart)
+        stream(sentences, { sentence -> phrase(sentence, swedish, voice) ?: pcmOf(sentence, swedish, voice, live) }, onFrame, onStart, onSentence)
     }
 
     /** Short sounds made ahead of time, like the "hmm" while it thinks, per voice and language. */
@@ -459,9 +460,12 @@ class SpeechOutput(
         make: suspend (String) -> Pcm?,
         onFrame: (FloatArray) -> Unit,
         onStart: () -> Unit = {},
+        /** Each sentence as it starts to be heard, so the words on screen keep pace with the voice. */
+        onSentence: (String) -> Unit = {},
     ): Boolean = coroutineScope {
-        val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(it) } }
-        val first = made.receiveCatching().getOrNull() ?: return@coroutineScope false
+        val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(s to it) } }
+        val firstMade = made.receiveCatching().getOrNull() ?: return@coroutineScope false
+        val first = firstMade.second
         onStart()
         val rate = first.sampleRate
         val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -485,8 +489,11 @@ class SpeechOutput(
         }
         try {
             t.play()
-            var next: Pcm? = first
-            while (next != null && track === t) {
+            var nextMade: Pair<String, Pcm>? = firstMade
+            while (nextMade != null && track === t) {
+                val next = nextMade.second
+                // Written as the one before it ends (the buffer holds a fifth of a second).
+                onSentence(nextMade.first)
                 // A sentence from another voice (the computer's voice server went quiet) is made to fit.
                 val pcm = VoiceFx.resample(next, rate)
                 parts += written to VoiceFx.analyse(pcm)
@@ -500,7 +507,7 @@ class SpeechOutput(
                     }
                 }
                 written += pcm.samples.size
-                next = made.receiveCatching().getOrNull()
+                nextMade = made.receiveCatching().getOrNull()
             }
             // Let the last of it play out.
             while (track === t && (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) < written && t.playState == AudioTrack.PLAYSTATE_PLAYING) delay(20)

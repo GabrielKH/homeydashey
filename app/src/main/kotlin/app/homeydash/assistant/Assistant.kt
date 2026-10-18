@@ -285,6 +285,9 @@ class Assistant(
     /** A small moving picture that goes with the answer, like rain while it tells the weather. */
     var scene by mutableStateOf<Scene?>(null)
     val lines = mutableStateListOf<Line>()
+
+    /** The answer line being written as it is said, sentence by sentence; the full answer replaces it. */
+    private var caption: Int? = null
     /** What the assistant is doing for the current question, step by step, as it happens. */
     val activity = mutableStateListOf<AgentStep>()
     var pending by mutableStateOf<PendingAction?>(null)
@@ -818,9 +821,29 @@ class Assistant(
                 app.homeydash.agent.Language.Auto -> app.homeydash.agent.Confirmation.looksSwedish(text)
             }
             val begun = java.util.concurrent.atomic.AtomicBoolean(false)
+            var filler: String? = null
+            caption = null
             val speaking = live?.let { pieces ->
                 launch {
-                    services.output.speakLive(pieces, swedish, settings.voice, onStart = { clock.sound(isFiller = !begun.get()); state = AssistantState.Speaking }, onFrame = ::meter)
+                    services.output.speakLive(
+                        pieces, swedish, settings.voice,
+                        onStart = { clock.sound(isFiller = !begun.get()); state = AssistantState.Speaking },
+                        onFrame = ::meter,
+                        // The words appear as they're heard, not all at once after the voice is done.
+                        onSentence = { sentence ->
+                            val words = sentence.trim()
+                            fun letters(x: String) = x.filter { it.isLetter() }.lowercase()
+                            if (filler?.let { letters(it) == letters(words) } != true) {
+                                val at = caption?.takeIf { it == lines.lastIndex && !lines[it].fromUser }
+                                if (at == null) {
+                                    lines += Line(false, words)
+                                    caption = lines.lastIndex
+                                } else {
+                                    lines[at] = lines[at].copy(text = lines[at].text + " " + words)
+                                }
+                            }
+                        },
+                    )
                 }
             }
             // Not for follow-ups: those may turn out to be people talking to each other.
@@ -832,6 +855,7 @@ class Assistant(
                     val sound = app.homeydash.agent.ThinkingSounds.pick(ready, lastHmm)
                     if (!begun.get() && sound != null) {
                         lastHmm = sound
+                        filler = sound
                         services.trace("voice", "Said \"$sound\" while the answer took a moment.", false)
                         pieces.trySend(sound)
                     }
@@ -988,7 +1012,10 @@ class Assistant(
         }
         pending = services.agent.pending
         val brain: Connection? = reply.brain
-        lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions, steps = steps())
+        val line = Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions, steps = steps())
+        val at = caption?.takeIf { it == lines.lastIndex && !lines[it].fromUser }
+        caption = null
+        if (at != null) lines[at] = line else lines += line
         val clock = timing?.also { timing = null }
         if (settings.speak && !reply.error && !reply.spoken) {
             if (clock != null && clock.sentenceAt == 0L) clock.sentenceAt = SystemClock.elapsedRealtime()
