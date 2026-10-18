@@ -83,6 +83,15 @@ object StepText {
             "set_theme" -> "Switching to ${str("mode")}"
             "calendar" -> "Reading the calendar"
             "who_is_home" -> "Checking who's home"
+            "set_presence" -> "Marking ${str("person").ifBlank { "you" }} ${str("state").lowercase()}"
+            "alarms" -> when (str("action").lowercase()) {
+                "set", "create", "add", "change", "update" -> "Setting a wake-up alarm" + (str("time").takeIf { it.isNotEmpty() }?.let { " for $it" } ?: "")
+                "off", "disable", "cancel" -> "Switching off ${str("name").ifBlank { "the alarm" }}"
+                "on", "enable" -> "Switching on ${str("name").ifBlank { "the alarm" }}"
+                "skip" -> "Skipping the next wake-up"
+                "delete", "remove" -> "Deleting ${str("name").ifBlank { "the alarm" }}"
+                else -> "Checking the alarms"
+            }
             "find_phone" -> (if (str("action").lowercase() in setOf("where", "var")) "Looking for " else "Ringing ") +
                 str("phone").ifBlank { "your phone" }.let { if (it.contains("phone", true) || it.contains("telefon", true) || it.contains("mobil", true)) it else "$it's phone" }
             "variables" -> "Reading Homey's variables"

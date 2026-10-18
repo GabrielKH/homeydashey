@@ -65,10 +65,11 @@ class AssistantBridge(
             "turn off $off device${if (off == 1) "" else "s"}".takeIf { off > 0 },
             "pause $paused player${if (paused == 1) "" else "s"}".takeIf { paused > 0 },
             flow?.let { "start the Flow ${it.name}" },
+            "mark everyone home as asleep in Homey".takeIf { display.goodnightAsleep.value && store.household.state.value.people.any { it.present == true } },
         ).joinToString(", ").ifBlank { "nothing is on" } + "."
     }
 
-    override fun goodnight() = actions.goodnight(steps(), display.goodnightFlow.value)
+    override fun goodnight() = actions.goodnight(steps(), display.goodnightFlow.value, markAsleep = display.goodnightAsleep.value)
 
     override suspend fun weather(): String? {
         return weatherNow()

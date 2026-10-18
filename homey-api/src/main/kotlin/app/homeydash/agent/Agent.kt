@@ -582,6 +582,7 @@ class Agent(
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
                     if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS + MEMORY_PACK)
+                    if (HOUSEHOLD_WORDS.containsMatchIn(said)) addAll(HOUSEHOLD_TOOLS)
                 }
                 core = all.filter { it.name !in PACKS }
                 extra = all.filter { it.name in PACKS && it.name in wanted }
@@ -883,7 +884,14 @@ class Agent(
         /** Remembering and forgetting facts only come with "kom ihåg", "glöm" and the like; recall is always there. */
         val MEMORY_PACK = setOf("remember", "forget_memory")
         val MEMORY_TOOLS = MEMORY_PACK + "recall"
-        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK
+        /** Marking people home or asleep and wake-up alarms: only when the question is about them. */
+        val HOUSEHOLD_TOOLS = setOf("set_presence", "alarms")
+        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS
+        val HOUSEHOLD_WORDS = Regex(
+            """$W(väck\w*|wake\w*|alarm\w*|klocka\w*|sov\w*|sleep\w*|asleep|awake|vaken|uppe|hemma|home|borta|away|går nu|åker nu|""" +
+                """drar nu|sticker|leaving|kommer hem|back|tillbaka|godnatt|god natt|goodnight|good night|morgon|morning)$E""",
+            RegexOption.IGNORE_CASE,
+        )
         val RECIPE_WORDS = Regex("""$W(recept\w*|recipe\w*|laga\w*|cook\w*|baka\w*|middag|lunch|frukost|dinner|ingrediens\w*|ingredient\w*|steg|step|timers?)$E""", RegexOption.IGNORE_CASE)
         val FRIDGE_WORDS = Regex("""$W(kyl\w*|frys\w*|skafferi\w*|fridge|freezer|pantry|köpt\w*|bought|åt|ate|slut|utgång\w*|bäst före|expir\w*|öppnat|opened|mat|food|hemma)$E""", RegexOption.IGNORE_CASE)
         val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)

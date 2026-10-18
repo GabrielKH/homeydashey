@@ -60,6 +60,9 @@ fun GoodnightDialog(
     keep: Set<String>,
     flow: HomeyFlow?,
     actions: DashboardActions,
+    household: app.homeydash.homey.HouseholdStore,
+    markAsleep: Boolean,
+    onMarkAsleep: (Boolean) -> Unit,
     onKeep: (Set<String>) -> Unit,
     onFlow: (HomeyFlow?) -> Unit,
     onDismiss: () -> Unit,
@@ -104,6 +107,9 @@ fun GoodnightDialog(
                     }
                 }
 
+                SectionLabel("Tonight and tomorrow")
+                GoodnightWakeUp(household, markAsleep, onMarkAsleep)
+
                 SectionLabel("Also start a Flow")
                 FlowChoice(flow, onClick = { choosingFlow = !choosingFlow }, onClear = { onFlow(null) })
                 if (choosingFlow) {
@@ -114,7 +120,7 @@ fun GoodnightDialog(
                     Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp)
-                        .pressable({ actions.goodnight(steps, flow); onDismiss() })
+                        .pressable({ actions.goodnight(steps, flow, markAsleep); onDismiss() })
                         .background(onBrush(), PillShape)
                         .padding(vertical = 16.dp),
                     horizontalArrangement = Arrangement.Center,
