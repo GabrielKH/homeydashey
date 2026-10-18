@@ -590,12 +590,16 @@ class Agent(
         }
     }
 
-    /** The rules and the home's devices: the part of every question that stays the same. */
+    /**
+     * The rules and the home's devices: the part of every question that stays the same. Who is
+     * talking (Nova or TARS) comes last, so when people with different characters take turns
+     * the server keeps everything before it worked through and only reads the character again.
+     */
     fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null): String =
-        rules(settings, view.local) +
+        shared(settings, view.local) +
             (compactTools?.let { "\n" + ToolText.HOW + "\nTools:\n" + ToolText.lines(it) + "\n" } ?: "") +
             "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
-            "(read) only reads; get_device has the rest):\n" + view.catalog()
+            "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n\n" + character(settings)
 
     /** What the last warm-up sent, so an unchanged start isn't sent again, and when. */
     private var warmed: Int? = null
@@ -672,11 +676,15 @@ class Agent(
     fun systemPrompt(settings: AgentSettings, view: HomeView, context: AskContext): String =
         fixed(settings, view) + "\n" + situation(settings, view, context)
 
-    /** How to behave: the same for every question, so it can be kept worked through. */
-    fun rules(settings: AgentSettings, local: Boolean = true): String = buildString {
-        append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
+    /** How to behave, and as whom. */
+    fun rules(settings: AgentSettings, local: Boolean = true): String = shared(settings, local) + character(settings)
+
+    /**
+     * Who is talking: the name, the language and the personality. Kept apart from [shared] so it
+     * can go after the home's devices in [fixed].
+     */
+    fun character(settings: AgentSettings): String = buildString {
         if (settings.persona == Persona.Nova) append("Your name is ").append(settings.nameOf(Persona.Nova)).append(". ")
-        append("You can see and control the home only through your tools; everything goes through the Homey smart home hub.\n")
         append(
             when {
                 settings.persona == Persona.Tars ->
@@ -686,13 +694,20 @@ class Agent(
                 else -> "Always answer in English.\n"
             },
         )
+        if (settings.persona == Persona.Nova) append("Personality: warm, quick and a little playful, like a friend in the kitchen; never stiff, never \"as an AI\".\n")
+        if (settings.persona == Persona.Tars) append(tarsPersona(settings.humor))
+    }
+
+    /** How to behave whoever is talking: the same for every question, so it can be kept worked through. */
+    fun shared(settings: AgentSettings, local: Boolean = true): String = buildString {
+        append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
+        append("You can see and control the home only through your tools; everything goes through the Homey smart home hub. ")
+        append("Who you are is told at the very end, after the home's devices.\n")
         append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
         append("Talk like a person in a conversation, not like a screen: put the answer itself in a short first sentence, use everyday spoken words, ")
         append("react to what they just said, and remember what was said earlier. Ask a short question back only when you really need to know something.\n")
-        if (settings.persona == Persona.Nova) append("Personality: warm, quick and a little playful, like a friend in the kitchen; never stiff, never \"as an AI\".\n")
-        if (settings.persona == Persona.Tars) append(tarsPersona(settings.humor))
         if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
-        append("The home's devices are listed at the end of these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
+        append("The home's devices are listed after these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
         append("devices the note leaves out are off or idle, and get_device reads anything else (power, battery, other sensors). ")
         append("Notes before earlier questions were true then; only the last note is how things are now. ")
         append("Only the part after \"$QUESTION_LABEL\" is what the user said. ")

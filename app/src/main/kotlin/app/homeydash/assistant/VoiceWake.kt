@@ -160,7 +160,8 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
     var enrolling by mutableStateOf(false)
 
     /**
-     * Starts listening for [name]. [onHeard] gets the phrase, its Vosk voice vector (null when
+     * Starts listening for [names] (one per character in use). [onHeard] gets the phrase, which
+     * of the names was said, its Vosk voice vector (null when
      * the phrase was too short to tell) and the sound of the name being said, for a voiceprint
      * (see [VoicePrints]). Callbacks come on the main thread. Returns a token
      * for [stop], so one user can't stop another's listening. [sensitivity] (0–100) sets the
@@ -168,8 +169,8 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
      * someone talking over it for a moment is handed over too, with the last of what was heard.
      */
     fun start(
-        name: String,
-        onHeard: (text: String, voice: FloatArray?, sound: ShortArray?) -> Unit,
+        names: List<String>,
+        onHeard: (text: String, name: String, voice: FloatArray?, sound: ShortArray?) -> Unit,
         onError: (String) -> Unit,
         sensitivity: Int = MicSensitivity.DEFAULT,
         echo: Boolean = false,
@@ -183,7 +184,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             if (gen != generation) return@launch
             loaded.exceptionOrNull()?.let { onError("Couldn't load the voice model: ${it.message}"); return@launch }
             val rec = try {
-                Recognizer(model, RATE.toFloat(), WakeName.grammar(name, loaded.getOrNull())).apply {
+                Recognizer(model, RATE.toFloat(), WakeName.grammar(names, loaded.getOrNull())).apply {
                     setSpeakerModel(speakerModel)
                     setWords(true)
                 }
@@ -202,7 +203,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
                         if (failure != null) {
                             onError(failure)
                         } else {
-                            parse(result, name, minConfidence, recent)?.let { onHeard(it.text, it.voice, it.sound) }
+                            parse(result, names, minConfidence, recent)?.let { onHeard(it.text, it.name, it.voice, it.sound) }
                         }
                     }
                 }
@@ -369,9 +370,9 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         }
     }
 
-    private class Heard(val text: String, val voice: FloatArray?, val sound: ShortArray?)
+    private class Heard(val text: String, val name: String, val voice: FloatArray?, val sound: ShortArray?)
 
-    private fun parse(hypothesis: String?, name: String, minConfidence: Double, recent: Recent?): Heard? {
+    private fun parse(hypothesis: String?, names: List<String>, minConfidence: Double, recent: Recent?): Heard? {
         val json = runCatching { Json.parseToJsonElement(hypothesis.orEmpty()).jsonObject }.getOrNull() ?: return null
         val text = json["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val results = (json["result"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
@@ -379,9 +380,9 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             WakeName.Word(it["word"]?.jsonPrimitive?.contentOrNull.orEmpty(), it["conf"]?.jsonPrimitive?.doubleOrNull ?: 1.0)
         }.ifEmpty { text.split(' ').map { WakeName.Word(it, 1.0) } }
         // Grammar mode guesses the closest phrase for any sound; unsure guesses don't count.
-        if (!WakeName.spot(words, name, minConfidence)) return null
+        val name = names.firstOrNull { WakeName.spot(words, it, minConfidence) } ?: return null
         val voice = json["spk"]?.jsonArray?.mapNotNull { it.jsonPrimitive.floatOrNull }?.toFloatArray()?.takeIf { it.isNotEmpty() }
-        return Heard(text, voice, recent?.let { soundOfName(results, name, it) })
+        return Heard(text, name, voice, recent?.let { soundOfName(results, name, it) })
     }
 
     /**

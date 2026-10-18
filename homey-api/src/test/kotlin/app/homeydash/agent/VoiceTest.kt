@@ -134,4 +134,52 @@ class VoiceTest {
         assertEquals("TARS", kim.nameOf(Persona.Tars))
         assertTrue(Agent(ChatClient(okhttp3.OkHttpClient())).rules(kim).contains("Your name is Kim."))
     }
+
+    private fun person(id: String, character: Persona? = null, voice: VoiceStyle? = null) =
+        KnownPerson(id, id, Role.Owner, emptyList(), character = character, voiceStyle = voice)
+
+    @Test
+    fun `a character someone picked wakes the assistant too`() {
+        val house = AgentSettings(wakeName = "Kim")
+        assertEquals(listOf("Kim"), house.wakeNames(listOf(person("a"), person("b", Persona.Nova))))
+        assertEquals(listOf("Kim", "TARS"), house.wakeNames(listOf(person("a"), person("g", Persona.Tars))))
+        val tarsHouse = house.asCharacter(Persona.Tars)
+        assertEquals(listOf("TARS", "Kim"), tarsHouse.wakeNames(listOf(person("n", Persona.Nova))))
+        assertEquals(Persona.Tars, house.characterNamed("hey tars"))
+        assertEquals(Persona.Nova, house.characterNamed("Kim"))
+        assertEquals(Persona.Nova, tarsHouse.characterNamed("kim"))
+    }
+
+    @Test
+    fun `each person talks with their own character and voice`() {
+        val house = AgentSettings(wakeName = "Kim", voice = VoiceStyle.Warm)
+        val gabriel = person("g", Persona.Tars)
+        val anna = person("a", Persona.Nova, VoiceStyle.Calm)
+        assertEquals(Persona.Tars, house.characterOf(gabriel))
+        assertEquals(Persona.Nova, house.characterOf(null))
+        val tars = house.talkingAs(Persona.Tars, gabriel)
+        assertEquals(VoiceStyle.Tars, tars.voice)
+        assertEquals(WakeSound.Huh, tars.wakeSound)
+        assertEquals("TARS", tars.wakeName)
+        assertEquals(VoiceStyle.Calm, house.talkingAs(Persona.Nova, anna).voice)
+        // Anna's voice pick is for her own character; when she wakes TARS he sounds like himself.
+        assertEquals(VoiceStyle.Tars, house.talkingAs(Persona.Tars, anna).voice)
+        // Gabriel waking Nova gets the house's Nova.
+        val nova = house.talkingAs(Persona.Nova, gabriel)
+        assertEquals(VoiceStyle.Warm, nova.voice)
+        assertEquals("Kim", nova.wakeName)
+    }
+
+    @Test
+    fun `a picked character introduces itself`() {
+        assertTrue(Persona.Nova.intro("Kim", swedish = true).contains("jag är Kim"))
+        assertTrue(Persona.Tars.intro("TARS", swedish = true, humor = 60).contains("60 percent"))
+        assertTrue(Persona.entries.all { it.detail.length > 40 })
+    }
+
+    @Test
+    fun `wake grammar holds every name`() {
+        val g = WakeName.grammar(listOf("Nova", "TARS"))
+        assertTrue(g.contains("\"hey nova\"") && g.contains("\"hey tars\""))
+    }
 }

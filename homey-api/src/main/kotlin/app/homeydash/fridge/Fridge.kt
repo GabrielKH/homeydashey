@@ -195,20 +195,68 @@ class Fridge(
         learn(item)
     }
 
-    suspend fun remove(id: String) = update { list -> list.filterNot { it.id == id } }
+    /** Takes [id] away; [eaten] when it was finished rather than put there by mistake. */
+    suspend fun remove(id: String, eaten: Boolean = false) {
+        val item = get(id)
+        update { list -> list.filterNot { it.id == id } }
+        if (eaten && item != null) notifyUsed(item, 0)
+    }
 
-    /** One of them is used up; the last one takes the line away. Returns what is left (0 when gone). */
-    suspend fun useOne(id: String): Int {
+    private suspend fun notifyUsed(item: FridgeItem, left: Int) {
+        try {
+            onUsed?.invoke(item, left)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The memory is a nicety; the fridge is already right.
+        }
+    }
+
+    /**
+     * One of them is used up; the last one takes the line away. Returns what is left (0 when
+     * gone). [eaten] is false for an undo of a scan that was a mistake, which isn't remembered.
+     */
+    suspend fun useOne(id: String, eaten: Boolean = true): Int {
         var left = 0
+        var used: FridgeItem? = null
         update { list ->
             list.mapNotNull {
                 if (it.id != id) it else {
+                    used = it
                     left = it.quantity - 1
                     if (left > 0) it.copy(quantity = left) else null
                 }
             }
         }
+        if (eaten) used?.let { notifyUsed(it, left) }
         return left
+    }
+
+    /**
+     * Told when one of something is eaten or finished (scanned again, or taken out by the
+     * assistant): the item as it was, and how many are left. For the assistant's memory.
+     */
+    var onUsed: (suspend (item: FridgeItem, left: Int) -> Unit)? = null
+
+    /** What is in stock with this scanned code, the one to eat first; null when none is. */
+    fun inStock(key: String): FridgeItem? =
+        _items.value.filter { it.code == key }.minWithOrNull(compareBy<FridgeItem> { estimate(it).date }.thenBy { it.added })
+
+    /**
+     * A scan of something already in the fridge means one was eaten or finished: the item to
+     * take one from. Null when none is in stock, or when that code was added in the last few
+     * minutes, so scanning three yoghurts after shopping still adds three.
+     */
+    fun scannedAgain(key: String): FridgeItem? {
+        val stock = _items.value.filter { it.code == key }
+        if (stock.isEmpty() || stock.any { clock() - it.added < JUST_BOUGHT_MS }) return null
+        return inStock(key)
+    }
+
+    /** Undoes [useOne]: one more of [item] again, or the line back when it was the last. */
+    suspend fun putBack(item: FridgeItem) = update { list ->
+        if (list.any { it.id == item.id }) list.map { if (it.id == item.id) it.copy(quantity = it.quantity + 1) else it }
+        else list + item.copy(quantity = 1)
     }
 
     suspend fun markOpened(id: String, opened: Boolean = true) = edit(id) { it.copy(opened = if (opened) today().toString() else null) }
@@ -293,5 +341,8 @@ class Fridge(
     private companion object {
         /** How many packs' dates to learn from; the middle one counts. */
         const val KEEP_PACKS = 6
+
+        /** How long after adding a code another scan of it adds more instead of taking one out. */
+        const val JUST_BOUGHT_MS = 15 * 60_000L
     }
 }

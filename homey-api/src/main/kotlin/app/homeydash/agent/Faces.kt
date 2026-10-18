@@ -20,6 +20,10 @@ data class KnownPerson(
     val prints: Map<String, List<FloatArray>> = emptyMap(),
     /** The voiceprints for the wake name in use, picked by [forWake]; what [VoiceId] matches. */
     val print: List<FloatArray> = emptyList(),
+    /** The character this person talks with ("TARS" for one, Nova for another); null for the house's. */
+    val character: Persona? = null,
+    /** The voice their own character speaks in; null for that character's usual voice. */
+    val voiceStyle: VoiceStyle? = null,
 ) {
     fun printsFor(wakeName: String): List<FloatArray> = prints[WakeName.key(wakeName)].orEmpty()
 
@@ -103,10 +107,13 @@ object WakeName {
      * instead of the name, and "[unk]". Without the decoys, any sound close enough is
      * forced onto the name; [vocabulary] keeps only words the model knows.
      */
-    fun grammar(name: String, vocabulary: Set<String>? = null): String {
-        val own = clean(name).split(' ').toSet()
+    fun grammar(name: String, vocabulary: Set<String>? = null): String = grammar(listOf(name), vocabulary)
+
+    /** The grammar for several names at once ("Nova" and "TARS"), so any of them wakes it. */
+    fun grammar(names: List<String>, vocabulary: Set<String>? = null): String {
+        val own = names.flatMap { clean(it).split(' ') }.toSet()
         val decoys = DECOYS.filter { it !in own && (vocabulary == null || it in vocabulary) }
-        return (phrases(name) + decoys + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
+        return (names.flatMap { phrases(it) }.distinct() + decoys + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
     }
 
     /** Short everyday words; also ones that sound like common names, so they don't wake it. */

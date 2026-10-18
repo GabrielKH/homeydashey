@@ -42,6 +42,7 @@ import app.homeydash.agent.TARS_WAKE_NAME
 import app.homeydash.agent.KnownPerson
 import androidx.compose.runtime.key
 import app.homeydash.agent.Persona
+import app.homeydash.agent.VoiceStyle
 import androidx.activity.compose.BackHandler
 import app.homeydash.ui.components.dialogSize
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -125,6 +126,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                             services = services,
                             person = p,
                             novaName = settings.nameOf(Persona.Nova),
+                            settings = settings,
                             onTeach = { name -> teaching = p.id to name },
                             onRole = { faces.setRole(p.id, it) },
                             onRemove = {
@@ -158,7 +160,15 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
  * their voice saying each character's name.
  */
 @Composable
-private fun PersonCard(services: AssistantServices, person: KnownPerson, novaName: String, onTeach: (String) -> Unit, onRole: (Role) -> Unit, onRemove: () -> Unit) {
+private fun PersonCard(
+    services: AssistantServices,
+    person: KnownPerson,
+    novaName: String,
+    settings: AgentSettings,
+    onTeach: (String) -> Unit,
+    onRole: (Role) -> Unit,
+    onRemove: () -> Unit,
+) {
     val g = GlassTheme.colors
     Column(
         Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(22.dp)).padding(18.dp),
@@ -190,7 +200,49 @@ private fun PersonCard(services: AssistantServices, person: KnownPerson, novaNam
             }
         }
         RoleChoice(person.role, onRole)
+        PersonCharacter(services, settings, person)
         AboutPerson(services, person.id, person.name)
+    }
+}
+
+/**
+ * The character and voice this person talks with: TARS for one, Nova for another. Picking one
+ * shows and says what it is like, and is remembered about them.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PersonCharacter(services: AssistantServices, settings: AgentSettings, person: KnownPerson) {
+    val g = GlassTheme.colors
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val character = settings.characterOf(person)
+    fun pick(p: Persona?, voice: VoiceStyle?) {
+        services.faces.setCharacter(person.id, p, voice)
+        val chosen = person.copy(character = p, voiceStyle = voice)
+        val talking = settings.talkingAs(settings.characterOf(chosen), chosen)
+        if (talking.voice == VoiceStyle.Tars) services.tars.download()
+        if (settings.access(Secret.Memory) != Access.Off) scope.launch {
+            services.memory.learn(listOf(app.homeydash.agent.Memory.characterChoice(app.homeydash.agent.Asker(person.id, person.name), p, voice)))
+        }
+        introduce(services, scope, talking)
+    }
+    Text("Talks with", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Chip("The house's (${settings.persona.label})", person.character == null) { if (person.character != null) pick(null, null) }
+        Persona.entries.forEach { p -> Chip(p.label, person.character == p) { if (person.character != p) pick(p, null) } }
+    }
+    Text(character.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+    if (person.character != null) {
+        Text("Voice", style = MaterialTheme.typography.labelLarge, color = g.fg)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val usual = settings.talkingAs(character).voice
+            Chip("Usual (${usual.label})", person.voiceStyle == null) { if (person.voiceStyle != null) pick(person.character, null) }
+            VoiceStyle.entries.filter { it != usual }.forEach { v -> Chip(v.label, person.voiceStyle == v) { if (person.voiceStyle != v) pick(person.character, v) } }
+        }
+        Text(
+            "Saying \"Hey ${settings.nameOf(character)}\" wakes ${character.label} for anyone it knows; ${person.name}'s own voice pick is used when ${person.name} talks with it.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
     }
 }
 

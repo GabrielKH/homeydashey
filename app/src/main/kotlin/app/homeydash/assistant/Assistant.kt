@@ -305,7 +305,22 @@ class Assistant(
     private var dictating = false
     /** When the conversation stops listening for a next question (elapsed realtime). */
     private var conversationUntil = 0L
-    private val settings: AgentSettings get() = services.settings.value
+    /**
+     * The settings as the character who is talking: the one woken by its name, for the rest of
+     * that conversation, or else the one the person at the tablet picked under People.
+     */
+    private val settings: AgentSettings get() {
+        val s = services.settings.value
+        val people = services.faces.people.value
+        val w = woken?.takeIf { conversing || state != AssistantState.Idle || SystemClock.elapsedRealtime() - it.at < WOKEN_MS }
+        if (w != null) return s.talkingAs(w.character, people.firstOrNull { it.id == w.personId })
+        val here = services.faces.current()?.person?.takeIf { s.access(Secret.Faces) != Access.Off }?.let { p -> people.firstOrNull { it.id == p.id } }
+        return s.talkingAs(s.characterOf(here), here)
+    }
+
+    /** Which character was woken by its name, and by whom when the voice was known. */
+    private class Woken(val character: app.homeydash.agent.Persona, val personId: String?, val at: Long)
+    private var woken: Woken? = null
 
     /** When the last spoken question ended (elapsed realtime) and how long writing it down took, for its [Timing]. */
     private var speechEnd: Long? = null
@@ -363,7 +378,10 @@ class Assistant(
     private var lastNag: String? = null
 
     private suspend fun nagAboutBattery() {
-        val s = settings
+        // In the owner's own character and voice, whoever was last at the tablet.
+        val base = services.settings.value
+        val owner = services.faces.people.value.firstOrNull { it.role == Role.Owner }
+        val s = base.talkingAs(base.characterOf(owner), owner)
         val bm = services.appContext.getSystemService(android.os.BatteryManager::class.java) ?: return
         val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
         val charging = bm.isCharging
@@ -385,7 +403,7 @@ class Assistant(
         services.onActive?.invoke()
         open = true
         lines += Line(false, text)
-        say(text)
+        say(text, s)
         state = AssistantState.Idle
     }
 
@@ -663,9 +681,14 @@ class Assistant(
         state = AssistantState.Idle
     }
 
-    /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
-    fun wake(person: KnownPerson?) {
+    /**
+     * The wake name was heard; [person] is whoever the voice belongs to, if known, and
+     * [character] the one whose name was said, which answers for this conversation.
+     */
+    fun wake(person: KnownPerson?, character: app.homeydash.agent.Persona = services.settings.value.characterOf(person)) {
         voice = Seen(person, SystemClock.elapsedRealtime())
+        woken = Woken(character, person?.id, SystemClock.elapsedRealtime())
+        rememberWoke(person, character)
         // Woken again after it was stopped: a new talk, so the last one's answers aren't still on screen.
         if (!conversing && state == AssistantState.Idle) freshScreen()
         // Said while it was thinking or talking: like a person, it stops and listens.
@@ -692,6 +715,15 @@ class Assistant(
             val ms = services.playWakeSound(settings.wakeSound)
             delay(ms + 60)
             if (waking && state == AssistantState.Idle) listen() else waking = false
+        }
+    }
+
+    /** Counts who wakes which character, for the memory, once the house has more than one in use. */
+    private fun rememberWoke(person: KnownPerson?, character: app.homeydash.agent.Persona) {
+        val s = services.settings.value
+        if (person == null || s.access(Secret.Memory) == Access.Off || s.wakeNames(services.faces.people.value).size < 2) return
+        scope.launch {
+            runCatching { services.memory.learn(listOf(app.homeydash.agent.Memory.woke(app.homeydash.agent.Asker(person.id, person.name), character, java.time.ZonedDateTime.now()))) }
         }
     }
 
@@ -1002,10 +1034,9 @@ class Assistant(
     }
 
     /** Says [text] on the chosen speaker, or on the tablet when there is none or it fails; [onStart] when it starts. */
-    private suspend fun say(text: String, onStart: () -> Unit = {}) {
+    private suspend fun say(text: String, s: AgentSettings = settings, onStart: () -> Unit = {}) {
         state = AssistantState.Speaking
         answering = true
-        val s = settings
         val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
         if (speaker != null && sayOn(speaker.second, text, s, onStart)) return
         services.output.speak(text, s.answers, s.voice, ::meter, onStart)
@@ -1111,6 +1142,8 @@ class Assistant(
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */
         const val WAKE_SOUND_AFTER_MS = 200L
+        /** How long a woken character stays after the wake when no conversation follows. */
+        const val WOKEN_MS = 60_000L
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
         const val HINT_CHARS = 400
