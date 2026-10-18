@@ -47,7 +47,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         internet = connection(p, "internet"),
         mode = enumOr(p[MODE], BrainMode.Smart),
         language = enumOr(p[LANGUAGE], Language.Auto),
-        secrets = Secret.entries.associateWith { enumOr(p[stringPreferencesKey("secret_${it.name}")], Access.Off) },
+        secrets = Secret.entries.associateWith { enumOr(p[stringPreferencesKey("secret_${it.name}")], it.default) },
         hiddenDevices = p[HIDDEN]?.split('\n')?.filter { it.isNotBlank() }?.toSet().orEmpty(),
         speakerId = p[SPEAKER]?.takeIf { it.isNotBlank() },
         speakerVolume = p[VOLUME]?.toIntOrNull() ?: 35,
@@ -72,7 +72,6 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         novaName = p[NOVA_NAME] ?: AgentSettings().novaName,
         classicRed = p[CLASSIC_RED] == "true",
         batteryReminders = p[BATTERY_REMINDERS] != "false",
-        memory = p[MEMORY] != "false",
         phoneSharing = enumOr(p[PHONE_SHARING], app.homeydash.agent.PhoneSharing.Own),
         phoneOwners = p[PHONE_OWNERS]?.split('\n')?.mapNotNull { line -> line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }?.toMap().orEmpty(),
         useWhisper = p[USE_WHISPER] == "true",
@@ -120,7 +119,6 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[NOVA_NAME] = s.novaName
         p[CLASSIC_RED] = s.classicRed.toString()
         p[BATTERY_REMINDERS] = s.batteryReminders.toString()
-        p[MEMORY] = s.memory.toString()
         p[PHONE_SHARING] = s.phoneSharing.name
         p[PHONE_OWNERS] = s.phoneOwners.entries.joinToString("\n") { "${it.key}=${it.value}" }
         p[USE_WHISPER] = s.useWhisper.toString()
@@ -187,7 +185,6 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val NOVA_NAME = stringPreferencesKey("nova_name")
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val BATTERY_REMINDERS = stringPreferencesKey("battery_reminders")
-        val MEMORY = stringPreferencesKey("memory")
         val PHONE_SHARING = stringPreferencesKey("phone_sharing")
         val PHONE_OWNERS = stringPreferencesKey("phone_owners")
         val USE_WHISPER = stringPreferencesKey("use_whisper")

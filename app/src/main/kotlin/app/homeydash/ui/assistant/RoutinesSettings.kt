@@ -263,7 +263,7 @@ private fun Picker(options: List<Pair<String, String>>, selected: String, onPick
 
 /** A text field whose text lives with the caller, so reordered steps keep their own words. */
 @Composable
-private fun TextBox(value: String, singleLine: Boolean = true, hint: String = "", onChange: (String) -> Unit) {
+internal fun TextBox(value: String, singleLine: Boolean = true, hint: String = "", onChange: (String) -> Unit) {
     val g = GlassTheme.colors
     BasicTextField(
         value = value,

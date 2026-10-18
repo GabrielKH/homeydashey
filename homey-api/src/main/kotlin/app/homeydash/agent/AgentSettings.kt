@@ -95,7 +95,7 @@ object MicSensitivity {
 enum class Access(val label: String) { Off("Off"), LocalOnly("Local AI only"), On("On") }
 
 /** Things in the home that are secret by default; each one is a switch in Settings → Assistant. */
-enum class Secret(val title: String, val detail: String) {
+enum class Secret(val title: String, val detail: String, val default: Access = Access.Off) {
     Calendar("Calendar", "Read event titles and times."),
     CalendarDetails("Calendar details", "Also read where events are."),
     Presence("Who is home", "Read whether each Homey user is home or asleep."),
@@ -106,6 +106,11 @@ enum class Secret(val title: String, val detail: String) {
     Variables("Homey variables", "Read Homey Logic variables, which often hold codes."),
     Faces("Face and voice recognition", "Know who is at the tablet, by face or by voice (first name only)."),
     Phones("Find phones", "Ring a phone so it can be found, and say if it's home and its battery, through Homey's Apple Find My app. Never says where outside the home it is."),
+    Memory(
+        "Memory",
+        "Remember habits, what was said and what people tell about themselves under People, and use it when a question needs it. Kept on the tablet.",
+        Access.LocalOnly,
+    ),
 }
 
 /** How readily talking over an answer stops it; the wake name always does. */
@@ -179,8 +184,6 @@ data class AgentSettings(
     val pace: Int = DEFAULT_PACE,
     /** Says every 20 minutes in the day that the tablet needs charging, when its battery is low; see [BatteryNag]. */
     val batteryReminders: Boolean = true,
-    /** Remembers habits and what was said, per person and for the house, in a small graph kept out of the prompt; see [Memory]. */
-    val memory: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
     val wakeSound: WakeSound = WakeSound.Hum,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */
@@ -272,7 +275,7 @@ data class AgentSettings(
     fun openAiSpeechKeyOrBrain(): String =
         openAiSpeechKey.trim().ifBlank { internet?.takeIf { it.provider == Provider.OpenAI }?.apiKey.orEmpty() }
 
-    fun access(secret: Secret): Access = secrets[secret] ?: Access.Off
+    fun access(secret: Secret): Access = secrets[secret] ?: secret.default
 
     /** Whether [secret] may be used by a brain that is local ([local] = true) or on the internet. */
     fun allows(secret: Secret, local: Boolean): Boolean = when (access(secret)) {

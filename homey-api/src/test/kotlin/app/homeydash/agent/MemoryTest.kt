@@ -219,10 +219,34 @@ class MemoryTest {
         val book = MemoryBook(Files.createTempDirectory("mem").toFile())
         val agent = Agent(ChatClient(OkHttpClient()), memory = book)
         assertTrue(agent.rules(AgentSettings()).contains("long memory"))
-        assertFalse(agent.rules(AgentSettings(memory = false)).contains("long memory"))
-        val off = AgentSettings(memory = false)
+        val off = AgentSettings(secrets = mapOf(Secret.Memory to Access.Off))
+        assertFalse(agent.rules(off).contains("long memory"))
         assertFalse(AgentTools(view(off), FakeHome(), FakeDashboard(), memory = MemoryTools(book)).specs().any { it.name == "recall" })
         assertTrue(AgentTools(view(), FakeHome(), FakeDashboard(), memory = MemoryTools(book)).specs().any { it.name == "recall" })
+    }
+
+    @Test fun `local AI only keeps the memory away from the internet AI`() {
+        val book = MemoryBook(Files.createTempDirectory("mem").toFile())
+        val agent = Agent(ChatClient(OkHttpClient()), memory = book)
+        val s = AgentSettings()
+        assertEquals(Access.LocalOnly, s.access(Secret.Memory))
+        assertTrue(agent.rules(s, local = true).contains("long memory"))
+        assertFalse(agent.rules(s, local = false).contains("long memory"))
+        assertFalse(AgentTools(view(s, local = false), FakeHome(), FakeDashboard(), memory = MemoryTools(book)).specs().any { it.name == "recall" })
+        val on = AgentSettings(secrets = mapOf(Secret.Memory to Access.On))
+        assertTrue(AgentTools(view(on, local = false), FakeHome(), FakeDashboard(), memory = MemoryTools(book)).specs().any { it.name == "recall" })
+    }
+
+    @Test fun `what people write about themselves keeps every line and is never pushed out`() {
+        var d = MemoryData()
+        d = Memory.merge(d, fact("Maja", "likes", "sushi", kind = FactKind.About), now)
+        d = Memory.merge(d, fact("Maja", "likes", "jazz", kind = FactKind.About), now)
+        d = Memory.merge(d, fact("Maja", "birthday", "12 May", kind = FactKind.About), now)
+        repeat(Memory.MAX_FACTS + 5) { i -> d = Memory.merge(d, fact("Thing $i", "is", "number $i", kind = FactKind.Said), now) }
+        assertEquals(Memory.MAX_FACTS, d.facts.size)
+        assertEquals(3, d.facts.count { it.kind == FactKind.About })
+        // Shared lines answer anyone: "when is Maja's birthday?"
+        assertEquals("12 May", Memory.recall(d, "Majas birthday", gabriel.id, true, now).first().obj)
     }
 
     private fun toolCall(id: String, name: String, args: String) =

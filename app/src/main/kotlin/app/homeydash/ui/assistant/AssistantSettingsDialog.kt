@@ -213,7 +213,7 @@ private fun Main(
     NavRow(Sym.mic, "Listening: wake word and who hears you", { onPage("listen") })
     NavRow(Sym.autoAwesome, "AI brains: ${settings.mode.label}", { onPage("brain") })
     NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
-    NavRow(Sym.lightbulb, "Memory: " + if (settings.memory) "${services.memory.data.value.facts.size} things remembered" else "off", { onPage("memory") })
+    NavRow(Sym.lightbulb, "Memory: " + if (settings.access(Secret.Memory) != Access.Off) "${services.memory.data.value.facts.size} things remembered" else "off", { onPage("memory") })
     NavRow(Sym.shieldLock, "Privacy and security", { onPage("privacy") })
     NavRow(Sym.musicNote, "Spotify on Sonos", { onPage("spotify") })
     NavRow(Sym.send, "Logs for Claude", { onPage("logs") })

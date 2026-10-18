@@ -59,6 +59,7 @@ import app.homeydash.ui.components.glass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.dashboard.Toggle
 import app.homeydash.ui.theme.GlassTheme
+import kotlinx.coroutines.launch
 
 private const val SAMPLES = 8
 
@@ -68,6 +69,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
     val g = GlassTheme.colors
     val faces = services.faces
     val people by faces.people.collectAsState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var adding by remember { mutableStateOf(false) }
     // Who is being taught, and the name they say ("TARS" or Nova's name).
     var teaching by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -120,11 +122,15 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                 } else {
                     people.forEach { p ->
                         PersonCard(
+                            services = services,
                             person = p,
                             novaName = settings.nameOf(Persona.Nova),
                             onTeach = { name -> teaching = p.id to name },
                             onRole = { faces.setRole(p.id, it) },
-                            onRemove = { faces.remove(p.id) },
+                            onRemove = {
+                                faces.remove(p.id)
+                                scope.launch { services.memory.forgetPerson(p.id) }
+                            },
                         )
                     }
                     Row(
@@ -152,7 +158,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
  * their voice saying each character's name.
  */
 @Composable
-private fun PersonCard(person: KnownPerson, novaName: String, onTeach: (String) -> Unit, onRole: (Role) -> Unit, onRemove: () -> Unit) {
+private fun PersonCard(services: AssistantServices, person: KnownPerson, novaName: String, onTeach: (String) -> Unit, onRole: (Role) -> Unit, onRemove: () -> Unit) {
     val g = GlassTheme.colors
     Column(
         Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(22.dp)).padding(18.dp),
@@ -184,6 +190,7 @@ private fun PersonCard(person: KnownPerson, novaName: String, onTeach: (String) 
             }
         }
         RoleChoice(person.role, onRole)
+        AboutPerson(services, person.id, person.name)
     }
 }
 

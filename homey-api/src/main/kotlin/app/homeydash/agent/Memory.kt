@@ -24,6 +24,8 @@ enum class FactKind(val label: String) {
     Learned("learned"),
     /** Counted by the app from what it was asked to do, without the AI. */
     Habit("habit"),
+    /** Written by the person under People: birthday, likes, dislikes and the like. Never dropped. */
+    About("about them"),
 }
 
 /**
@@ -93,7 +95,11 @@ object Memory {
     /** How much a fact counts on its own: said often and lately. Told facts start strong. */
     fun strength(f: Fact, now: Long): Double {
         val days = ((now - f.last).coerceAtLeast(0) / 86_400_000.0)
-        val base = ln(1.0 + f.count) + if (f.kind == FactKind.Said) 1.5 else 0.0
+        val base = ln(1.0 + f.count) + when (f.kind) {
+            FactKind.About -> 2.0
+            FactKind.Said -> 1.5
+            else -> 0.0
+        }
         return base / (1.0 + days / 30.0)
     }
 
@@ -153,9 +159,13 @@ object Memory {
      * The weakest facts go when there are more than [MAX_FACTS].
      */
     fun merge(data: MemoryData, fact: Fact, now: Long): MemoryData {
-        fun key(f: Fact) = listOf(f.who, node(f.subject), node(f.relation)) + if (f.kind == FactKind.Habit) listOf(node(f.obj)) else emptyList()
+        // A person may like many things, and do many things often: those keep one fact per object.
+        fun many(f: Fact) = f.kind == FactKind.Habit || f.kind == FactKind.About
+        fun key(f: Fact) = listOf(f.who, node(f.subject), node(f.relation)) + if (many(f)) listOf(node(f.obj)) else emptyList()
         val k = key(fact)
-        val i = data.facts.indexOfFirst { (it.kind == FactKind.Habit) == (fact.kind == FactKind.Habit) && key(it) == k }
+        // Told and learned facts are one kind of fact; habits and what people wrote are kept apart.
+        fun group(f: Fact) = if (f.kind == FactKind.Said) FactKind.Learned else f.kind
+        val i = data.facts.indexOfFirst { group(it) == group(fact) && key(it) == k }
         val facts = data.facts.toMutableList()
         if (i < 0) {
             facts += fact.copy(first = fact.first.takeIf { it > 0 } ?: now, last = now)
@@ -171,7 +181,9 @@ object Memory {
                 localOnly = old.localOnly || fact.localOnly,
             )
         }
-        val kept = if (facts.size <= MAX_FACTS) facts else facts.sortedByDescending { strength(it, now) }.take(MAX_FACTS)
+        // What people wrote about themselves stays however much there is; the rest makes room.
+        val (about, rest) = facts.partition { it.kind == FactKind.About }
+        val kept = if (facts.size <= MAX_FACTS) facts else about + rest.sortedByDescending { strength(it, now) }.take((MAX_FACTS - about.size).coerceAtLeast(0))
         return data.copy(facts = kept)
     }
 
@@ -309,6 +321,9 @@ class MemoryBook(private val dir: File, private val clock: () -> Long = System::
     }
 
     suspend fun clear() = change { MemoryData() }
+
+    /** Everything that is only [personId]'s, when they are removed from People. */
+    suspend fun forgetPerson(personId: String) = change { d -> d.copy(facts = d.facts.filterNot { it.who == personId }) }
 
     private suspend fun change(edit: (MemoryData) -> MemoryData) = lock.withLock {
         val next = edit(_data.value)

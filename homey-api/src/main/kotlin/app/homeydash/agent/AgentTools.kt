@@ -176,7 +176,7 @@ class AgentTools(
             })
             if (!guest) addAll(r.specs())
         }
-        memory?.takeIf { !guest && view.settings.memory }?.let { addAll(it.specs()) }
+        memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) }?.let { addAll(it.specs()) }
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
@@ -233,7 +233,7 @@ class AgentTools(
             "run_routine" -> runRoutine(a.str("name"))
             else -> recipes?.run(call) ?: fridge?.run(call)
                 ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
-                ?: memory?.takeIf { !guest && view.settings.memory && call.name in it.names }?.run(call, view.settings.asker, view.local)
+                ?: memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) && call.name in it.names }?.run(call, view.settings.asker, view.local)
                 ?: ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
