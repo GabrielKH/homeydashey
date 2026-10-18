@@ -45,6 +45,7 @@ import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.Persona
+import app.homeydash.agent.intro
 import app.homeydash.agent.WakeSound
 import app.homeydash.agent.AgentTools
 import app.homeydash.agent.AskContext
@@ -198,6 +199,11 @@ private fun Main(
     )
     Label("Character")
     Character(services, settings, update)
+    Text(
+        "This is the house's character. Each person can pick their own, and its voice, under People; saying any character's name wakes it.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
 
     Label("Language")
     Segmented(Language.entries, settings.language, { it.label }) { l -> update { it.copy(language = l) } }
@@ -227,22 +233,40 @@ private fun Main(
 @Composable
 private fun Character(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Persona.entries.forEach { p ->
             Chip(p.label, p == settings.persona) {
                 update { it.asCharacter(p) }
                 if (p == Persona.Tars) services.tars.download()
+                if (p != settings.persona) introduce(services, scope, settings.asCharacter(p))
             }
         }
     }
     Text(settings.persona.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-    if (settings.persona == Persona.Tars) {
+    // TARS's humor is the house's, also when only someone under People talks with him.
+    val people by services.faces.people.collectAsState()
+    if (settings.persona == Persona.Tars || people.any { it.character == Persona.Tars }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Humor ${settings.humor} %", style = MaterialTheme.typography.labelLarge, color = g.fg)
             GlassSlider(settings.humor / 100f, { v -> update { it.copy(humor = (v * 100).toInt()) } }, Modifier.weight(1f))
         }
         TarsVoiceState(services)
     }
+}
+
+/** Who complains about the battery: the owner's own character under People, or the house's. */
+@Composable
+private fun batteryVoice(services: AssistantServices, settings: AgentSettings): String {
+    val people by services.faces.people.collectAsState()
+    return settings.characterOf(people.firstOrNull { it.role == app.homeydash.agent.Role.Owner }).label
+}
+
+/** The character in [s] says what it is like, in its own voice, as it is picked. */
+internal fun introduce(services: AssistantServices, scope: kotlinx.coroutines.CoroutineScope, s: AgentSettings) {
+    val swedish = s.answers != Language.English
+    val text = s.persona.intro(s.nameOf(s.persona), swedish, s.humor)
+    scope.launch { services.output.speak(text, if (swedish) Language.Swedish else Language.English, s.voice) }
 }
 
 /** Whether TARS's voice is on the tablet yet, with a way to fetch it. */
@@ -864,7 +888,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         Chip("Battery reminders", settings.batteryReminders) { update { it.copy(batteryReminders = !it.batteryReminders) } }
     }
     Text(
-        "Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, ${settings.persona.label} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
+        "Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, ${batteryVoice(services, settings)} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )

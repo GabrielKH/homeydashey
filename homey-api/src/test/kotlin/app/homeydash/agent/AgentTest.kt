@@ -1084,4 +1084,17 @@ class AgentTest {
         assertEquals(SceneLook.Party, SceneLook.of("fest"))
         assertEquals(SceneLook.Cozy, SceneLook.of("Cozy"))
     }
+
+    @Test
+    fun `the character comes last so switching keeps the rest cached`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val nova = AgentSettings()
+        val tars = nova.asCharacter(Persona.Tars)
+        val a = agent.fixed(nova, view(nova))
+        val b = agent.fixed(tars, view(tars))
+        val same = a.commonPrefixWith(b)
+        assertTrue(same.contains("The home ("))
+        assertTrue(a.removePrefix(same).length < 400)
+        assertTrue(b.substringAfter("The home (").contains("TARS"))
+    }
 }

@@ -269,6 +269,12 @@ class FaceService(private val context: Context) {
         save()
     }
 
+    /** The character and voice someone talks with; null for the house's. */
+    fun setCharacter(id: String, character: app.homeydash.agent.Persona?, voice: app.homeydash.agent.VoiceStyle?) {
+        _people.update { list -> list.map { if (it.id == id) it.copy(character = character, voiceStyle = voice) else it } }
+        save()
+    }
+
     fun setRole(id: String, role: Role) {
         _people.update { list -> list.map { if (it.id == id) it.copy(role = role) else it } }
         save()
@@ -290,6 +296,8 @@ class FaceService(private val context: Context) {
                     put("voice", vectors(p.voice))
                     put("prints", buildJsonObject { p.prints.forEach { (wake, list) -> put(wake, vectors(list)) } })
                     put("printsBy", PRINTS_BY)
+                    p.character?.let { put("character", it.name) }
+                    p.voiceStyle?.let { put("voiceStyle", it.name) }
                 })
             }
         }
@@ -315,6 +323,8 @@ class FaceService(private val context: Context) {
                 voice = vectors(o["voice"]),
                 // Voiceprints made before they came from sherpa-onnx don't compare with today's; they are
                 // dropped, and the person is shown as not taught for that name until taught again.
+                character = app.homeydash.agent.Persona.entries.firstOrNull { it.name == o["character"]?.jsonPrimitive?.contentOrNull },
+                voiceStyle = app.homeydash.agent.VoiceStyle.entries.firstOrNull { it.name == o["voiceStyle"]?.jsonPrimitive?.contentOrNull },
                 prints = if (o["printsBy"]?.jsonPrimitive?.contentOrNull == PRINTS_BY) (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }.orEmpty() else emptyMap(),
             )
         }
