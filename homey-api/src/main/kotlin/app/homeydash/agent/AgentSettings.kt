@@ -176,6 +176,8 @@ data class AgentSettings(
     val voice: VoiceStyle = VoiceStyle.Natural,
     /** How fast the voice talks, in % of its own speed; a little slower than normal is easier to follow across the kitchen. */
     val pace: Int = DEFAULT_PACE,
+    /** Says every 20 minutes in the day that the tablet needs charging, when its battery is low; see [BatteryNag]. */
+    val batteryReminders: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
     val wakeSound: WakeSound = WakeSound.Hum,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */

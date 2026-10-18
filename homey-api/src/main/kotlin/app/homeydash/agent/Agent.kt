@@ -645,6 +645,7 @@ class Agent(
         append("The owner has routines: when the note says a routine was started, the app has already done its steps; ")
         append("follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found. ")
         append("When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.\n")
+        append(BatteryNag.rule(settings.batteryReminders)).append('\n')
         val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (standing.isNotEmpty()) {
             append("The owner's standing instructions; follow them unless a rule above forbids it:\n")

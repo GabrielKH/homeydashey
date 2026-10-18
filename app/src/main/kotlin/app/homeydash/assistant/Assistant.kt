@@ -317,6 +317,43 @@ class Assistant(
                 if (state == AssistantState.Idle && !voiceActive) warmBrain(followUp = false)
             }
         }
+        // A low tablet complains every 20 minutes in the day, in the character's own voice.
+        scope.launch {
+            while (true) {
+                delay(BATTERY_CHECK_MS)
+                runCatching { nagAboutBattery() }
+            }
+        }
+    }
+
+    private var lastNagAt: Long? = null
+    private var lastNag: String? = null
+
+    private suspend fun nagAboutBattery() {
+        val s = settings
+        val bm = services.appContext.getSystemService(android.os.BatteryManager::class.java) ?: return
+        val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+        val charging = bm.isCharging
+        // Charged up again: the next low battery starts its own reminders straight away.
+        if (charging || (level ?: 100) >= app.homeydash.agent.BatteryNag.BELOW) lastNagAt = null
+        val since = lastNagAt?.let { SystemClock.elapsedRealtime() - it }
+        if (!app.homeydash.agent.BatteryNag.due(s.batteryReminders, level, charging, java.time.LocalTime.now(), since)) return
+        // Never talks over someone or an answer; tries again next minute.
+        if (state != AssistantState.Idle || voiceActive) return
+        val swedish = when (s.answers) {
+            app.homeydash.agent.Language.Swedish -> true
+            app.homeydash.agent.Language.English -> false
+            app.homeydash.agent.Language.Auto -> lines.lastOrNull { it.fromUser }?.let { app.homeydash.agent.Confirmation.looksSwedish(it.text) } ?: true
+        }
+        val text = app.homeydash.agent.BatteryNag.line(s.persona, swedish, level ?: return, lastNag)
+        lastNagAt = SystemClock.elapsedRealtime()
+        lastNag = text
+        services.trace("battery", "Reminded to charge at $level %.", false)
+        services.onActive?.invoke()
+        open = true
+        lines += Line(false, text)
+        say(text)
+        state = AssistantState.Idle
     }
 
     /** The steps worth showing: what it does in the home, and the AI only while it thinks. */
@@ -1034,6 +1071,7 @@ class Assistant(
         const val SPEAKER_DELAY_MS = 800L
         /** How often to check whether the local AI needs warming while it waits (see Agent.REWARM_AFTER_MS). */
         const val KEEP_WARM_MS = 2 * 60 * 1000L
+        const val BATTERY_CHECK_MS = 60 * 1000L
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */
         const val WAKE_SOUND_AFTER_MS = 200L

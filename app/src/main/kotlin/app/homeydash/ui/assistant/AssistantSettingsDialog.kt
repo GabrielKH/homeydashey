@@ -793,6 +793,14 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             Modifier.weight(1f),
         )
     }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Chip("Battery reminders", settings.batteryReminders) { update { it.copy(batteryReminders = !it.batteryReminders) } }
+    }
+    Text(
+        "Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, ${settings.persona.label} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
     if (settings.voice.local && settings.voice != VoiceStyle.Tars) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
