@@ -270,8 +270,8 @@ class FaceService(private val context: Context) {
     }
 
     /** The character and voice someone talks with; null for the house's. */
-    fun setCharacter(id: String, character: app.homeydash.agent.Persona?, voice: app.homeydash.agent.VoiceStyle?) {
-        _people.update { list -> list.map { if (it.id == id) it.copy(character = character, voiceStyle = voice) else it } }
+    fun setCharacters(id: String, characters: List<app.homeydash.agent.Persona>, voices: Map<app.homeydash.agent.Persona, app.homeydash.agent.VoiceStyle>) {
+        _people.update { list -> list.map { if (it.id == id) it.copy(characters = characters, voices = voices) else it } }
         save()
     }
 
@@ -296,8 +296,8 @@ class FaceService(private val context: Context) {
                     put("voice", vectors(p.voice))
                     put("prints", buildJsonObject { p.prints.forEach { (wake, list) -> put(wake, vectors(list)) } })
                     put("printsBy", PRINTS_BY)
-                    p.character?.let { put("character", it.name) }
-                    p.voiceStyle?.let { put("voiceStyle", it.name) }
+                    put("characters", buildJsonArray { p.characters.forEach { add(JsonPrimitive(it.name)) } })
+                    put("voices", buildJsonObject { p.voices.forEach { (c, v) -> put(c.name, v.name) } })
                 })
             }
         }
@@ -308,6 +308,22 @@ class FaceService(private val context: Context) {
 
     private fun vectors(element: kotlinx.serialization.json.JsonElement?): List<FloatArray> =
         (element as? JsonArray)?.map { s -> s.jsonArray.map { it.jsonPrimitive.float }.toFloatArray() }.orEmpty()
+
+    private fun persona(name: String?) = app.homeydash.agent.Persona.entries.firstOrNull { it.name == name }
+
+    // One "character" and "voiceStyle" was saved before several characters could be picked.
+    private fun characters(o: JsonObject): List<app.homeydash.agent.Persona> =
+        (o["characters"] as? JsonArray)?.mapNotNull { persona(it.jsonPrimitive.contentOrNull) }
+            ?: listOfNotNull(persona(o["character"]?.jsonPrimitive?.contentOrNull))
+
+    private fun voices(o: JsonObject): Map<app.homeydash.agent.Persona, app.homeydash.agent.VoiceStyle> {
+        fun style(name: String?) = app.homeydash.agent.VoiceStyle.entries.firstOrNull { it.name == name }
+        (o["voices"] as? JsonObject)?.let { m ->
+            return m.mapNotNull { (c, v) -> persona(c)?.let { p -> style(v.jsonPrimitive.contentOrNull)?.let { p to it } } }.toMap()
+        }
+        val old = persona(o["character"]?.jsonPrimitive?.contentOrNull) ?: return emptyMap()
+        return style(o["voiceStyle"]?.jsonPrimitive?.contentOrNull)?.let { mapOf(old to it) }.orEmpty()
+    }
 
     private fun load(): List<KnownPerson> {
         if (!file.exists()) return emptyList()
@@ -323,8 +339,8 @@ class FaceService(private val context: Context) {
                 voice = vectors(o["voice"]),
                 // Voiceprints made before they came from sherpa-onnx don't compare with today's; they are
                 // dropped, and the person is shown as not taught for that name until taught again.
-                character = app.homeydash.agent.Persona.entries.firstOrNull { it.name == o["character"]?.jsonPrimitive?.contentOrNull },
-                voiceStyle = app.homeydash.agent.VoiceStyle.entries.firstOrNull { it.name == o["voiceStyle"]?.jsonPrimitive?.contentOrNull },
+                characters = characters(o),
+                voices = voices(o),
                 prints = if (o["printsBy"]?.jsonPrimitive?.contentOrNull == PRINTS_BY) (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }.orEmpty() else emptyMap(),
             )
         }

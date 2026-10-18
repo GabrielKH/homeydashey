@@ -20,11 +20,17 @@ data class KnownPerson(
     val prints: Map<String, List<FloatArray>> = emptyMap(),
     /** The voiceprints for the wake name in use, picked by [forWake]; what [VoiceId] matches. */
     val print: List<FloatArray> = emptyList(),
-    /** The character this person talks with ("TARS" for one, Nova for another); null for the house's. */
-    val character: Persona? = null,
-    /** The voice their own character speaks in; null for that character's usual voice. */
-    val voiceStyle: VoiceStyle? = null,
+    /**
+     * The characters this person talks with, in the order picked (TARS and Nova for one, only Nova
+     * for another); empty for the house's. The first answers when no name is said.
+     */
+    val characters: List<Persona> = emptyList(),
+    /** The voice each of their characters speaks in with them; missing for that character's usual voice. */
+    val voices: Map<Persona, VoiceStyle> = emptyMap(),
 ) {
+    /** Their first character, null for the house's. */
+    val character: Persona? get() = characters.firstOrNull()
+
     fun printsFor(wakeName: String): List<FloatArray> = prints[WakeName.key(wakeName)].orEmpty()
 
     /** This person as heard with [wakeName]: [print] holds that name's voiceprints. */

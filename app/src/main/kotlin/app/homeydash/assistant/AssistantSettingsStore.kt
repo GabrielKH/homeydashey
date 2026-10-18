@@ -68,6 +68,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         wakeSound = enumOr(p[WAKE_SOUND], app.homeydash.agent.WakeSound.Hum),
         persona = enumOr(p[PERSONA], app.homeydash.agent.Persona.Nova),
         humor = p[HUMOR]?.toIntOrNull()?.coerceIn(0, 100) ?: 75,
+        traits = app.homeydash.agent.Persona.entries.mapNotNull { c -> p[traitsKey(c)]?.takeIf { it.isNotBlank() }?.let { c to it } }.toMap(),
         pace = p[PACE]?.toIntOrNull()?.coerceIn(app.homeydash.agent.PACE_RANGE) ?: app.homeydash.agent.DEFAULT_PACE,
         novaName = p[NOVA_NAME] ?: AgentSettings().novaName,
         classicRed = p[CLASSIC_RED] == "true",
@@ -115,6 +116,10 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[WAKE_SOUND] = s.wakeSound.name
         p[PERSONA] = s.persona.name
         p[HUMOR] = s.humor.toString()
+        app.homeydash.agent.Persona.entries.forEach { c ->
+            val own = s.traits[c]?.takeIf { it.isNotBlank() }
+            if (own != null) p[traitsKey(c)] = own else p.remove(traitsKey(c))
+        }
         p[PACE] = s.pace.toString()
         p[NOVA_NAME] = s.novaName
         p[CLASSIC_RED] = s.classicRed.toString()
@@ -183,6 +188,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val HUMOR = stringPreferencesKey("humor")
         val PACE = stringPreferencesKey("pace")
         val NOVA_NAME = stringPreferencesKey("nova_name")
+        fun traitsKey(p: app.homeydash.agent.Persona) = stringPreferencesKey("traits_" + p.name.lowercase())
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val BATTERY_REMINDERS = stringPreferencesKey("battery_reminders")
         val PHONE_SHARING = stringPreferencesKey("phone_sharing")

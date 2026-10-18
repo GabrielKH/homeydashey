@@ -41,6 +41,7 @@ import app.homeydash.ui.components.Ic
 import app.homeydash.agent.TARS_WAKE_NAME
 import app.homeydash.agent.KnownPerson
 import androidx.compose.runtime.key
+import app.homeydash.agent.Language
 import app.homeydash.agent.Persona
 import app.homeydash.agent.VoiceStyle
 import androidx.activity.compose.BackHandler
@@ -206,44 +207,65 @@ private fun PersonCard(
 }
 
 /**
- * The character and voice this person talks with: TARS for one, Nova for another. Picking one
- * shows and says what it is like, and is remembered about them.
+ * The characters and voices this person talks with: TARS and Nova for one, only Nova for another.
+ * Several can be picked; each wakes by its own name. Picking one shows and says what it is like,
+ * and is remembered about them.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PersonCharacter(services: AssistantServices, settings: AgentSettings, person: KnownPerson) {
     val g = GlassTheme.colors
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val character = settings.characterOf(person)
-    fun pick(p: Persona?, voice: VoiceStyle?) {
-        services.faces.setCharacter(person.id, p, voice)
-        val chosen = person.copy(character = p, voiceStyle = voice)
-        val talking = settings.talkingAs(settings.characterOf(chosen), chosen)
+    val picked = settings.charactersOf(person)
+    fun save(characters: List<Persona>, voices: Map<Persona, VoiceStyle>, introducing: Persona) {
+        // Only the house's character is kept as no pick, so it follows the house if that changes.
+        val stored = characters.takeUnless { it == listOf(settings.persona) }.orEmpty()
+        val kept = voices.filterKeys { it in characters }
+        services.faces.setCharacters(person.id, stored, kept)
+        val chosen = person.copy(characters = stored, voices = kept)
+        val talking = settings.talkingAs(introducing, chosen)
         if (talking.voice == VoiceStyle.Tars) services.tars.download()
         if (talking.voice == VoiceStyle.Alma) services.alma.download()
         if (settings.access(Secret.Memory) != Access.Off) scope.launch {
-            services.memory.learn(listOf(app.homeydash.agent.Memory.characterChoice(app.homeydash.agent.Asker(person.id, person.name), p, voice)))
+            services.memory.learn(listOf(app.homeydash.agent.Memory.characterChoice(app.homeydash.agent.Asker(person.id, person.name), characters, kept)))
         }
         introduce(services, scope, talking)
     }
+    fun toggle(p: Persona) {
+        if (p in picked) {
+            // One always stays picked.
+            if (picked.size > 1) save(picked - p, person.voices, (picked - p).first())
+        } else {
+            save(picked + p, person.voices, p)
+        }
+    }
     Text("Talks with", style = MaterialTheme.typography.labelLarge, color = g.fg)
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Chip("The house's (${settings.persona.label})", person.character == null) { if (person.character != null) pick(null, null) }
-        Persona.entries.forEach { p -> Chip(p.label, person.character == p) { if (person.character != p) pick(p, null) } }
-    }
-    Text(character.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-    if (person.character != null) {
-        Text("Voice", style = MaterialTheme.typography.labelLarge, color = g.fg)
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            val usual = settings.talkingAs(character).voice
-            Chip("Usual (${usual.label})", person.voiceStyle == null) { if (person.voiceStyle != null) pick(person.character, null) }
-            VoiceStyle.entries.filter { it != usual }.forEach { v -> Chip(v.label, person.voiceStyle == v) { if (person.voiceStyle != v) pick(person.character, v) } }
+        Persona.entries.forEach { p ->
+            Chip(if (p == settings.persona) "${p.label} (the house's)" else p.label, p in picked) { toggle(p) }
         }
-        Text(
-            "Saying \"Hey ${settings.nameOf(character)}\" wakes ${character.label} for anyone it knows; ${person.name}'s own voice pick is used when ${person.name} talks with it.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
+    }
+    Text(
+        if (picked.size > 1) {
+            "Pick as many as you like. ${person.name} wakes each by its own name (" +
+                picked.joinToString(", ") { "\"Hey ${settings.nameOf(it)}\"" } +
+                "); ${picked.first().label}, picked first, answers when no name is said, like battery reminders."
+        } else {
+            picked.first().detail
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    picked.forEach { p ->
+        Text(if (picked.size > 1) "${p.label}'s voice" else "Voice", style = MaterialTheme.typography.labelLarge, color = g.fg)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val usual = settings.talkingAs(p).voice
+            val own = person.voices[p]
+            Chip("Usual (${usual.label})", own == null) { if (own != null) save(picked, person.voices - p, p) }
+            VoiceStyle.entries.filter { it != usual && (it != VoiceStyle.Alma || settings.language == Language.Swedish) }.forEach { v ->
+                Chip(v.label, own == v) { if (own != v) save(picked, person.voices + (p to v), p) }
+            }
+        }
     }
 }
 

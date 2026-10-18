@@ -1097,4 +1097,18 @@ class AgentTest {
         assertTrue(a.removePrefix(same).length < 400)
         assertTrue(b.substringAfter("The home (").contains("TARS"))
     }
+
+    @Test
+    fun `the owner's own words replace a character's personality`() {
+        val agent = Agent(ChatClient(okhttp3.OkHttpClient()))
+        val nova = AgentSettings()
+        assertTrue(agent.rules(nova).contains(builtInTraits(Persona.Nova)))
+        val own = nova.copy(traits = mapOf(Persona.Nova to "grumpy pirate who loves the dishwasher"))
+        val rules = agent.rules(own)
+        assertTrue(rules.contains("Personality: grumpy pirate who loves the dishwasher"))
+        assertTrue(!rules.contains(builtInTraits(Persona.Nova)))
+        val tars = nova.asCharacter(Persona.Tars).copy(humor = 40, traits = mapOf(Persona.Tars to "a calm butler"))
+        assertTrue(agent.rules(tars).contains("Personality: a calm butler\nYour humor setting is 40 %."))
+        assertTrue(agent.rules(nova.asCharacter(Persona.Tars)).contains("you are TARS"))
+    }
 }

@@ -252,12 +252,13 @@ object Memory {
      * The character and voice [person] picked under People, as one fact a new pick replaces, so
      * the assistant can say who they talk with ("Gabriel talks with TARS").
      */
-    fun characterChoice(person: Asker, character: Persona?, voice: VoiceStyle?): Fact = Fact(
+    fun characterChoice(person: Asker, characters: List<Persona>, voices: Map<Persona, VoiceStyle> = emptyMap()): Fact = Fact(
         who = person.id,
         whoName = person.name,
         subject = person.name,
         relation = "talks with the character",
-        obj = (character?.label ?: "the house's character") + (voice?.let { " in the ${it.label} voice" } ?: ""),
+        obj = characters.joinToString(" and ") { p -> p.label + (voices[p]?.let { " in the ${it.label} voice" } ?: "") }
+            .ifEmpty { "the house's character" },
         kind = FactKind.Said,
     )
 

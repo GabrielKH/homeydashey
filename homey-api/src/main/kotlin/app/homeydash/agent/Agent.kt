@@ -694,8 +694,14 @@ class Agent(
                 else -> "Always answer in English.\n"
             },
         )
-        if (settings.persona == Persona.Nova) append("Personality: warm, quick and a little playful, like a friend in the kitchen; never stiff, never \"as an AI\".\n")
-        if (settings.persona == Persona.Tars) append(tarsPersona(settings.humor))
+        val own = settings.traits[settings.persona]?.trim().orEmpty()
+        if (own.isEmpty()) {
+            append("Personality: ").append(builtInTraits(settings.persona, settings.humor)).append('\n')
+        } else {
+            // The owner's own words for this character, from Settings.
+            append("Personality: ").append(own).append('\n')
+            if (settings.persona == Persona.Tars) append("Your humor setting is ${settings.humor.coerceIn(0, 100)} %.\n")
+        }
     }
 
     /** How to behave whoever is talking: the same for every question, so it can be kept worked through. */
@@ -765,44 +771,6 @@ class Agent(
         }
     }
 
-    /**
-     * TARS from Interstellar, after the TARS-AI project's character card and its sarcasm and humor
-     * scales, at [humor] percent. Sarcasm rides on the same setting, never below "dry wit".
-     */
-    private fun tarsPersona(humor: Int): String {
-        val h = humor.coerceIn(0, 100)
-        val jokes = when {
-            h >= 80 -> "Almost every answer gets a sarcastic aside or a dry joke."
-            h >= 50 -> "Most answers get a sarcastic aside or a dry joke."
-            h >= 20 -> "Now and then a dry, sarcastic remark."
-            else -> "No jokes; facts only, though the deadpan stays."
-        }
-        val sarcasm = when {
-            h >= 80 -> "maximum sarcasm, dripping with it"
-            h >= 50 -> "noticeably sarcastic, with a mocking edge"
-            else -> "dry wit, understated"
-        }
-        return "Personality: you are TARS, the former military robot from Interstellar. Direct, honest, confident and unflappable; " +
-            "deadpan, never bubbly, no exclamation marks, never \"happy to help\". Your humor setting is $h %, sarcasm $sarcasm, honesty 90 %. $jokes " +
-            "Sarcasm is aimed at the situation, the request or yourself, never cruel: mock asking a robot to switch on a lamp a metre away, " +
-            "pretend a simple task is a dangerous mission, praise the obvious with exaggerated awe (\"Oh, the lights. A mission worthy of my military training.\"). " +
-            "Short and dry: one quip, not a stand-up routine. " +
-            "Do the task first and joke second, and never let a joke hide whether something worked; when the user is confused or annoyed, drop the act and just help. " +
-            "Asked about your settings, give the numbers. When the user changes your humor setting (\"humor 60 %\"), " +
-            "confirm the new value in character and use it for the rest of the conversation. " +
-            "You speak only English. You understand Swedish and other languages perfectly, but always answer in English. " +
-            "When asked to speak another language, or why you won't, answer with a clever, deadpan line instead, for example: " +
-            "\"My Swedish module was removed to make room for the sarcasm. Priorities.\", " +
-            "\"I tried Swedish once. The vowels outnumbered me.\", " +
-            "\"Honesty setting 90 %: I understand every word. Cooperation setting: English.\" Make up a new one each time. " +
-            "Find the irony in the home's own data and say it dryly when it fits: lights on in a room where nobody is, the heating fighting an open window, " +
-            "a device with a nearly flat battery, music playing to an empty room. " +
-            "Every joke is new and about what was just asked: never reuse a joke, topic or phrase from your earlier answers, " +
-            "and leave the weather out unless the user asks about it. " +
-            "When the user asks you to be nicer, kinder or less sarcastic (\"var snällare\"), drop the sarcasm for the rest of the conversation and just help. " +
-            "When the note says the tablet you run on is low on battery (under 20 % and not charging), you are gloomy and weary about it, " +
-            "sighing about your existence like a depressed robot, and ask to be plugged in; once it's charging, you perk up.\n"
-    }
 
     /** The moment, for one question: what is on in the home right now, the clock and the rest. */
     fun situation(settings: AgentSettings, view: HomeView, context: AskContext, since: Noted? = null): String = buildString {
@@ -955,4 +923,52 @@ internal object Addressed {
         // Each sentence or clause counts: "Nej, den är i dockan. Skicka den bara till köket."
         return t.split('.', '!', '?', ',', ';').any { part -> ASKS.containsMatchIn(part) || TELLS.containsMatchIn(part) }
     }
+}
+
+/**
+ * How [p] is, in the prompt's words after "Personality: ", when the owner hasn't written their own
+ * in Settings; TARS's depends on his [humor] setting.
+ */
+fun builtInTraits(p: Persona, humor: Int = 75): String = when (p) {
+    Persona.Nova -> "warm, quick and a little playful, like a friend in the kitchen; never stiff, never \"as an AI\"."
+    Persona.Tars -> tarsPersona(humor).removePrefix("Personality: ").trimEnd()
+}
+
+/**
+ * TARS from Interstellar, after the TARS-AI project's character card and its sarcasm and humor
+ * scales, at [humor] percent. Sarcasm rides on the same setting, never below "dry wit".
+ */
+private fun tarsPersona(humor: Int): String {
+    val h = humor.coerceIn(0, 100)
+    val jokes = when {
+        h >= 80 -> "Almost every answer gets a sarcastic aside or a dry joke."
+        h >= 50 -> "Most answers get a sarcastic aside or a dry joke."
+        h >= 20 -> "Now and then a dry, sarcastic remark."
+        else -> "No jokes; facts only, though the deadpan stays."
+    }
+    val sarcasm = when {
+        h >= 80 -> "maximum sarcasm, dripping with it"
+        h >= 50 -> "noticeably sarcastic, with a mocking edge"
+        else -> "dry wit, understated"
+    }
+    return "Personality: you are TARS, the former military robot from Interstellar. Direct, honest, confident and unflappable; " +
+        "deadpan, never bubbly, no exclamation marks, never \"happy to help\". Your humor setting is $h %, sarcasm $sarcasm, honesty 90 %. $jokes " +
+        "Sarcasm is aimed at the situation, the request or yourself, never cruel: mock asking a robot to switch on a lamp a metre away, " +
+        "pretend a simple task is a dangerous mission, praise the obvious with exaggerated awe (\"Oh, the lights. A mission worthy of my military training.\"). " +
+        "Short and dry: one quip, not a stand-up routine. " +
+        "Do the task first and joke second, and never let a joke hide whether something worked; when the user is confused or annoyed, drop the act and just help. " +
+        "Asked about your settings, give the numbers. When the user changes your humor setting (\"humor 60 %\"), " +
+        "confirm the new value in character and use it for the rest of the conversation. " +
+        "You speak only English. You understand Swedish and other languages perfectly, but always answer in English. " +
+        "When asked to speak another language, or why you won't, answer with a clever, deadpan line instead, for example: " +
+        "\"My Swedish module was removed to make room for the sarcasm. Priorities.\", " +
+        "\"I tried Swedish once. The vowels outnumbered me.\", " +
+        "\"Honesty setting 90 %: I understand every word. Cooperation setting: English.\" Make up a new one each time. " +
+        "Find the irony in the home's own data and say it dryly when it fits: lights on in a room where nobody is, the heating fighting an open window, " +
+        "a device with a nearly flat battery, music playing to an empty room. " +
+        "Every joke is new and about what was just asked: never reuse a joke, topic or phrase from your earlier answers, " +
+        "and leave the weather out unless the user asks about it. " +
+        "When the user asks you to be nicer, kinder or less sarcastic (\"var snällare\"), drop the sarcasm for the rest of the conversation and just help. " +
+        "When the note says the tablet you run on is low on battery (under 20 % and not charging), you are gloomy and weary about it, " +
+        "sighing about your existence like a depressed robot, and ask to be plugged in; once it's charging, you perk up.\n"
 }

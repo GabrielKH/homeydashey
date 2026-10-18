@@ -136,7 +136,23 @@ class VoiceTest {
     }
 
     private fun person(id: String, character: Persona? = null, voice: VoiceStyle? = null) =
-        KnownPerson(id, id, Role.Owner, emptyList(), character = character, voiceStyle = voice)
+        KnownPerson(id, id, Role.Owner, emptyList(), characters = listOfNotNull(character), voices = if (character != null && voice != null) mapOf(character to voice) else emptyMap())
+
+    @Test
+    fun `one person can talk with several characters`() {
+        val house = AgentSettings(wakeName = "Kim")
+        val gabriel = KnownPerson("g", "Gabriel", Role.Owner, emptyList(), characters = listOf(Persona.Tars, Persona.Nova), voices = mapOf(Persona.Nova to VoiceStyle.Calm))
+        assertEquals(listOf("Kim", "TARS"), house.wakeNames(listOf(gabriel)))
+        assertEquals(Persona.Tars, house.characterOf(gabriel))
+        assertEquals(listOf(Persona.Tars, Persona.Nova), house.charactersOf(gabriel))
+        assertEquals(listOf(Persona.Nova), house.charactersOf(person("a")))
+        assertTrue(house.answers(Persona.Tars, gabriel))
+        // TARS answers only those who picked him; the house's Nova answers anyone.
+        assertTrue(!house.answers(Persona.Tars, person("a")))
+        assertTrue(house.answers(Persona.Nova, person("a")))
+        assertEquals(VoiceStyle.Calm, house.talkingAs(Persona.Nova, gabriel).voice)
+        assertEquals(VoiceStyle.Tars, house.talkingAs(Persona.Tars, gabriel).voice)
+    }
 
     @Test
     fun `a character someone picked wakes the assistant too`() {

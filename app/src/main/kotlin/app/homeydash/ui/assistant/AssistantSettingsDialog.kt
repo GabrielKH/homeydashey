@@ -259,9 +259,10 @@ private fun Character(services: AssistantServices, settings: AgentSettings, upda
         }
     }
     Text(settings.persona.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+    Traits(settings, update)
     // TARS's humor is the house's, also when only someone under People talks with him.
     val people by services.faces.people.collectAsState()
-    if (settings.persona == Persona.Tars || people.any { it.character == Persona.Tars }) {
+    if (settings.persona == Persona.Tars || people.any { Persona.Tars in it.characters }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Humor ${settings.humor} %", style = MaterialTheme.typography.labelLarge, color = g.fg)
             GlassSlider(settings.humor / 100f, { v -> update { it.copy(humor = (v * 100).toInt()) } }, Modifier.weight(1f))
@@ -271,6 +272,41 @@ private fun Character(services: AssistantServices, settings: AgentSettings, upda
             "TARS's voice is on the tablet. It's a fan-made copy of Bill Irwin's voice from the film (TARS-AI, non-commercial licence), for home use.",
             "TARS's voice isn't downloaded yet (about 70 MB). Until it is, the tablet's own voice speaks.",
         )
+    }
+}
+
+/**
+ * Each character's personality in its own words, as the assistant is told it: open one, change
+ * the text, and the next question uses it. Empty, or back to the built-in, uses the app's own.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Traits(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    var editing by remember { mutableStateOf<Persona?>(null) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Persona.entries.forEach { p ->
+            val own = !settings.traits[p].isNullOrBlank()
+            Chip("Edit ${p.label}'s personality" + if (own) " (yours)" else "", editing == p) { editing = if (editing == p) null else p }
+        }
+    }
+    val p = editing ?: return
+    val builtIn = app.homeydash.agent.builtInTraits(p, settings.humor)
+    // The text lives here while typing, so clearing it all doesn't snap back to the built-in.
+    var text by remember(p) { mutableStateOf(settings.traits[p]?.takeIf { it.isNotBlank() } ?: builtIn) }
+    TextBox(text, singleLine = false, hint = "How ${p.label} talks and behaves") { t ->
+        text = t
+        update { s -> s.copy(traits = if (t.isBlank() || t.trim() == builtIn.trim()) s.traits - p else s.traits + (p to t)) }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            if (settings.traits[p].isNullOrBlank()) "This is the built-in personality. Change it and ${p.label} talks your way from the next question."
+            else "Your own words for ${p.label}. " + if (p == Persona.Tars) "The humor slider still sets how funny he is." else "",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+            modifier = Modifier.weight(1f),
+        )
+        if (!settings.traits[p].isNullOrBlank()) Chip("Use the built-in", false) { text = builtIn; update { s -> s.copy(traits = s.traits - p) } }
     }
 }
 

@@ -146,7 +146,10 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                             // The other character answers people it recognises; with nobody taught it can't tell, so anyone.
                             val stranger = who.person == null && known.isNotEmpty() && (settings.onlyKnownVoices || character != settings.persona)
                             if (stranger && !selfHeard) services.trace("wake", "Ignored \"${character.label}\": the voice isn't someone it knows.", localOnly = true)
-                            if (!selfHeard && !stranger) {
+                            // Another character answers those who picked it under People.
+                            val notTheirs = !selfHeard && !stranger && who.person != null && !settings.answers(character, who.person)
+                            if (notTheirs) services.trace("wake", "Ignored \"${character.label}\": ${who.person?.name} hasn't picked ${character.label} under People.", localOnly = true)
+                            if (!selfHeard && !stranger && !notTheirs) {
                                 wake.stop(token)
                                 assistant.wake(who.person, character)
                             }
