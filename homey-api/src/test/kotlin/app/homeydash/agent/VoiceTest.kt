@@ -182,4 +182,19 @@ class VoiceTest {
         val g = WakeName.grammar(listOf("Nova", "TARS"))
         assertTrue(g.contains("\"hey nova\"") && g.contains("\"hey tars\""))
     }
+
+    @Test
+    fun `Svenska gives Nova Alma's voice`() {
+        val sv = AgentSettings(voice = VoiceStyle.Warm).withLanguage(Language.Swedish)
+        assertEquals(VoiceStyle.Alma, sv.voice)
+        assertEquals(VoiceStyle.Alma, sv.withLanguage(Language.Auto).voice)
+        assertEquals(VoiceStyle.Natural, sv.withLanguage(Language.English).voice)
+        // TARS keeps his own voice whatever the language; back to Nova in Swedish brings Alma back.
+        val tars = sv.asCharacter(Persona.Tars)
+        assertEquals(VoiceStyle.Tars, tars.withLanguage(Language.Swedish).voice)
+        assertEquals(VoiceStyle.Alma, tars.withLanguage(Language.Swedish).asCharacter(Persona.Nova).voice)
+        // Alma is spoken as made, with no filter on top.
+        val pcm = Pcm(16000, ShortArray(4) { 100 })
+        assertSame(pcm, VoiceFx.apply(VoiceStyle.Alma, pcm))
+    }
 }

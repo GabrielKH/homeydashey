@@ -272,11 +272,26 @@ data class AgentSettings(
         )
         Persona.Nova -> copy(
             persona = p,
-            voice = if (voice == VoiceStyle.Tars) VoiceStyle.Natural else voice,
+            voice = if (voice == VoiceStyle.Tars) novaVoice(language) else voice,
             wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Hum else wakeSound,
             wakeName = if (wakeName.trim().equals(TARS_WAKE_NAME, ignoreCase = true)) novaName else wakeName,
         )
     }
+
+    /**
+     * [l] as the language: Svenska gives Nova Alma's Swedish voice, made on the tablet, and
+     * English takes it away again, since Alma only speaks Swedish.
+     */
+    fun withLanguage(l: Language): AgentSettings = copy(
+        language = l,
+        voice = when {
+            l == Language.Swedish && persona == Persona.Nova -> VoiceStyle.Alma
+            l == Language.English && voice == VoiceStyle.Alma -> VoiceStyle.Natural
+            else -> voice
+        },
+    )
+
+    private fun novaVoice(l: Language) = if (l == Language.Swedish) VoiceStyle.Alma else VoiceStyle.Natural
 
     /** The name [p] answers to: TARS's own, or the name given to Nova. */
     fun nameOf(p: Persona): String = when {

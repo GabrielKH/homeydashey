@@ -64,8 +64,10 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val agent = Agent(chat, routines = { routines.data.value }, memory = memory)
     val input = SpeechInput(appContext)
     /** TARS's voice, downloaded to the tablet when TARS is chosen. */
-    val tars = TarsVoice(appContext, http, scope)
-    val output = SpeechOutput(appContext, http, tars, scope) { settings.value }
+    val tars = PiperVoice(appContext, http, scope, PiperVoice.TARS)
+    /** Alma's Swedish voice, downloaded to the tablet when Nova speaks Svenska. */
+    val alma = PiperVoice(appContext, http, scope, PiperVoice.ALMA)
+    val output = SpeechOutput(appContext, http, tars, alma, scope) { settings.value }
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
     val web = WebSearch(http)

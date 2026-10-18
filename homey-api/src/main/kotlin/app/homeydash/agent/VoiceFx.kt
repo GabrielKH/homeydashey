@@ -41,6 +41,13 @@ enum class VoiceStyle(val label: String, val detail: String, val pitch: Float, v
         0.98f,
         local = true,
     ),
+    Alma(
+        "Alma",
+        "A Swedish woman's voice made on the tablet: Piper's Alma, retrained 10 000 epochs by Daniel Nylander (CC BY 4.0, " +
+            "downloaded once, about 60 MB). It speaks Swedish only; English answers use the tablet's own voice.",
+        1f,
+        1f,
+    ),
 }
 
 /** 16-bit mono speech, as Android text-to-speech writes it. */
@@ -161,11 +168,11 @@ object VoiceFx {
     }
 
     fun apply(style: VoiceStyle, pcm: Pcm): Pcm {
-        if (style == VoiceStyle.Natural || style == VoiceStyle.Warm || style == VoiceStyle.Tars) return pcm
+        if (style == VoiceStyle.Natural || style == VoiceStyle.Warm || style == VoiceStyle.Tars || style == VoiceStyle.Alma) return pcm
         val rate = pcm.sampleRate
         val x = FloatArray(pcm.samples.size) { pcm.samples[it] / 32768f }
         val y = when (style) {
-            VoiceStyle.Natural, VoiceStyle.Warm, VoiceStyle.Tars -> x
+            VoiceStyle.Natural, VoiceStyle.Warm, VoiceStyle.Tars, VoiceStyle.Alma -> x
             // A short comb filter: a faint metallic ring on top of the voice.
             VoiceStyle.Cruiser -> {
                 val d = (rate * 0.0025).toInt().coerceAtLeast(1)

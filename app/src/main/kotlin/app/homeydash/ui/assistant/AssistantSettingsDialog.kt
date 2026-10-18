@@ -206,10 +206,16 @@ private fun Main(
     )
 
     Label("Language")
-    Segmented(Language.entries, settings.language, { it.label }) { l -> update { it.copy(language = l) } }
+    Segmented(Language.entries, settings.language, { it.label }) { l ->
+        update { it.withLanguage(l) }
+        if (l == Language.Swedish && settings.persona == Persona.Nova) services.alma.download()
+    }
     Text(
-        if (settings.persona == Persona.Tars) "TARS understands the language you pick here but always answers in English."
-        else "Svenska + English hears both and answers in the language you spoke.",
+        when {
+            settings.persona == Persona.Tars -> "TARS understands the language you pick here but always answers in English."
+            settings.language == Language.Swedish -> "Svenska gives Nova Alma's Swedish voice, made on the tablet. You can pick another voice under Voice and look."
+            else -> "Svenska + English hears both and answers in the language you spoke."
+        },
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
@@ -239,6 +245,7 @@ private fun Character(services: AssistantServices, settings: AgentSettings, upda
             Chip(p.label, p == settings.persona) {
                 update { it.asCharacter(p) }
                 if (p == Persona.Tars) services.tars.download()
+                if (p == Persona.Nova && settings.language == Language.Swedish) services.alma.download()
                 if (p != settings.persona) introduce(services, scope, settings.asCharacter(p))
             }
         }
@@ -251,7 +258,11 @@ private fun Character(services: AssistantServices, settings: AgentSettings, upda
             Text("Humor ${settings.humor} %", style = MaterialTheme.typography.labelLarge, color = g.fg)
             GlassSlider(settings.humor / 100f, { v -> update { it.copy(humor = (v * 100).toInt()) } }, Modifier.weight(1f))
         }
-        TarsVoiceState(services)
+        PiperVoiceState(
+            services.tars,
+            "TARS's voice is on the tablet. It's a fan-made copy of Bill Irwin's voice from the film (TARS-AI, non-commercial licence), for home use.",
+            "TARS's voice isn't downloaded yet (about 70 MB). Until it is, the tablet's own voice speaks.",
+        )
     }
 }
 
@@ -269,21 +280,21 @@ internal fun introduce(services: AssistantServices, scope: kotlinx.coroutines.Co
     scope.launch { services.output.speak(text, if (swedish) Language.Swedish else Language.English, s.voice) }
 }
 
-/** Whether TARS's voice is on the tablet yet, with a way to fetch it. */
+/** Whether a voice made on the tablet (TARS's, Alma's) is there yet, with a way to fetch it. */
 @Composable
-private fun TarsVoiceState(services: AssistantServices) {
+private fun PiperVoiceState(voice: app.homeydash.assistant.PiperVoice, ready: String, missing: String) {
     val g = GlassTheme.colors
-    val state by services.tars.state.collectAsState()
+    val state by voice.state.collectAsState()
     val text = when (val s = state) {
-        app.homeydash.assistant.TarsVoice.State.Ready -> "TARS's voice is on the tablet. It's a fan-made copy of Bill Irwin's voice from the film (TARS-AI, non-commercial licence), for home use."
-        app.homeydash.assistant.TarsVoice.State.Missing -> "TARS's voice isn't downloaded yet (about 70 MB). Until it is, the tablet's own voice speaks."
-        is app.homeydash.assistant.TarsVoice.State.Downloading -> "Downloading ${s.what}: ${(s.progress * 100).toInt()} %"
-        is app.homeydash.assistant.TarsVoice.State.Failed -> "Couldn't get TARS's voice: ${s.message}"
+        app.homeydash.assistant.PiperVoice.State.Ready -> ready
+        app.homeydash.assistant.PiperVoice.State.Missing -> missing
+        is app.homeydash.assistant.PiperVoice.State.Downloading -> "Downloading ${s.what}: ${(s.progress * 100).toInt()} %"
+        is app.homeydash.assistant.PiperVoice.State.Failed -> "Couldn't get the voice: ${s.message}"
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text, style = MaterialTheme.typography.bodyMedium, color = g.muted, modifier = Modifier.weight(1f))
-        if (state is app.homeydash.assistant.TarsVoice.State.Missing || state is app.homeydash.assistant.TarsVoice.State.Failed) {
-            Chip("Download", false) { services.tars.download() }
+        if (state is app.homeydash.assistant.PiperVoice.State.Missing || state is app.homeydash.assistant.PiperVoice.State.Failed) {
+            Chip("Download", false) { voice.download() }
         }
     }
 }
@@ -856,6 +867,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             Chip(v.label, v == settings.voice) {
                 update { it.copy(voice = v) }
                 if (v == VoiceStyle.Tars) services.tars.download()
+                if (v == VoiceStyle.Alma) services.alma.download()
             }
         }
         Chip("Hear it", false) {
@@ -892,6 +904,13 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    if (settings.voice == VoiceStyle.Alma) {
+        PiperVoiceState(
+            services.alma,
+            "Alma's voice is on the tablet, so Swedish answers need no computer and start straight away.",
+            "Alma's voice isn't downloaded yet (about 63 MB). Until it is, the tablet's own voice speaks.",
+        )
+    }
     if (settings.voice.local && settings.voice != VoiceStyle.Tars) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }

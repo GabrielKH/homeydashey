@@ -220,6 +220,7 @@ private fun PersonCharacter(services: AssistantServices, settings: AgentSettings
         val chosen = person.copy(character = p, voiceStyle = voice)
         val talking = settings.talkingAs(settings.characterOf(chosen), chosen)
         if (talking.voice == VoiceStyle.Tars) services.tars.download()
+        if (talking.voice == VoiceStyle.Alma) services.alma.download()
         if (settings.access(Secret.Memory) != Access.Off) scope.launch {
             services.memory.learn(listOf(app.homeydash.agent.Memory.characterChoice(app.homeydash.agent.Asker(person.id, person.name), p, voice)))
         }

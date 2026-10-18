@@ -239,7 +239,8 @@ class Spoken(val file: File, val track: VoiceTrack)
 class SpeechOutput(
     context: Context,
     http: okhttp3.OkHttpClient,
-    private val tars: TarsVoice,
+    private val tars: PiperVoice,
+    private val alma: PiperVoice,
     private val scope: kotlinx.coroutines.CoroutineScope,
     private val settings: () -> app.homeydash.agent.AgentSettings,
 ) {
@@ -293,9 +294,9 @@ class SpeechOutput(
         val text = spoken(said, swedish(said, language))
         // TARS's voice is made on the tablet sentence by sentence: he starts on the first one
         // while the rest is still being made, instead of after the whole answer.
-        if (voice == VoiceStyle.Tars && tars.isReady) {
+        piper(voice)?.takeIf { it.isReady }?.let { p ->
             val swedish = swedish(text, language)
-            if (stream(channelOf(app.homeydash.agent.Sentences.split(text)), { tars.speak(it, swedish, pace()) }, onFrame, onStart)) return
+            if ((swedish || voice != VoiceStyle.Alma) && stream(channelOf(app.homeydash.agent.Sentences.split(text)), { p.speak(it, swedish, pace()) }, onFrame, onStart)) return
         }
         if (!ready) return
         val spoken = render(text, language, voice, File(appContext.cacheDir, "say.wav"))
@@ -357,9 +358,16 @@ class SpeechOutput(
 
     @Volatile private var track: AudioTrack? = null
 
-    /** Gets TARS's voice ready before he has something to say. */
+    /** The voice made on the tablet itself for [voice]: TARS's or Alma's; null for the others. */
+    private fun piper(voice: VoiceStyle): PiperVoice? = when (voice) {
+        VoiceStyle.Tars -> tars
+        VoiceStyle.Alma -> alma
+        else -> null
+    }
+
+    /** Gets TARS's or Alma's voice ready before there is something to say. */
     fun warm(voice: VoiceStyle) {
-        if (voice == VoiceStyle.Tars) tars.warm()
+        piper(voice)?.warm()
     }
 
     /**
@@ -407,7 +415,7 @@ class SpeechOutput(
 
     /** [text] in [voice] as sound, from whichever voice can make it; null when none can. */
     private suspend fun pcmOf(text: String, swedish: Boolean, voice: VoiceStyle, scratch: File): Pcm? {
-        if (voice == VoiceStyle.Tars && tars.isReady) tars.speak(text, swedish, pace())?.let { return it }
+        piper(voice)?.takeIf { it.isReady }?.speak(text, swedish, pace())?.let { return it }
         if (voice.local) localPcm(text, swedish)?.let { return it }
         return tabletPcm(text, if (swedish) Language.Swedish else Language.English, voice, scratch)
     }
@@ -510,7 +518,8 @@ class SpeechOutput(
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
     suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
         if (text.isBlank()) return null
-        if (voice == VoiceStyle.Tars) tarsSpeaks(text, language, file)?.let { return it }
+        val p = piper(voice)
+        if (p != null) piperSpeaks(p, text, language, file)?.let { return it }
         else if (voice.local) local(text, language, file)?.let { return it }
         if (!ready) return null
         val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
@@ -580,14 +589,14 @@ class SpeechOutput(
         }
     }
 
-    /** The answer in TARS's voice, made on the tablet; null until his voice is downloaded. */
-    private suspend fun tarsSpeaks(text: String, language: Language, file: File): Spoken? {
+    /** The answer in TARS's or Alma's voice, made on the tablet; null until it is downloaded (and for English in Alma's). */
+    private suspend fun piperSpeaks(voice: PiperVoice, text: String, language: Language, file: File): Spoken? {
         val swedish = when (language) {
             Language.Swedish -> true
             Language.English -> false
             Language.Auto -> Confirmation.looksSwedish(text)
         }
-        val pcm = tars.speak(text, swedish, pace()) ?: return null
+        val pcm = voice.speak(text, swedish, pace()) ?: return null
         return withContext(Dispatchers.IO) {
             file.writeBytes(VoiceFx.writeWav(pcm))
             Spoken(file, VoiceFx.analyse(pcm))
