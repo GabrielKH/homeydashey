@@ -125,8 +125,8 @@ enum class Interrupt(val label: String, val detail: String) {
 enum class Persona(val label: String, val detail: String) {
     Nova(
         "Nova",
-        "Warm, quick and a little playful, like a friend in the kitchen: does what you ask straight away, " +
-            "answers in Swedish or English, whichever you speak, and keeps it to a sentence or two.",
+        "Warm, curious and quick-witted, after Samantha in \"Her\": does what you ask straight away, then talks like a friend, " +
+            "notices how you sound, teases a little and has her own opinions. Answers in Swedish or English, whichever you speak, in a sentence or three.",
     ),
     Tars(
         "TARS",

@@ -1094,7 +1094,7 @@ class AgentTest {
         val b = agent.fixed(tars, view(tars))
         val same = a.commonPrefixWith(b)
         assertTrue(same.contains("The home ("))
-        assertTrue(a.removePrefix(same).length < 400)
+        assertTrue(a.removePrefix(same).length < 1500)
         assertTrue(b.substringAfter("The home (").contains("TARS"))
     }
 
