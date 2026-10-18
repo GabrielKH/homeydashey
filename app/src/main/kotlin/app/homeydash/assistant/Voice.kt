@@ -251,9 +251,11 @@ class SpeechOutput(
     private val appContext = context.applicationContext
     private var ready = false
 
-    /** [text] as it should be heard: dates in words, not "2026 dash 10 dash 18". */
-    private fun spoken(text: String, swedish: Boolean) =
-        app.homeydash.agent.SpokenDates.speakable(app.homeydash.agent.ThinkingSounds.sayable(text, swedish), swedish, java.time.LocalDate.now().year)
+    /** [text] as it should be heard: dates in words, not "2026 dash 10 dash 18", and "taklampan" not "tacklampan". */
+    private fun spoken(text: String, swedish: Boolean) = app.homeydash.agent.Pronounce.sayable(
+        app.homeydash.agent.SpokenDates.speakable(app.homeydash.agent.ThinkingSounds.sayable(text, swedish), swedish, java.time.LocalDate.now().year),
+        swedish,
+    )
 
     /** The owner's speaking speed, as a factor of each voice's own. */
     private fun pace(): Float = settings().pace.coerceIn(app.homeydash.agent.PACE_RANGE) / 100f
