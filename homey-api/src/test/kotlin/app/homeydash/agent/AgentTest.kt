@@ -1109,6 +1109,21 @@ class AgentTest {
     }
 
     @Test
+    fun `turning off the lights in a room changes only the lights`() {
+        fun call(cap: String, cls: String? = null) = ToolCall("1", "set_room", kotlinx.serialization.json.buildJsonObject {
+            put("room", kotlinx.serialization.json.JsonPrimitive("Vardagsrum")); put("capability", kotlinx.serialization.json.JsonPrimitive(cap))
+            put("value", kotlinx.serialization.json.JsonPrimitive("false")); cls?.let { put("device_class", kotlinx.serialization.json.JsonPrimitive(it)) }
+        })
+        val q = "Kan du stänga av lamporna i vardagsrummet?"
+        assertEquals("true", (Agent.lightsOnly(call("onoff"), q)!!.arguments[AgentTools.LIGHTS_ONLY] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals(null, Agent.lightsOnly(call("volume_set"), q))
+        assertEquals(null, Agent.lightsOnly(call("screen_on"), q))
+        assertEquals(call("onoff"), Agent.lightsOnly(call("onoff"), "Stäng av allt i vardagsrummet"))
+        assertEquals(call("volume_set"), Agent.lightsOnly(call("volume_set"), "Sänk volymen i vardagsrummet"))
+        assertEquals(call("onoff", "socket"), Agent.lightsOnly(call("onoff", "socket"), q))
+    }
+
+    @Test
     fun `the owner's own words replace a character's personality`() {
         val agent = Agent(ChatClient(okhttp3.OkHttpClient()))
         val nova = AgentSettings()

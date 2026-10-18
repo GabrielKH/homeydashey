@@ -276,6 +276,8 @@ class ChatClient(http: OkHttpClient) {
     internal data class Usage(val prompt: Int?, val cached: Int?, val output: Int?)
 
     private var warmed = 0L
+    /** Servers without Ollama's own address (oMLX, Rapid-MLX answer 404): not asked again. */
+    private val notOllama = mutableSetOf<String>()
 
     /**
      * Loads a local Ollama model into memory ahead of the question, so the answer doesn't
@@ -284,15 +286,15 @@ class ChatClient(http: OkHttpClient) {
     suspend fun warm(connection: Connection) = withContext(Dispatchers.IO) {
         if (connection.provider != Provider.Ollama) return@withContext
         val now = System.currentTimeMillis()
-        if (now - warmed < WARM_EVERY_MS) return@withContext
-        warmed = now
         val base = connection.baseUrl.trimEnd('/').removeSuffix("/v1")
+        if (now - warmed < WARM_EVERY_MS || base in notOllama) return@withContext
+        warmed = now
         val body = buildJsonObject {
             put("model", connection.model)
             put("keep_alive", "2h")
         }.toString()
         val request = Request.Builder().url("$base/api/generate").post(body.toRequestBody(JSON)).build()
-        runCatching { localHttp.newCall(request).execute().close() }.onFailure { warmed = 0L }
+        runCatching { localHttp.newCall(request).execute().use { if (it.code == 404) notOllama += base } }.onFailure { warmed = 0L }
     }
 
     /**

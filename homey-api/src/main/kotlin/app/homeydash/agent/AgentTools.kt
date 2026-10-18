@@ -231,7 +231,7 @@ class AgentTools(
         val a = call.arguments
         when (call.name) {
             "set_device" -> setDevice(a.str("device"), a.str("capability"), a["value"])
-            "set_room" -> setRoom(a.str("room"), a.str("capability"), a["value"], a.str("device_class"))
+            "set_room" -> setRoom(a.str("room"), a.str("capability"), a["value"], a.str("device_class"), lightsOnly = a.str(LIGHTS_ONLY) == "true")
             "get_device" -> getDevice(a.str("device"))
             "set_mood" -> setMood(a.str("mood"), a.str("room"))
             "set_scene" -> setScene(a.str("room"), a.str("look"))
@@ -311,7 +311,8 @@ class AgentTools(
         return ToolResult("Done: ${device.name} $capabilityId = ${text(value)}.", lo)
     }
 
-    private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String): ToolResult {
+    /** [lightsOnly]: the user said lights ("släck lamporna"), so only lights change, hidden ones still left alone. */
+    private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String, lightsOnly: Boolean = false): ToolResult {
         // The whole house in one call, so "all the lights off" isn't a call per room for the AI to write.
         val everywhere = WHOLE_HOUSE.matches(room.trim()) && view.rooms.values.none { it.equals(room.trim(), ignoreCase = true) }
         // One of the owner's card groups ("Taklampor"), unless a room has exactly that name.
@@ -322,6 +323,7 @@ class AgentTools(
         val targets = view.devices.mapNotNull { d ->
             val inside = everywhere || if (group != null) d.group == group else view.inRoom(d, roomId!!)
             if (!inside || d.secret != null || (wantedClass != null && d.deviceClass != wantedClass)) return@mapNotNull null
+            if (lightsOnly && d.deviceClass != "light") return@mapNotNull null
             // "Everything off in the kitchen" shouldn't reach a hidden fridge plug; name the class to include them.
             if (d.hiddenOnDashboard && wantedClass == null) return@mapNotNull null
             capabilityOf(d, capabilityId)?.takeIf { it.setable }?.let { d to it }
@@ -981,6 +983,9 @@ class AgentTools(
     private fun ok(text: String) = ToolResult(text)
 
     companion object {
+        /** Set by the agent, not the AI: set_room changes only lights (see Agent.lightsOnly). */
+        const val LIGHTS_ONLY = "_lights_only"
+
         /** Spreads party colours evenly around the colour wheel. */
         private const val GOLDEN = 0.618034
 

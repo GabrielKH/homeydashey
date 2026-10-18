@@ -279,8 +279,14 @@ class Agent(
                         live?.finish()
                         return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
                     }
-                    for (call in answer.toolCalls) {
+                    for (asked in answer.toolCalls) {
                         acted = true
+                        val call = lightsOnly(asked, text)
+                        if (call == null) {
+                            heard.trace("guard", "Skipped ${asked.name} ${asked.arguments}: the user only asked about lights.")
+                            turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
+                            continue
+                        }
                         val key = "${call.name} ${call.arguments}"
                         val before = done[key]?.takeIf { call.name !in LOOKS }
                         val result = if (before != null && StepText.failed(before.text)) {
@@ -898,6 +904,24 @@ class Agent(
         const val UNKEPT = "The AI server on the computer kept nothing it had read: this round started with the whole round before " +
             "and still read everything (0 cached). Restart it, or check its memory and cache settings. Warm-ups are paused for 15 minutes, " +
             "since they'd only make questions wait."
+
+        const val NOT_LIGHTS = "Skipped: the user only asked about the lights, so nothing else was changed."
+        private val LIGHT_WORDS = Regex("""(?i)(?<![\p{L}])(lamp\p{L}*|ljus\p{L}*|lights?|tänd\p{L}*|släck\p{L}*)""")
+        private val NOT_ONLY_LIGHTS = Regex("""(?i)(?<![\p{L}])(allt|allting|everything|tv\p{L}*|musik\p{L}*|högtalar\p{L}*|speaker\p{L}*|fläkt\p{L}*)""")
+        private val LIGHT_CAPABILITIES = Regex("onoff|dim|light_.*")
+
+        /**
+         * A room-wide change when the user only spoke of lights ("släck lamporna i vardagsrummet"):
+         * small models also turned off the TV, muted the speaker and set its volume to 0. Lights
+         * stay the only thing changed, and anything that isn't a light setting is skipped (null).
+         */
+        fun lightsOnly(call: ToolCall, question: String): ToolCall? {
+            if (call.name != "set_room" || !LIGHT_WORDS.containsMatchIn(question) || NOT_ONLY_LIGHTS.containsMatchIn(question)) return call
+            val a = call.arguments
+            if ((a["device_class"] as? kotlinx.serialization.json.JsonPrimitive)?.let { it.content }.orEmpty().isNotBlank()) return call
+            if (!LIGHT_CAPABILITIES.matches((a["capability"] as? kotlinx.serialization.json.JsonPrimitive)?.let { it.content }.orEmpty())) return null
+            return call.copy(arguments = kotlinx.serialization.json.JsonObject(a + (AgentTools.LIGHTS_ONLY to kotlinx.serialization.json.JsonPrimitive("true"))))
+        }
 
         /** A round read from scratch although it starts with everything the round before it sent. */
         fun keepsNothing(st: ChatStats): Boolean = st.cachedTokens == 0 && (st.promptTokens ?: 0) > 1000
