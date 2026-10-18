@@ -34,7 +34,16 @@ data class FoodCategory(
 )
 
 /** How sure the date is and where it came from. */
-enum class Basis { Printed, Guessed, Opened, Frozen, Thawed }
+enum class Basis {
+    Printed,
+    /** From how long this very product kept before (or what the AI found for it). */
+    Product,
+    /** From the usual time for its kind. */
+    Guessed,
+    Opened,
+    Frozen,
+    Thawed,
+}
 
 enum class Urgency { Gone, Today, Soon, Fine }
 
@@ -284,6 +293,8 @@ object FoodRules {
             val date = frozen.plusDays((category.freezerDays.takeIf { it > 0 } ?: 6 * MONTH).toLong())
             return Estimate(date, Basis.Frozen, strict = false, daysLeft = ChronoUnit.DAYS.between(today, date))
         }
+        val days = item.keeps ?: category.days
+        val openedDays = item.keepsOpened ?: category.openedDays
         val strict = when (item.dateKind) {
             DateKind.UseBy -> true
             DateKind.BestBefore -> false
@@ -291,14 +302,18 @@ object FoodRules {
         }
         // Out of the freezer: the clock started again on thawing, and thawed food keeps a day or two.
         item.thawedDate()?.let { thawed ->
-            val date = thawed.plusDays(category.openedDays.coerceIn(1, 2).toLong())
+            val date = thawed.plusDays(openedDays.coerceIn(1, 2).toLong())
             return Estimate(date, Basis.Thawed, strict, ChronoUnit.DAYS.between(today, date))
         }
         val printed = item.printedDate()
-        var date = printed ?: bought.plusDays(category.days.toLong())
-        var basis = if (printed != null) Basis.Printed else Basis.Guessed
+        var date = printed ?: bought.plusDays(days.toLong())
+        var basis = when {
+            printed != null -> Basis.Printed
+            item.keeps != null -> Basis.Product
+            else -> Basis.Guessed
+        }
         item.openedDate()?.let { opened ->
-            val limit = opened.plusDays(category.openedDays.toLong())
+            val limit = opened.plusDays(openedDays.toLong())
             if (limit < date) {
                 date = limit
                 basis = Basis.Opened

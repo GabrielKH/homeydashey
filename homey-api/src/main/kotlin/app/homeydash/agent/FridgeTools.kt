@@ -147,6 +147,7 @@ class FridgeTools(
         append(" · eat by ").append(day(e.date)).append(" (").append(e.label()).append(when (e.basis) {
             app.homeydash.fridge.Basis.Printed -> if (e.strict) ", use-by on pack" else ", best-before on pack"
             app.homeydash.fridge.Basis.Guessed -> ", estimated"
+            app.homeydash.fridge.Basis.Product -> ", from how long this product keeps"
             app.homeydash.fridge.Basis.Opened -> ", since opening"
             app.homeydash.fridge.Basis.Frozen -> ", frozen quality"
             app.homeydash.fridge.Basis.Thawed -> ", since thawing"
