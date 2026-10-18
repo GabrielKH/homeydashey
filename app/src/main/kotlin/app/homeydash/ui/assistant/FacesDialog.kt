@@ -74,14 +74,14 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
     var adding by remember { mutableStateOf(false) }
     // Who is being taught, and the name they say ("TARS" or Nova's name).
     var teaching by remember { mutableStateOf<Pair<String, String>?>(null) }
-    AppDialog(onDismiss) {
+    AppDialog(onDismiss) { app.homeydash.ui.components.Compact {
         Column(
             Modifier
                 .dialogSize(560.dp, tall = true)
                 .background(g.wallBase, PanelShape)
                 .glass()
-                .padding(vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             val back: () -> Unit = {
                 when {
@@ -152,7 +152,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                 }
             }
         }
-    }
+    } }
 }
 
 /**

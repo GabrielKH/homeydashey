@@ -249,7 +249,30 @@ const val DialogHeightShare = 0.8f
 fun Modifier.dialogSize(preferred: Dp, tall: Boolean = false): Modifier {
     val screen = screenSizeDp()
     val maxHeight = screen.height * (if (tall) TallDialogHeightShare else DialogHeightShare)
-    return this.width(minOf(preferred, screen.width - 48.dp)).heightIn(max = maxHeight)
+    // Inside [Compact] a dp is smaller, so the popup keeps its width on the screen.
+    return this.width(minOf(preferred / LocalCompactScale.current, screen.width - 48.dp)).heightIn(max = maxHeight)
+}
+
+/**
+ * How big the settings popups draw everything compared with the dashboard: a little smaller,
+ * so long pages fit with less scrolling, while the dashboard stays easy to read across the kitchen.
+ */
+const val SettingsScale = 0.86f
+
+private val LocalCompactScale = androidx.compose.runtime.staticCompositionLocalOf { 1f }
+
+/**
+ * [content] drawn at [scale] of its size: text, icons, spacing and corners together, so it looks
+ * the same, only smaller. The owner's display size setting still applies on top.
+ */
+@Composable
+fun Compact(scale: Float = SettingsScale, content: @Composable () -> Unit) {
+    val d = LocalDensity.current
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalDensity provides androidx.compose.ui.unit.Density(d.density * scale, d.fontScale),
+        LocalCompactScale provides LocalCompactScale.current * scale,
+        content = content,
+    )
 }
 
 /** Largest share of the screen's height the settings popups take. */

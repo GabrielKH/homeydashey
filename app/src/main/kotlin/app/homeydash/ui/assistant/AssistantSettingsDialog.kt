@@ -111,14 +111,14 @@ fun AssistantSettingsDialog(
         }
         Unit
     }
-    AppDialog(onDismiss) {
+    AppDialog(onDismiss) { app.homeydash.ui.components.Compact {
         Column(
             Modifier
                 .dialogSize(620.dp, tall = true)
                 .background(g.wallBase, PanelShape)
                 .glass()
-                .padding(vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             BackHandler(onBack = back)
             Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -143,7 +143,7 @@ fun AssistantSettingsDialog(
             // Only the content scrolls; the title and close button stay put.
             Column(
                 Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 when (page) {
                     "devices" -> HiddenDevices(services, zones, devices, hidden, settings) { id, hide ->
@@ -168,7 +168,7 @@ fun AssistantSettingsDialog(
                 }
             }
         }
-    }
+    } }
 }
 
 /** The settings pages behind the main page, with their titles. */
@@ -221,14 +221,22 @@ private fun Main(
     )
 
     Label("Settings")
-    NavRow(Sym.speaker, "Voice and look", { onPage("voice") })
-    NavRow(Sym.mic, "Listening: wake word and who hears you", { onPage("listen") })
-    NavRow(Sym.autoAwesome, "AI brains: ${settings.mode.label}", { onPage("brain") })
-    NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
-    NavRow(Sym.lightbulb, "Memory: " + if (settings.access(Secret.Memory) != Access.Off) "${services.memory.data.value.facts.size} things remembered" else "off", { onPage("memory") })
-    NavRow(Sym.shieldLock, "Privacy and security", { onPage("privacy") })
-    NavRow(Sym.musicNote, "Spotify on Sonos", { onPage("spotify") })
-    NavRow(Sym.send, "Logs for Claude", { onPage("logs") })
+    // Two to a row, so the eight pages take four rows instead of eight.
+    val pages = listOf(
+        Triple(Sym.speaker, "Voice and look") { onPage("voice") },
+        Triple(Sym.mic, "Listening") { onPage("listen") },
+        Triple(Sym.autoAwesome, "AI brains: ${settings.mode.label}") { onPage("brain") },
+        Triple(Sym.flow, "Routines (${services.routines.data.value.routines.size})", onRoutines),
+        Triple(Sym.lightbulb, "Memory: " + if (settings.access(Secret.Memory) != Access.Off) "${services.memory.data.value.facts.size} facts" else "off") { onPage("memory") },
+        Triple(Sym.shieldLock, "Privacy and security") { onPage("privacy") },
+        Triple(Sym.musicNote, "Spotify on Sonos") { onPage("spotify") },
+        Triple(Sym.send, "Logs for Claude") { onPage("logs") },
+    )
+    pages.chunked(2).forEach { pair ->
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            pair.forEach { (icon, text, open) -> NavRow(icon, text, open, Modifier.weight(1f)) }
+        }
+    }
 }
 
 /**
@@ -825,14 +833,14 @@ private fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Boo
 }
 
 @Composable
-internal fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick: () -> Unit) {
+internal fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth()) {
     val g = GlassTheme.colors
     Row(
-        Modifier.fillMaxWidth().pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
+        modifier.pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SymIcon(icon, size = 20.dp)
-        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp))
         SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
     }
 }

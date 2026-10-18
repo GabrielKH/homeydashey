@@ -73,7 +73,7 @@ internal fun RoutineList(services: AssistantServices, onEdit: (Routine) -> Unit,
             Toggle(r.enabled, onClick = { scope.launch { services.routines.save(r.copy(enabled = !r.enabled)) } })
         }
     }
-    NavRow(Sym.add, "New routine") { onEdit(Routine(name = "", phrases = emptyList(), steps = listOf(RoutineStep(StepKind.Answer)))) }
+    NavRow(Sym.add, "New routine", { onEdit(Routine(name = "", phrases = emptyList(), steps = listOf(RoutineStep(StepKind.Answer)))) })
 
     Label("Standing instructions")
     Text(
