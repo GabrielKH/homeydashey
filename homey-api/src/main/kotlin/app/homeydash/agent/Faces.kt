@@ -27,6 +27,8 @@ data class KnownPerson(
     val characters: List<Persona> = emptyList(),
     /** The voice each of their characters speaks in with them; missing for that character's usual voice. */
     val voices: Map<Persona, VoiceStyle> = emptyMap(),
+    /** The Warm voice recording each of their characters speaks in with them; missing for the house's. */
+    val warmVoices: Map<Persona, String> = emptyMap(),
 ) {
     /** Their first character, null for the house's. */
     val character: Persona? get() = characters.firstOrNull()

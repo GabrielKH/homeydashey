@@ -834,7 +834,7 @@ internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, 
 }
 
 @Composable
-private fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, hint: String = "", onChange: (String) -> Unit) {
+internal fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, hint: String = "", onChange: (String) -> Unit) {
     val g = GlassTheme.colors
     var text by remember { mutableStateOf(value) }
     var reveal by remember { mutableStateOf(false) }
@@ -965,11 +965,16 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
     if (settings.voice.local && settings.voice != VoiceStyle.Tars) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
-        Field("Voice", settings.voiceServerVoice) { voice -> update { it.copy(voiceServerVoice = voice) } }
+        app.homeydash.agent.Persona.entries.forEach { p ->
+            Field("${p.label}'s voice", settings.warmVoices[p].orEmpty()) { voice ->
+                update { it.copy(warmVoices = if (voice.isBlank()) it.warmVoices - p else it.warmVoices + (p to voice)) }
+            }
+        }
         Text(
-            "On the Mac: \"pip install mlx-audio\", then \"mlx_audio.server --host 0.0.0.0 --port 8090\". " +
-                "Everything stays in the house. Leave Voice empty for the model's own voice. Tap Hear it to try it; " +
-                "if the computer doesn't answer, the tablet's voice speaks and it tries the computer again two minutes later.",
+            "Chatterbox on the Mac copies a voice from a 15-20 second recording in the voices folder: type its name " +
+                "(\"anna\" for anna.wav) for each character, or leave it empty for the model's own voice. People can pick " +
+                "their own under People. Everything stays in the house. Tap Hear it to try it; if the computer doesn't " +
+                "answer, the tablet's voice speaks and it tries the computer again two minutes later.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )

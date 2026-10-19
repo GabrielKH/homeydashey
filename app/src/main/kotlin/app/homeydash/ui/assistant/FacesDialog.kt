@@ -266,6 +266,15 @@ private fun PersonCharacter(services: AssistantServices, settings: AgentSettings
                 Chip(v.label, own == v) { if (own != v) save(picked, person.voices + (p to v), p) }
             }
         }
+        val talking = settings.talkingAs(p, person)
+        if (talking.voice.local && talking.voice != VoiceStyle.Tars) {
+            Field("Warm voice recording", person.warmVoices[p].orEmpty()) { name -> services.faces.setWarmVoice(person.id, p, name) }
+            Text(
+                "The name of a recording in the voices folder on the Mac; empty for ${settings.talkingAs(p).serverVoice().ifBlank { "the model's own voice" }}.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = g.muted,
+            )
+        }
     }
 }
 

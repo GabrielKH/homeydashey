@@ -397,7 +397,8 @@ class SpeechOutput(
     /** Short sounds made ahead of time, like the "hmm" while it thinks, per voice and language. */
     private val phrases = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
 
-    private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) = "${voice.name}|${settings().pace}|$swedish|$text"
+    private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) =
+        "${voice.name}|${if (voice.local) settings().serverVoice() else ""}|${settings().pace}|$swedish|$text"
 
     private fun phrase(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrases[phraseKey(text, swedish, voice)]
 
@@ -584,7 +585,7 @@ class SpeechOutput(
                 val body = kotlinx.serialization.json.buildJsonObject {
                     put("model", kotlinx.serialization.json.JsonPrimitive(s.voiceServerModel.trim().ifBlank { app.homeydash.agent.DEFAULT_VOICE_MODEL }))
                     put("input", kotlinx.serialization.json.JsonPrimitive(text))
-                    s.voiceServerVoice.trim().takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
+                    s.serverVoice().takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
                     put("lang_code", kotlinx.serialization.json.JsonPrimitive(if (swedish) "sv" else "en"))
                     put("speed", kotlinx.serialization.json.JsonPrimitive(pace()))
                     put("response_format", kotlinx.serialization.json.JsonPrimitive("wav"))

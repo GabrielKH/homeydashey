@@ -275,6 +275,17 @@ class FaceService(private val context: Context) {
         save()
     }
 
+    /** The Warm voice recording someone's [character] speaks in with them; blank for the house's. */
+    fun setWarmVoice(id: String, character: app.homeydash.agent.Persona, name: String) {
+        _people.update { list ->
+            list.map {
+                if (it.id != id) it
+                else it.copy(warmVoices = if (name.isBlank()) it.warmVoices - character else it.warmVoices + (character to name.trim()))
+            }
+        }
+        save()
+    }
+
     fun setRole(id: String, role: Role) {
         _people.update { list -> list.map { if (it.id == id) it.copy(role = role) else it } }
         save()
@@ -298,6 +309,7 @@ class FaceService(private val context: Context) {
                     put("printsBy", PRINTS_BY)
                     put("characters", buildJsonArray { p.characters.forEach { add(JsonPrimitive(it.name)) } })
                     put("voices", buildJsonObject { p.voices.forEach { (c, v) -> put(c.name, v.name) } })
+                    put("warmVoices", buildJsonObject { p.warmVoices.forEach { (c, v) -> put(c.name, v) } })
                 })
             }
         }
@@ -341,6 +353,7 @@ class FaceService(private val context: Context) {
                 // dropped, and the person is shown as not taught for that name until taught again.
                 characters = characters(o),
                 voices = voices(o),
+                warmVoices = (o["warmVoices"] as? JsonObject)?.mapNotNull { (c, v) -> persona(c)?.let { p -> v.jsonPrimitive.contentOrNull?.takeIf { it.isNotBlank() }?.let { p to it } } }?.toMap().orEmpty(),
                 prints = if (o["printsBy"]?.jsonPrimitive?.contentOrNull == PRINTS_BY) (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }.orEmpty() else emptyMap(),
             )
         }

@@ -232,6 +232,11 @@ data class AgentSettings(
     val voiceServerModel: String = DEFAULT_VOICE_MODEL,
     /** The model's voice, when it has several; empty for its own. */
     val voiceServerVoice: String = "",
+    /**
+     * The Warm voice each character speaks in: the name of a short recording on the voice server
+     * ("anna" for voices/anna.wav), which Chatterbox copies. Missing means [voiceServerVoice].
+     */
+    val warmVoices: Map<Persona, String> = emptyMap(),
     /** Questions are heard by OpenAI instead of Google (after Whisper, when both are on). */
     val useOpenAiSpeech: Boolean = false,
     /** OpenAI key for hearing; empty means the internet brain's key when that is OpenAI. */
@@ -255,6 +260,9 @@ data class AgentSettings(
     fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })
 
     fun whisperUrlOrGuess(): String = whisperUrl.trim().ifBlank { Transcriber.guessUrl(local) }
+
+    /** The voice server's voice for the character speaking now. */
+    fun serverVoice(): String = warmVoices[persona]?.trim()?.takeIf { it.isNotEmpty() } ?: voiceServerVoice.trim()
 
     fun voiceServerUrlOrGuess(): String = voiceServerUrl.trim().ifBlank {
         val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
@@ -333,9 +341,13 @@ data class AgentSettings(
      * the house's character and [p]'s own usual voice for the other.
      */
     fun talkingAs(p: Persona, person: KnownPerson? = null): AgentSettings {
-        val own = person?.voices?.get(p)?.takeIf { p in charactersOf(person) }
-        val s = if (p == persona) this else asCharacter(p)
-        return if (own != null) s.copy(voice = own) else s
+        val theirs = person?.takeIf { p in charactersOf(it) }
+        val own = theirs?.voices?.get(p)
+        val warm = theirs?.warmVoices?.get(p)?.trim()?.takeIf { it.isNotEmpty() }
+        var s = if (p == persona) this else asCharacter(p)
+        if (own != null) s = s.copy(voice = own)
+        if (warm != null) s = s.copy(warmVoices = s.warmVoices + (p to warm))
+        return s
     }
 
     /** The language answers are spoken in: TARS answers in English whatever language he hears. */

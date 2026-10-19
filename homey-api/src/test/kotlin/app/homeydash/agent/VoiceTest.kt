@@ -155,6 +155,18 @@ class VoiceTest {
     }
 
     @Test
+    fun `each character and person can have their own Warm voice recording`() {
+        val house = AgentSettings(voice = VoiceStyle.Warm, voiceServerVoice = "old", warmVoices = mapOf(Persona.Nova to "anna", Persona.Tars to "tars"))
+        assertEquals("anna", house.serverVoice())
+        assertEquals("tars", house.talkingAs(Persona.Tars).serverVoice())
+        assertEquals("old", AgentSettings(voiceServerVoice = "old").serverVoice())
+        val gabriel = KnownPerson("g", "Gabriel", Role.Owner, emptyList(), characters = listOf(Persona.Nova), warmVoices = mapOf(Persona.Nova to "gabriel"))
+        assertEquals("gabriel", house.talkingAs(Persona.Nova, gabriel).serverVoice())
+        // Someone else's pick never leaks to a person who didn't make it.
+        assertEquals("anna", house.talkingAs(Persona.Nova, person("a")).serverVoice())
+    }
+
+    @Test
     fun `a character someone picked wakes the assistant too`() {
         val house = AgentSettings(wakeName = "Kim")
         assertEquals(listOf("Kim"), house.wakeNames(listOf(person("a"), person("b", Persona.Nova))))

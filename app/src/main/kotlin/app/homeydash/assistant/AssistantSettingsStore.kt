@@ -80,6 +80,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         voiceServerUrl = p[VOICE_SERVER_URL].orEmpty(),
         voiceServerModel = p[VOICE_SERVER_MODEL]?.takeIf { it.isNotBlank() } ?: app.homeydash.agent.DEFAULT_VOICE_MODEL,
         voiceServerVoice = p[VOICE_SERVER_VOICE].orEmpty(),
+        warmVoices = app.homeydash.agent.Persona.entries.mapNotNull { c -> p[warmVoiceKey(c)]?.takeIf { it.isNotBlank() }?.let { c to it } }.toMap(),
         useOpenAiSpeech = p[USE_OPENAI_SPEECH] == "true",
         openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
         sendLogs = p[SEND_LOGS] == "true",
@@ -131,6 +132,10 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[VOICE_SERVER_URL] = s.voiceServerUrl.trim()
         p[VOICE_SERVER_MODEL] = s.voiceServerModel.trim()
         p[VOICE_SERVER_VOICE] = s.voiceServerVoice.trim()
+        app.homeydash.agent.Persona.entries.forEach { c ->
+            val own = s.warmVoices[c]?.trim()?.takeIf { it.isNotEmpty() }
+            if (own != null) p[warmVoiceKey(c)] = own else p.remove(warmVoiceKey(c))
+        }
         p[USE_OPENAI_SPEECH] = s.useOpenAiSpeech.toString()
         p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
         p[SEND_LOGS] = s.sendLogs.toString()
@@ -189,6 +194,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val PACE = stringPreferencesKey("pace")
         val NOVA_NAME = stringPreferencesKey("nova_name")
         fun traitsKey(p: app.homeydash.agent.Persona) = stringPreferencesKey("traits_" + p.name.lowercase())
+        fun warmVoiceKey(p: app.homeydash.agent.Persona) = stringPreferencesKey("warm_voice_" + p.name.lowercase())
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val BATTERY_REMINDERS = stringPreferencesKey("battery_reminders")
         val PHONE_SHARING = stringPreferencesKey("phone_sharing")
