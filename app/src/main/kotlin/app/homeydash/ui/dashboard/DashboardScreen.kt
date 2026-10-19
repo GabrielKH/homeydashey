@@ -120,6 +120,7 @@ sealed interface Sheet {
     data class RoomMenu(val zoneId: String) : Sheet
     data object Calendars : Sheet
     data object Goodnight : Sheet
+    data object Household : Sheet
 }
 
 /** Everything a card can do to the Homey. One instance per dashboard. */
@@ -156,10 +157,11 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
             emptyList()
         }
 
-    /** Turns off what's on, pauses what plays, and starts the chosen Flow. */
-    fun goodnight(steps: List<GoodnightStep>, flow: HomeyFlow?) {
+    /** Turns off what's on, pauses what plays, starts the chosen Flow, and with [markAsleep] tells Homey everyone home is asleep. */
+    fun goodnight(steps: List<GoodnightStep>, flow: HomeyFlow?, markAsleep: Boolean = false) {
         steps.groupBy { it.capability }.forEach { (capability, group) -> setAll(group.map { it.device.id }, capability, JsonPrimitive(false)) }
         flow?.let { scope.launch { store.triggerFlow(it) } }
+        if (markAsleep) scope.launch { markEveryoneAsleep(store.household) { store.reportError(it) } }
     }
 
     fun cards(deviceId: String): List<FlowCardAction> = deviceCards[deviceId].orEmpty()
@@ -338,6 +340,8 @@ fun DashboardScreen(
     val lastPlayer by display.lastPlayer.collectAsStateWithLifecycle()
     val goodnightKeep by display.goodnightKeep.collectAsStateWithLifecycle()
     val goodnightFlow by display.goodnightFlow.collectAsStateWithLifecycle()
+    val goodnightAsleep by display.goodnightAsleep.collectAsStateWithLifecycle()
+    val household by store.household.state.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
@@ -467,12 +471,14 @@ fun DashboardScreen(
                             favourites = favourites,
                             order = overviewOrder,
                             onOrder = display::setOverviewOrder,
+                            hasHousehold = household.people.isNotEmpty() || !household.usersAllowed,
                             widget = { key ->
                                 if (key == "fridge") FridgeCard(
                                     kitchen,
                                     onOpen = { destination = FRIDGE },
                                     onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
                                 )
+                                if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
                                 if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                 if (key == "calendar") CalendarCard(
                                     hasPermission = hasCalendar,
@@ -649,10 +655,14 @@ fun DashboardScreen(
             keep = goodnightKeep,
             flow = goodnightFlow,
             actions = actions,
+            household = store.household,
+            markAsleep = goodnightAsleep,
+            onMarkAsleep = display::setGoodnightAsleep,
             onKeep = display::setGoodnightKeep,
             onFlow = display::setGoodnightFlow,
             onDismiss = actions::close,
         )
+        Sheet.Household -> HouseholdDialog(store.household, onDismiss = actions::close)
         Sheet.Calendars -> CalendarsDialog(
             calendars = calendars,
             selected = chosenCalendars,

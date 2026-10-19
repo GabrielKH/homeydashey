@@ -30,6 +30,12 @@ sealed interface HomeyEvent {
     data class ZoneDeleted(val zoneId: String) : HomeyEvent
     data class MoodChanged(val mood: Mood) : HomeyEvent
     data class MoodDeleted(val moodId: String) : HomeyEvent
+    /** A Homey user changed: came home, left, fell asleep, woke up, or was renamed. */
+    data class UserChanged(val user: JsonObject) : HomeyEvent
+    data class UserDeleted(val userId: String) : HomeyEvent
+    /** A wake-up alarm was made or changed. */
+    data class AlarmChanged(val alarm: JsonObject) : HomeyEvent
+    data class AlarmDeleted(val alarmId: String) : HomeyEvent
 
     /** The socket came back after a drop; updates may have been missed, so reload. */
     data object Reconnected : HomeyEvent
@@ -138,6 +144,8 @@ class HomeyRealtime(
         const val DEVICES_URI = "homey:manager:devices"
         const val ZONES_URI = "homey:manager:zones"
         const val MOODS_URI = "homey:manager:moods"
+        const val USERS_URI = "homey:manager:users"
+        const val ALARMS_URI = "homey:manager:alarms"
         fun deviceUri(deviceId: String) = "homey:device:$deviceId"
 
         /** Pure mapping from a raw socket event to a [HomeyEvent]; null for events we ignore. */
@@ -163,6 +171,12 @@ class HomeyRealtime(
                     HomeyEvent.MoodChanged(HomeyJson.decodeFromJsonElement(Mood.serializer(), data))
                 uri == MOODS_URI && event == "mood.delete" ->
                     HomeyEvent.MoodDeleted((data as JsonObject).getValue("id").jsonPrimitive.content)
+                uri == USERS_URI && (event == "user.create" || event == "user.update") -> HomeyEvent.UserChanged(data as JsonObject)
+                uri == USERS_URI && event == "user.delete" ->
+                    HomeyEvent.UserDeleted((data as JsonObject).getValue("id").jsonPrimitive.content)
+                uri == ALARMS_URI && (event == "alarm.create" || event == "alarm.update") -> HomeyEvent.AlarmChanged(data as JsonObject)
+                uri == ALARMS_URI && event == "alarm.delete" ->
+                    HomeyEvent.AlarmDeleted((data as JsonObject).getValue("id").jsonPrimitive.content)
                 else -> null
             }
         }.getOrNull()

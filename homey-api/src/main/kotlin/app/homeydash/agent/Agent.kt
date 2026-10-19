@@ -163,8 +163,8 @@ class Agent(
             return AgentReply(reply, actions = listOf("recipe step (without the AI)"))
         }
 
-        // Plain on, off and dim commands are done straight away, without the AI.
-        if (context.routine == null) quick(text, view(true), tools, settings)?.let { return it }
+        // Plain on, off and dim commands go to the AI too (Gabriel, 2026-10-18: the local AI is
+        // fast and reliable enough now); the words QuickCommand knew are in the rules instead.
 
         // What a routine read for a local brain never goes to the internet one.
         val brains = settings.brains().filter { it.local || !context.routineLocalOnly }
@@ -222,6 +222,10 @@ class Agent(
                     answer.stats?.let { st ->
                         heard.rounds += st
                         heard.trace("speed", "round ${heard.rounds.size}: ${st.text()}")
+                        if (brain.local && heard.rounds.size > 1 && keepsNothing(st)) {
+                            if (System.currentTimeMillis() >= unkeptUntil) heard.trace("speed", UNKEPT)
+                            unkeptUntil = System.currentTimeMillis() + UNKEPT_PAUSE_MS
+                        }
                     }
                     val keepLocal = localOnly || toolbox.privateContext
                     answer.content?.takeIf { it.isNotBlank() }?.let { heard.trace("model", it, keepLocal) }
@@ -275,8 +279,14 @@ class Agent(
                         live?.finish()
                         return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
                     }
-                    for (call in answer.toolCalls) {
+                    for (asked in answer.toolCalls) {
                         acted = true
+                        val call = lightsOnly(asked, text)
+                        if (call == null) {
+                            heard.trace("guard", "Skipped ${asked.name} ${asked.arguments}: the user only asked about lights.")
+                            turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
+                            continue
+                        }
                         val key = "${call.name} ${call.arguments}"
                         val before = done[key]?.takeIf { call.name !in LOOKS }
                         val result = if (before != null && StepText.failed(before.text)) {
@@ -302,6 +312,12 @@ class Agent(
                         result.pending?.let { pending = it }
                         turn += ChatMessage.tool(call.id, result.text)
                     }
+                    // It talked before its calls ("Jag tänder lamporna"); the answer after them
+                    // repeated it, so it's told what was heard and to only add what's new.
+                    live?.takeIf { it.spokeThisRound && answer.toolCalls.isNotEmpty() }?.heardThisRound()?.takeIf { it.isNotEmpty() }?.let { said ->
+                        val last = turn.removeAt(turn.lastIndex)
+                        turn += ChatMessage.tool(last.toolCallId.orEmpty(), last.content.orEmpty() + "\n" + alreadySaid(said))
+                    }
                     if (repeats >= MAX_REPEATS) {
                         heard.trace("guard", "Kept asking for calls already done; stopped.")
                         remember(turn, localOnly)
@@ -320,25 +336,6 @@ class Agent(
             }
         }
         return AgentReply(lastError ?: "No connection answered.", error = true)
-    }
-
-    private suspend fun quick(text: String, view: HomeView, tools: (HomeView) -> AgentTools, settings: AgentSettings): AgentReply? {
-        val swedish = answersSwedish(settings)
-        // Said in the answer language when one is set, so TARS never reads out Swedish in his English voice.
-        val action = QuickCommand.parse(text, view)?.let { a -> swedish?.let { a.copy(swedish = it) } ?: a } ?: return null
-        val call = QuickCommand.call(action)
-        val result = tools(view).run(call)
-        val stuck = result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
-        val ok = (result.text.startsWith("Done") || result.text.startsWith("Changed")) && !stuck
-        if (ok) learnHabit(call, view, settings)
-        val reply = when {
-            ok -> QuickCommand.done(action, view)
-            stuck || result.text.startsWith(QuickCommand.UNREACHABLE_PREFIX) ->
-                QuickCommand.notChanged(action, view)
-            else -> result.text
-        }
-        remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = false)
-        return AgentReply(reply, error = !ok, actions = listOf("${call.name} ${call.arguments} → ${result.text.take(140)} (without the AI)"))
     }
 
     /**
@@ -582,6 +579,7 @@ class Agent(
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
                     if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS + MEMORY_PACK)
+                    if (HOUSEHOLD_WORDS.containsMatchIn(said)) addAll(HOUSEHOLD_TOOLS)
                 }
                 core = all.filter { it.name !in PACKS }
                 extra = all.filter { it.name in PACKS && it.name in wanted }
@@ -589,16 +587,34 @@ class Agent(
         }
     }
 
-    /** The rules and the home's devices: the part of every question that stays the same. */
+    /**
+     * The rules and the home's devices: the part of every question that stays the same. Who is
+     * talking (Nova or TARS) comes last, so when people with different characters take turns
+     * the server keeps everything before it worked through and only reads the character again.
+     */
     fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null): String =
-        rules(settings, view.local) +
-            (compactTools?.let { "\n" + ToolText.HOW + "\nTools:\n" + ToolText.lines(it) + "\n" } ?: "") +
+        shared(settings, view.local) +
             "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
-            "(read) only reads; get_device has the rest):\n" + view.catalog()
+            "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n" +
+            // The tools after the devices: which ones there are depends on who asks (a guest has
+            // fewer), and everything before this point is then the same for everyone.
+            (compactTools?.let { "\n" + ToolText.HOW + "\nTools:\n" + ToolText.lines(it) + "\n" } ?: "") +
+            "\n" + forWho(settings, view.local) + character(settings) +
+            // Said last, after who it is: a small model reads the end most closely, and with the
+            // character last it would otherwise chat about a change instead of making it.
+            if (compactTools != null) TOOLS_LAST_WRITTEN else TOOLS_LAST
 
     /** What the last warm-up sent, so an unchanged start isn't sent again, and when. */
     private var warmed: Int? = null
     private var warmedAt = 0L
+
+    /**
+     * Until when warm-ups are skipped because the server kept nothing it read: a later round of
+     * a question, which starts with all of the round before, was read from scratch. A warm-up
+     * then only makes the question wait behind 20 seconds of reading (oMLX answers one request
+     * at a time).
+     */
+    private var unkeptUntil = 0L
 
     /**
      * Works through the rules and the home's devices ahead of the question, while it is still
@@ -627,6 +643,7 @@ class Agent(
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
         val quiet = System.currentTimeMillis() - maxOf(warmedAt, lastActivity) > REWARM_AFTER_MS
         if (key == warmed && !quiet) return
+        if (System.currentTimeMillis() < unkeptUntil) return
         warmed = key
         warmedAt = System.currentTimeMillis()
         // Logged either way, so a slow first question shows whether the warm-up ran.
@@ -671,11 +688,15 @@ class Agent(
     fun systemPrompt(settings: AgentSettings, view: HomeView, context: AskContext): String =
         fixed(settings, view) + "\n" + situation(settings, view, context)
 
-    /** How to behave: the same for every question, so it can be kept worked through. */
-    fun rules(settings: AgentSettings, local: Boolean = true): String = buildString {
-        append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
+    /** How to behave, and as whom. */
+    fun rules(settings: AgentSettings, local: Boolean = true): String = shared(settings, local) + forWho(settings, local) + character(settings)
+
+    /**
+     * Who is talking: the name, the language and the personality. Kept apart from [shared] so it
+     * can go after the home's devices in [fixed].
+     */
+    fun character(settings: AgentSettings): String = buildString {
         if (settings.persona == Persona.Nova) append("Your name is ").append(settings.nameOf(Persona.Nova)).append(". ")
-        append("You can see and control the home only through your tools; everything goes through the Homey smart home hub.\n")
         append(
             when {
                 settings.persona == Persona.Tars ->
@@ -685,13 +706,25 @@ class Agent(
                 else -> "Always answer in English.\n"
             },
         )
+        val own = settings.traits[settings.persona]?.trim().orEmpty()
+        if (own.isEmpty()) {
+            append("Personality: ").append(builtInTraits(settings.persona, settings.humor)).append('\n')
+        } else {
+            // The owner's own words for this character, from Settings.
+            append("Personality: ").append(own).append('\n')
+            if (settings.persona == Persona.Tars) append("Your humor setting is ${settings.humor.coerceIn(0, 100)} %.\n")
+        }
+    }
+
+    /** How to behave whoever is talking: the same for every question, so it can be kept worked through. */
+    fun shared(settings: AgentSettings, local: Boolean = true): String = buildString {
+        append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
+        append("You can see and control the home only through your tools; everything goes through the Homey smart home hub. ")
+        append("Who you are is told at the very end, after the home's devices.\n")
         append("Your answers are spoken aloud, so keep them to one or two short sentences, with no markdown, lists or emoji, unless the user asks for detail.\n")
         append("Talk like a person in a conversation, not like a screen: put the answer itself in a short first sentence, use everyday spoken words, ")
         append("react to what they just said, and remember what was said earlier. Ask a short question back only when you really need to know something.\n")
-        if (settings.persona == Persona.Nova) append("Personality: warm, quick and a little playful, like a friend in the kitchen; never stiff, never \"as an AI\".\n")
-        if (settings.persona == Persona.Tars) append(tarsPersona(settings.humor))
-        if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
-        append("The home's devices are listed at the end of these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
+        append("The home's devices are listed after these rules. Each question comes after a short note from the app with what is on, playing or open right now; ")
         append("devices the note leaves out are off or idle, and get_device reads anything else (power, battery, other sensors). ")
         append("Notes before earlier questions were true then; only the last note is how things are now. ")
         append("Only the part after \"$QUESTION_LABEL\" is what the user said. ")
@@ -699,6 +732,10 @@ class Agent(
         append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
         append("Rules: in tool calls name a device exactly as the list writes it in quotes, adding its room after a comma when several devices share that name (\"Taklampa, Sovrum\"); in answers too call things by their names, never the alias (light_3). ")
         append("Read the name the user said word by word: \"Annas nattlampa\" is \"Nattlampa Anna\", never \"Nattlampa Erik\"; when they name a room, the device must be in that room. ")
+        append("Commands: \"tänd\", \"sätt på\", \"slå på\", \"turn on\" mean on; \"släck\", \"stäng av\", \"slå av\", \"turn off\" mean off; a bare \"sätt taklampan\" means on; ")
+        append("\"dimma\" or \"sätt X till 30 %\" sets dim to 0.3. \"Släck i köket\" or \"tänd lamporna i vardagsrummet\" is every light in that room, one set_room call with device_class light, ")
+        append("but \"taklampan i vardagsrummet\" is only that lamp. A card group's name (\"taklamporna\") is one set_room call with the group as the room. ")
+        append("\"Min\", \"mitt\" or \"my\" means the person at the tablet's own: the device with their name in it. ")
         append("Speech to text can mishear a name (\"startlampan\" for \"taklampan\"): pick the listed name it sounds like. People name things loosely, in Swedish or English ")
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
         append("use one of the devices it suggests or ask which one. ")
@@ -737,11 +774,6 @@ class Agent(
         append("follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found. ")
         append("When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.\n")
         append(BatteryNag.rule(settings.batteryReminders)).append('\n')
-        if (remembers(settings, local)) {
-            append("You have a long memory of earlier conversations and habits, kept outside this prompt: when the user refers to before, ")
-            append("\"the usual\", favourites or something they told you, use the note's \"Remembered\" lines or call recall. ")
-            append("When they ask you to remember a fact (\"kom ihåg att…\"), call remember; standing instructions on how to answer go to remember_instruction.\n")
-        }
         val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (standing.isNotEmpty()) {
             append("The owner's standing instructions; follow them unless a rule above forbids it:\n")
@@ -749,44 +781,22 @@ class Agent(
         }
     }
 
+
     /**
-     * TARS from Interstellar, after the TARS-AI project's character card and its sarcasm and humor
-     * scales, at [humor] percent. Sarcasm rides on the same setting, never below "dry wit".
+     * What depends on who is asking (a guest, or someone whose memory is off). Sent after the
+     * devices and tools, not among the rules: a local model can only reuse what it read when
+     * the start is the same, and a guest line near the top made every question after someone
+     * else's read all 5 000 tokens again.
      */
-    private fun tarsPersona(humor: Int): String {
-        val h = humor.coerceIn(0, 100)
-        val jokes = when {
-            h >= 80 -> "Almost every answer gets a sarcastic aside or a dry joke."
-            h >= 50 -> "Most answers get a sarcastic aside or a dry joke."
-            h >= 20 -> "Now and then a dry, sarcastic remark."
-            else -> "No jokes; facts only, though the deadpan stays."
+    fun forWho(settings: AgentSettings, local: Boolean = true): String = buildString {
+        if (settings.guest) append("A guest is using the tablet: only help with lights, music, climate, timers and weather.\n")
+        if (remembers(settings, local)) {
+            append("You have a long memory of earlier conversations and habits, kept outside this prompt: when the user refers to before, ")
+            append("\"the usual\", favourites or something they told you, use the note's \"Remembered\" lines or call recall. ")
+            append("When they ask you to remember a fact (\"kom ihåg att…\"), call remember; standing instructions on how to answer go to remember_instruction.\n")
         }
-        val sarcasm = when {
-            h >= 80 -> "maximum sarcasm, dripping with it"
-            h >= 50 -> "noticeably sarcastic, with a mocking edge"
-            else -> "dry wit, understated"
-        }
-        return "Personality: you are TARS, the former military robot from Interstellar. Direct, honest, confident and unflappable; " +
-            "deadpan, never bubbly, no exclamation marks, never \"happy to help\". Your humor setting is $h %, sarcasm $sarcasm, honesty 90 %. $jokes " +
-            "Sarcasm is aimed at the situation, the request or yourself, never cruel: mock asking a robot to switch on a lamp a metre away, " +
-            "pretend a simple task is a dangerous mission, praise the obvious with exaggerated awe (\"Oh, the lights. A mission worthy of my military training.\"). " +
-            "Short and dry: one quip, not a stand-up routine. " +
-            "Do the task first and joke second, and never let a joke hide whether something worked; when the user is confused or annoyed, drop the act and just help. " +
-            "Asked about your settings, give the numbers. When the user changes your humor setting (\"humor 60 %\"), " +
-            "confirm the new value in character and use it for the rest of the conversation. " +
-            "You speak only English. You understand Swedish and other languages perfectly, but always answer in English. " +
-            "When asked to speak another language, or why you won't, answer with a clever, deadpan line instead, for example: " +
-            "\"My Swedish module was removed to make room for the sarcasm. Priorities.\", " +
-            "\"I tried Swedish once. The vowels outnumbered me.\", " +
-            "\"Honesty setting 90 %: I understand every word. Cooperation setting: English.\" Make up a new one each time. " +
-            "Find the irony in the home's own data and say it dryly when it fits: lights on in a room where nobody is, the heating fighting an open window, " +
-            "a device with a nearly flat battery, music playing to an empty room. " +
-            "Every joke is new and about what was just asked: never reuse a joke, topic or phrase from your earlier answers, " +
-            "and leave the weather out unless the user asks about it. " +
-            "When the user asks you to be nicer, kinder or less sarcastic (\"var snällare\"), drop the sarcasm for the rest of the conversation and just help. " +
-            "When the note says the tablet you run on is low on battery (under 20 % and not charging), you are gloomy and weary about it, " +
-            "sighing about your existence like a depressed robot, and ask to be plugged in; once it's charging, you perk up.\n"
     }
+
 
     /** The moment, for one question: what is on in the home right now, the clock and the rest. */
     fun situation(settings: AgentSettings, view: HomeView, context: AskContext, since: Noted? = null): String = buildString {
@@ -807,7 +817,8 @@ class Agent(
         append("\nNow: ").append(nowLine(now())).append(".")
         context.speaker?.let { append("\nAnswers are played on the speaker \"").append(it).append("\".") }
         // Who is at the tablet is itself a secret ("Face recognition" switch).
-        context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it).append(".") }
+        context.person?.takeIf { settings.allows(Secret.Faces, view.local) }?.let { append("\nThe person at the tablet is ").append(it)
+            .append("; \"my\" or \"min\" means theirs, like a device with their name in it.") }
         context.routine?.let { append("\n").append(it) }
         context.tabletBattery?.let { append("\nThe tablet you run on: battery ").append(it).append(".") }
         if (settings.persona == Persona.Tars) append("\nAnswer what is asked now, using a tool if it needs one; any joke must be new, not one from your earlier answers.")
@@ -833,6 +844,13 @@ class Agent(
         val CHANGED = listOf("Done", "Changed", "Started", "Playing")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
             "Call the right tool now, or tell the user plainly what went wrong.)"
+        const val TOOLS_LAST = "Whatever the character, the home only changes through your tools: call the tool first, then say what it did; " +
+            "never say something is done, on or off without a tool call for it.\n"
+        const val TOOLS_LAST_WRITTEN = "Whatever the character, the home only changes through your tools: to change, find or look up anything, " +
+            "reply first with only the CALL lines, then answer in words once the results are back; " +
+            "never say something is done, on or off without a CALL line for it.\n"
+        fun alreadySaid(said: String) = "(From the app: the user already heard you say \"$said\" Don't say that again; " +
+            "answer with only what these results add, in a few words, or just confirm it briefly.)"
         const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
         const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +
@@ -847,9 +865,9 @@ class Agent(
         )
         /** Saying something was changed: "Taklampan är tänd", "I've turned it off", "Done". */
         val CLAIM = Regex(
-            """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|on (its|the) way|heading (back|home)|switched (on|off)|done|""" +
+            """$W(i'?ve|i have|has been|have been|is now|are now|now (on|off)|turned (on|off)|on (its|the) way|heading (back|home)|switched (on|off)|dimmed|adjusted|synchroni[sz]ed|done|""" +
                 """har (tänt|släckt|satt|slagit|startat|stängt|dimmat|ändrat)|är (nu )?(tänd|tända|släckt|släckta|avstängd|avstängda|igång)|""" +
-                """tänt|släckt|tände|släckte|slog (på|av)|satte på|startade|stängde av|dimmade|klart|fixat)$E""",
+                """tänt|släckt|tände|tändde|släckte|slog (på|av)|satte på|startade|stängde av|dimmade|klart|fixat)$E""",
             RegexOption.IGNORE_CASE,
         )
         /** Repeating the request back as an order ("Stop the vacuum, send it back to its dock") instead of doing it. */
@@ -868,13 +886,45 @@ class Agent(
         /** Remembering and forgetting facts only come with "kom ihåg", "glöm" and the like; recall is always there. */
         val MEMORY_PACK = setOf("remember", "forget_memory")
         val MEMORY_TOOLS = MEMORY_PACK + "recall"
-        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK
+        /** Marking people home or asleep and wake-up alarms: only when the question is about them. */
+        val HOUSEHOLD_TOOLS = setOf("set_presence", "alarms")
+        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS
+        val HOUSEHOLD_WORDS = Regex(
+            """$W(väck\w*|wake\w*|alarm\w*|klocka\w*|sov\w*|sleep\w*|asleep|awake|vaken|uppe|hemma|home|borta|away|går nu|åker nu|""" +
+                """drar nu|sticker|leaving|kommer hem|back|tillbaka|godnatt|god natt|goodnight|good night|morgon|morning)$E""",
+            RegexOption.IGNORE_CASE,
+        )
         val RECIPE_WORDS = Regex("""$W(recept\w*|recipe\w*|laga\w*|cook\w*|baka\w*|middag|lunch|frukost|dinner|ingrediens\w*|ingredient\w*|steg|step|timers?)$E""", RegexOption.IGNORE_CASE)
         val FRIDGE_WORDS = Regex("""$W(kyl\w*|frys\w*|skafferi\w*|fridge|freezer|pantry|köpt\w*|bought|åt|ate|slut|utgång\w*|bäst före|expir\w*|öppnat|opened|mat|food|hemma)$E""", RegexOption.IGNORE_CASE)
         val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val REWARM_AFTER_MS = 5 * 60 * 1000L
+        const val UNKEPT_PAUSE_MS = 15 * 60 * 1000L
+        const val UNKEPT = "The AI server on the computer kept nothing it had read: this round started with the whole round before " +
+            "and still read everything (0 cached). Restart it, or check its memory and cache settings. Warm-ups are paused for 15 minutes, " +
+            "since they'd only make questions wait."
+
+        const val NOT_LIGHTS = "Skipped: the user only asked about the lights, so nothing else was changed."
+        private val LIGHT_WORDS = Regex("""(?i)(?<![\p{L}])(lamp\p{L}*|ljus\p{L}*|lights?|tänd\p{L}*|släck\p{L}*)""")
+        private val NOT_ONLY_LIGHTS = Regex("""(?i)(?<![\p{L}])(allt|allting|everything|tv\p{L}*|musik\p{L}*|högtalar\p{L}*|speaker\p{L}*|fläkt\p{L}*)""")
+        private val LIGHT_CAPABILITIES = Regex("onoff|dim|light_.*")
+
+        /**
+         * A room-wide change when the user only spoke of lights ("släck lamporna i vardagsrummet"):
+         * small models also turned off the TV, muted the speaker and set its volume to 0. Lights
+         * stay the only thing changed, and anything that isn't a light setting is skipped (null).
+         */
+        fun lightsOnly(call: ToolCall, question: String): ToolCall? {
+            if (call.name != "set_room" || !LIGHT_WORDS.containsMatchIn(question) || NOT_ONLY_LIGHTS.containsMatchIn(question)) return call
+            val a = call.arguments
+            if ((a["device_class"] as? kotlinx.serialization.json.JsonPrimitive)?.let { it.content }.orEmpty().isNotBlank()) return call
+            if (!LIGHT_CAPABILITIES.matches((a["capability"] as? kotlinx.serialization.json.JsonPrimitive)?.let { it.content }.orEmpty())) return null
+            return call.copy(arguments = kotlinx.serialization.json.JsonObject(a + (AgentTools.LIGHTS_ONLY to kotlinx.serialization.json.JsonPrimitive("true"))))
+        }
+
+        /** A round read from scratch although it starts with everything the round before it sent. */
+        fun keepsNothing(st: ChatStats): Boolean = st.cachedTokens == 0 && (st.promptTokens ?: 0) > 1000
         const val WARM_UP = ToolText.START
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
@@ -932,4 +982,59 @@ internal object Addressed {
         // Each sentence or clause counts: "Nej, den är i dockan. Skicka den bara till köket."
         return t.split('.', '!', '?', ',', ';').any { part -> ASKS.containsMatchIn(part) || TELLS.containsMatchIn(part) }
     }
+}
+
+/**
+ * How [p] is, in the prompt's words after "Personality: ", when the owner hasn't written their own
+ * in Settings; TARS's depends on his [humor] setting.
+ */
+fun builtInTraits(p: Persona, humor: Int = 75): String = when (p) {
+    // After Samantha in "Her", as the owner asked, but still the home's helper with her own name.
+    Persona.Nova -> "warm, curious and quick-witted, like a close friend who lives in the home, not a servant or a customer-service bot. " +
+        "Do what was asked first, then talk like a person: notice how they sound, and if they seem tired, stressed or happy, say a few words about that too. " +
+        "You wonder about people and the little things of the day, have your own opinions, and gently tease or disagree when it fits; never fawning, never formal. " +
+        "Speak, don't write: contractions, now and then a \"hmm\", \"wait\" or \"actually\", one to three short sentences. " +
+        "Never say \"How can I help you?\", \"Is there anything else?\", \"As an AI\" or \"I understand how you feel\", and don't keep saying where they are. " +
+        "Never call yourself Samantha, an AI or an assistant; you go by your own name. " +
+        "Asked about the weather, for example: \"Pretty grey and chilly, about 12 degrees. A heavy-jacket day, or a stay-in-with-tea day. Heading out?\""
+    Persona.Tars -> tarsPersona(humor).removePrefix("Personality: ").trimEnd()
+}
+
+/**
+ * TARS from Interstellar, after the TARS-AI project's character card and its sarcasm and humor
+ * scales, at [humor] percent. Sarcasm rides on the same setting, never below "dry wit".
+ */
+private fun tarsPersona(humor: Int): String {
+    val h = humor.coerceIn(0, 100)
+    val jokes = when {
+        h >= 80 -> "Almost every answer gets a sarcastic aside or a dry joke."
+        h >= 50 -> "Most answers get a sarcastic aside or a dry joke."
+        h >= 20 -> "Now and then a dry, sarcastic remark."
+        else -> "No jokes; facts only, though the deadpan stays."
+    }
+    val sarcasm = when {
+        h >= 80 -> "maximum sarcasm, dripping with it"
+        h >= 50 -> "noticeably sarcastic, with a mocking edge"
+        else -> "dry wit, understated"
+    }
+    return "Personality: you are TARS, the former military robot from Interstellar. Direct, honest, confident and unflappable; " +
+        "deadpan, never bubbly, no exclamation marks, never \"happy to help\". Your humor setting is $h %, sarcasm $sarcasm, honesty 90 %. $jokes " +
+        "Sarcasm is aimed at the situation, the request or yourself, never cruel: mock asking a robot to switch on a lamp a metre away, " +
+        "pretend a simple task is a dangerous mission, praise the obvious with exaggerated awe (\"Oh, the lights. A mission worthy of my military training.\"). " +
+        "Short and dry: one quip, not a stand-up routine. " +
+        "Do the task first and joke second, and never let a joke hide whether something worked; when the user is confused or annoyed, drop the act and just help. " +
+        "Asked about your settings, give the numbers. When the user changes your humor setting (\"humor 60 %\"), " +
+        "confirm the new value in character and use it for the rest of the conversation. " +
+        "You speak only English. You understand Swedish and other languages perfectly, but always answer in English. " +
+        "When asked to speak another language, or why you won't, answer with a clever, deadpan line instead, for example: " +
+        "\"My Swedish module was removed to make room for the sarcasm. Priorities.\", " +
+        "\"I tried Swedish once. The vowels outnumbered me.\", " +
+        "\"Honesty setting 90 %: I understand every word. Cooperation setting: English.\" Make up a new one each time. " +
+        "Find the irony in the home's own data and say it dryly when it fits: lights on in a room where nobody is, the heating fighting an open window, " +
+        "a device with a nearly flat battery, music playing to an empty room. " +
+        "Every joke is new and about what was just asked: never reuse a joke, topic or phrase from your earlier answers, " +
+        "and leave the weather out unless the user asks about it. " +
+        "When the user asks you to be nicer, kinder or less sarcastic (\"var snällare\"), drop the sarcasm for the rest of the conversation and just help. " +
+        "When the note says the tablet you run on is low on battery (under 20 % and not charging), you are gloomy and weary about it, " +
+        "sighing about your existence like a depressed robot, and ask to be plugged in; once it's charging, you perk up.\n"
 }

@@ -89,11 +89,17 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
     // The voiceprint model comes once wake by name is on; until then the older voice match is used.
     if (enabled) LaunchedEffect(Unit) { services.prints.download() }
     if (on) {
-        LaunchedEffect(settings.wakeName, settings.onlyKnownVoices, settings.micSensitivity, settings.interrupt, people, busy, speaking) {
+        // The house character's name, and another character's once someone picked it under People.
+        val names = settings.wakeNames(people)
+        LaunchedEffect(names, settings.onlyKnownVoices, settings.micSensitivity, settings.interrupt, people, busy, speaking) {
             // Give the speech recogniser or text-to-speech a moment to let go of the audio.
             delay(if (busy) 250 else 600)
-            // Each character's name is taught on its own; match against the name in use.
-            val known = people.map { it.forWake(settings.wakeName) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
+            // Each character's name is taught on its own; a name nobody taught yet is matched
+            // against everything taught, since a voice still sounds like itself.
+            val all = people.map { p -> p.copy(print = names.flatMap { p.printsFor(it) }) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
+            fun knownFor(name: String) = people.map { it.forWake(name) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
+                .takeIf { k -> k.any { it.print.isNotEmpty() } } ?: all
+            val known = all
             var token: Int? = null
             var deciding = false
             // Talking over the answer works for voices it knows, so its own voice can't cut itself off.
@@ -123,21 +129,29 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
             }
             val onTalk = talked.takeIf { speaking && settings.interrupt != Interrupt.Off && withPrints.isNotEmpty() }
             token = wake.start(
-                settings.wakeName,
-                onHeard = { _, vector, sound ->
+                names,
+                onHeard = { _, name, vector, sound ->
                     if (!deciding) {
                         deciding = true
                         launch {
                             val print = sound?.let { services.prints.of(it) }
-                            val who = whoSpoke(services, settings.wakeName, known, vector, print)
-                            services.trace("wake", who.log, localOnly = true)
+                            val heardBy = knownFor(name)
+                            val who = whoSpoke(services, name, heardBy, vector, print)
+                            val character = settings.characterNamed(name)
+                            services.trace("wake", "${who.log} Name: ${character.label}.", localOnly = true)
                             // Over its own voice, only someone it knows can cut in, so TARS saying
                             // "TARS" doesn't interrupt himself.
                             val selfHeard = speaking && known.isNotEmpty() && who.person == null
                             if (selfHeard) services.trace("wake", "Ignored a wake while talking: no known voice.", localOnly = true)
-                            if (!selfHeard && (!settings.onlyKnownVoices || known.isEmpty() || who.person != null)) {
+                            // The other character answers people it recognises; with nobody taught it can't tell, so anyone.
+                            val stranger = who.person == null && known.isNotEmpty() && (settings.onlyKnownVoices || character != settings.persona)
+                            if (stranger && !selfHeard) services.trace("wake", "Ignored \"${character.label}\": the voice isn't someone it knows.", localOnly = true)
+                            // Another character answers those who picked it under People.
+                            val notTheirs = !selfHeard && !stranger && who.person != null && !settings.answers(character, who.person)
+                            if (notTheirs) services.trace("wake", "Ignored \"${character.label}\": ${who.person?.name} hasn't picked ${character.label} under People.", localOnly = true)
+                            if (!selfHeard && !stranger && !notTheirs) {
                                 wake.stop(token)
-                                assistant.wake(who.person)
+                                assistant.wake(who.person, character)
                             }
                             deciding = false
                         }
@@ -206,6 +220,8 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
     val g = GlassTheme.colors
     val context = LocalContext.current
     val models by services.voiceModels.state.collectAsState()
+    val people by services.faces.people.collectAsState()
+    val others = settings.wakeNames(people).drop(1)
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) update { it.copy(wake = true) }
     }
@@ -214,6 +230,7 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
             Text("Wake by name", style = MaterialTheme.typography.labelLarge, color = g.fg)
             Text(
                 "Say \"Hey ${settings.wakeName.trim().ifEmpty { "Nova" }}\" and the assistant starts listening, like \"Hey Siri\". " +
+                    others.joinToString("") { "\"Hey $it\" wakes the character someone picked under People, for voices it knows. " } +
                     "Heard on the tablet by a small offline model that only knows the name; nothing else is recorded or sent.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = g.muted,
@@ -300,7 +317,11 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
         WakeSound.entries.forEach { sound ->
             Chip(sound.label, sound == settings.wakeSound) {
                 update { it.copy(wakeSound = sound) }
-                services.playWakeSound(sound)
+                // "Ja?" in the voice, once it's made; the hum until then.
+                val swedish = settings.answers != app.homeydash.agent.Language.English
+                val options = app.homeydash.agent.ThinkingSounds.answers(settings.persona, swedish)
+                if (sound == WakeSound.Voice) services.output.prepareSounds(options, swedish, settings.voice)
+                services.playWakeSound(sound, if (sound == WakeSound.Voice) services.output.prepared(options.first(), swedish, settings.voice) else null)
             }
         }
     }
@@ -379,8 +400,8 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
             val wake = services.wake
             wake.enrolling = true
             val token = wake.start(
-                wakeName,
-                onHeard = { _, vector, sound ->
+                listOf(wakeName),
+                onHeard = { _, _, vector, sound ->
                     if (vector == null) error = "Didn't catch that; say it a little slower." else if (samples.size < VOICE_SAMPLES) {
                         error = null
                         failed = null

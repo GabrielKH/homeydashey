@@ -38,7 +38,12 @@ class HomeyStore(
     private val scope: CoroutineScope,
     /** Cards the app runs itself, e.g. Sonos favourites played straight on the speakers. */
     private val extraCards: List<CardSource> = emptyList(),
+    /** Where the household keeps what only the tablet knows (skipped alarms); null keeps it in memory. */
+    householdDir: java.io.File? = null,
 ) {
+    /** Homey's users (who is home or asleep) and wake-up alarms. */
+    val household = HouseholdStore(client, scope, householdDir)
+
     private val _snapshot = MutableStateFlow(HomeySnapshot())
     val snapshot: StateFlow<HomeySnapshot> = _snapshot.asStateFlow()
     val connection: StateFlow<ConnectionState> = realtime.state
@@ -88,6 +93,9 @@ class HomeyStore(
         realtime.subscribe(HomeyRealtime.DEVICES_URI)
         realtime.subscribe(HomeyRealtime.ZONES_URI)
         realtime.subscribe(HomeyRealtime.MOODS_URI)
+        realtime.subscribe(HomeyRealtime.USERS_URI)
+        realtime.subscribe(HomeyRealtime.ALARMS_URI)
+        household.start()
         scope.launch { reload() }
         realtime.connect()
     }
@@ -95,6 +103,7 @@ class HomeyStore(
     fun stop() {
         eventsJob?.cancel()
         eventsJob = null
+        household.stop()
         realtime.close()
     }
 
@@ -264,7 +273,11 @@ class HomeyStore(
             is HomeyEvent.ZoneDeleted -> _snapshot.update { it.copy(zones = it.zones - event.zoneId) }
             is HomeyEvent.MoodChanged -> _snapshot.update { it.copy(moods = it.moods + (event.mood.id to event.mood)) }
             is HomeyEvent.MoodDeleted -> _snapshot.update { it.copy(moods = it.moods - event.moodId) }
-            HomeyEvent.Reconnected -> scope.launch { reload() }
+            is HomeyEvent.UserChanged, is HomeyEvent.UserDeleted, is HomeyEvent.AlarmChanged, is HomeyEvent.AlarmDeleted -> household.onEvent(event)
+            HomeyEvent.Reconnected -> scope.launch {
+                reload()
+                household.reload()
+            }
         }
     }
 

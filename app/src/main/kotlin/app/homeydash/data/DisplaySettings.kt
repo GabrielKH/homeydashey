@@ -45,6 +45,7 @@ class DisplaySettings(
     val overviewDevices: StateFlow<List<String>> = settings.overviewDevices.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val lastPlayer: StateFlow<String?> = settings.lastPlayer.stateIn(scope, SharingStarted.Eagerly, null)
     val goodnightKeep: StateFlow<Set<String>> = settings.goodnightKeep.stateIn(scope, SharingStarted.Eagerly, emptySet())
+    val goodnightAsleep: StateFlow<Boolean> = settings.goodnightAsleep.stateIn(scope, SharingStarted.Eagerly, true)
     val goodnightFlow: StateFlow<HomeyFlow?> = settings.goodnightFlow
         .map { saved ->
             saved?.split('\t', limit = 3)?.takeIf { it.size == 3 }?.let { (id, kind, name) -> HomeyFlow(id, name, advanced = kind == "advanced") }
@@ -72,6 +73,10 @@ class DisplaySettings(
 
     fun setGoodnightKeep(ids: Set<String>) {
         scope.launch { settings.setGoodnightKeep(ids) }
+    }
+
+    fun setGoodnightAsleep(on: Boolean) {
+        scope.launch { settings.setGoodnightAsleep(on) }
     }
 
     fun setGoodnightFlow(flow: HomeyFlow?) {

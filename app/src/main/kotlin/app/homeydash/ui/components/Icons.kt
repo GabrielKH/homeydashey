@@ -223,4 +223,7 @@ object Sym {
     val barcode = Ic(R.drawable.ph_barcode, R.drawable.ph_barcode_fill)
     val pantry = Ic(R.drawable.ph_package, R.drawable.ph_package_fill)
     val hourglass = Ic(R.drawable.ph_hourglass_medium, R.drawable.ph_hourglass_medium_fill)
+    val alarm = Ic(R.drawable.ph_alarm, R.drawable.ph_alarm_fill)
+    val person = Ic(R.drawable.ph_user, R.drawable.ph_user_fill)
+    val moon = Ic(R.drawable.ph_moon, R.drawable.ph_moon_fill)
 }

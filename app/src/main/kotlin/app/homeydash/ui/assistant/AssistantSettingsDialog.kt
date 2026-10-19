@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -45,6 +46,7 @@ import app.homeydash.ui.components.dialogSize
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentSettings
 import app.homeydash.agent.Persona
+import app.homeydash.agent.intro
 import app.homeydash.agent.WakeSound
 import app.homeydash.agent.AgentTools
 import app.homeydash.agent.AskContext
@@ -110,14 +112,14 @@ fun AssistantSettingsDialog(
         }
         Unit
     }
-    AppDialog(onDismiss) {
+    AppDialog(onDismiss) { app.homeydash.ui.components.Compact {
         Column(
             Modifier
                 .dialogSize(620.dp, tall = true)
                 .background(g.wallBase, PanelShape)
                 .glass()
-                .padding(vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             BackHandler(onBack = back)
             Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -142,7 +144,7 @@ fun AssistantSettingsDialog(
             // Only the content scrolls; the title and close button stay put.
             Column(
                 Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 when (page) {
                     "devices" -> HiddenDevices(services, zones, devices, hidden, settings) { id, hide ->
@@ -167,7 +169,7 @@ fun AssistantSettingsDialog(
                 }
             }
         }
-    }
+    } }
 }
 
 /** The settings pages behind the main page, with their titles. */
@@ -198,25 +200,44 @@ private fun Main(
     )
     Label("Character")
     Character(services, settings, update)
+    Text(
+        "This is the house's character. Each person can pick their own, and its voice, under People; saying any character's name wakes it.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
 
     Label("Language")
-    Segmented(Language.entries, settings.language, { it.label }) { l -> update { it.copy(language = l) } }
+    Segmented(Language.entries, settings.language, { it.label }) { l ->
+        update { it.withLanguage(l) }
+        if (l == Language.Swedish && settings.persona == Persona.Nova) services.alma.download()
+    }
     Text(
-        if (settings.persona == Persona.Tars) "TARS understands the language you pick here but always answers in English."
-        else "Svenska + English hears both and answers in the language you spoke.",
+        when {
+            settings.persona == Persona.Tars -> "TARS understands the language you pick here but always answers in English."
+            settings.language == Language.Swedish -> "Svenska gives Nova Alma's Swedish voice, made on the tablet. You can pick another voice under Voice and look."
+            else -> "Svenska + English hears both and answers in the language you spoke."
+        },
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
 
     Label("Settings")
-    NavRow(Sym.speaker, "Voice and look", { onPage("voice") })
-    NavRow(Sym.mic, "Listening: wake word and who hears you", { onPage("listen") })
-    NavRow(Sym.autoAwesome, "AI brains: ${settings.mode.label}", { onPage("brain") })
-    NavRow(Sym.flow, "Routines like \"God morgon\" (${services.routines.data.value.routines.size})", onRoutines)
-    NavRow(Sym.lightbulb, "Memory: " + if (settings.access(Secret.Memory) != Access.Off) "${services.memory.data.value.facts.size} things remembered" else "off", { onPage("memory") })
-    NavRow(Sym.shieldLock, "Privacy and security", { onPage("privacy") })
-    NavRow(Sym.musicNote, "Spotify on Sonos", { onPage("spotify") })
-    NavRow(Sym.send, "Logs for Claude", { onPage("logs") })
+    // Two to a row, so the eight pages take four rows instead of eight.
+    val pages = listOf(
+        Triple(Sym.speaker, "Voice and look") { onPage("voice") },
+        Triple(Sym.mic, "Listening") { onPage("listen") },
+        Triple(Sym.autoAwesome, "AI brains: ${settings.mode.label}") { onPage("brain") },
+        Triple(Sym.flow, "Routines (${services.routines.data.value.routines.size})", onRoutines),
+        Triple(Sym.lightbulb, "Memory: " + if (settings.access(Secret.Memory) != Access.Off) "${services.memory.data.value.facts.size} facts" else "off") { onPage("memory") },
+        Triple(Sym.shieldLock, "Privacy and security") { onPage("privacy") },
+        Triple(Sym.musicNote, "Spotify on Sonos") { onPage("spotify") },
+        Triple(Sym.send, "Logs for Claude") { onPage("logs") },
+    )
+    pages.chunked(2).forEach { pair ->
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            pair.forEach { (icon, text, open) -> NavRow(icon, text, open, Modifier.weight(1f)) }
+        }
+    }
 }
 
 /**
@@ -227,39 +248,98 @@ private fun Main(
 @Composable
 private fun Character(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Persona.entries.forEach { p ->
             Chip(p.label, p == settings.persona) {
                 update { it.asCharacter(p) }
                 if (p == Persona.Tars) services.tars.download()
+                if (p == Persona.Nova && settings.language == Language.Swedish) services.alma.download()
+                if (p != settings.persona) introduce(services, scope, settings.asCharacter(p))
             }
         }
     }
     Text(settings.persona.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-    if (settings.persona == Persona.Tars) {
+    Traits(settings, update)
+    // TARS's humor is the house's, also when only someone under People talks with him.
+    val people by services.faces.people.collectAsState()
+    if (settings.persona == Persona.Tars || people.any { Persona.Tars in it.characters }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Humor ${settings.humor} %", style = MaterialTheme.typography.labelLarge, color = g.fg)
             GlassSlider(settings.humor / 100f, { v -> update { it.copy(humor = (v * 100).toInt()) } }, Modifier.weight(1f))
         }
-        TarsVoiceState(services)
+        PiperVoiceState(
+            services.tars,
+            "TARS's voice is on the tablet. It's a fan-made copy of Bill Irwin's voice from the film (TARS-AI, non-commercial licence), for home use.",
+            "TARS's voice isn't downloaded yet (about 70 MB). Until it is, the tablet's own voice speaks.",
+        )
     }
 }
 
-/** Whether TARS's voice is on the tablet yet, with a way to fetch it. */
+/**
+ * Each character's personality in its own words, as the assistant is told it: open one, change
+ * the text, and the next question uses it. Empty, or back to the built-in, uses the app's own.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TarsVoiceState(services: AssistantServices) {
+private fun Traits(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
-    val state by services.tars.state.collectAsState()
+    var editing by remember { mutableStateOf<Persona?>(null) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Persona.entries.forEach { p ->
+            val own = !settings.traits[p].isNullOrBlank()
+            Chip("Edit ${p.label}'s personality" + if (own) " (yours)" else "", editing == p) { editing = if (editing == p) null else p }
+        }
+    }
+    val p = editing ?: return
+    val builtIn = app.homeydash.agent.builtInTraits(p, settings.humor)
+    // The text lives here while typing, so clearing it all doesn't snap back to the built-in.
+    var text by remember(p) { mutableStateOf(settings.traits[p]?.takeIf { it.isNotBlank() } ?: builtIn) }
+    TextBox(text, singleLine = false, hint = "How ${p.label} talks and behaves") { t ->
+        text = t
+        update { s -> s.copy(traits = if (t.isBlank() || t.trim() == builtIn.trim()) s.traits - p else s.traits + (p to t)) }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            if (settings.traits[p].isNullOrBlank()) "This is the built-in personality. Change it and ${p.label} talks your way from the next question."
+            else "Your own words for ${p.label}. " + if (p == Persona.Tars) "The humor slider still sets how funny he is." else "",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+            modifier = Modifier.weight(1f),
+        )
+        if (!settings.traits[p].isNullOrBlank()) Chip("Use the built-in", false) { text = builtIn; update { s -> s.copy(traits = s.traits - p) } }
+    }
+}
+
+/** Who complains about the battery: the owner's own character under People, or the house's. */
+@Composable
+private fun batteryVoice(services: AssistantServices, settings: AgentSettings): String {
+    val people by services.faces.people.collectAsState()
+    return settings.characterOf(people.firstOrNull { it.role == app.homeydash.agent.Role.Owner }).label
+}
+
+/** The character in [s] says what it is like, in its own voice, as it is picked. */
+internal fun introduce(services: AssistantServices, scope: kotlinx.coroutines.CoroutineScope, s: AgentSettings) {
+    val swedish = s.answers != Language.English
+    val text = s.persona.intro(s.nameOf(s.persona), swedish, s.humor)
+    scope.launch { services.output.speak(text, if (swedish) Language.Swedish else Language.English, s.voice) }
+}
+
+/** Whether a voice made on the tablet (TARS's, Alma's) is there yet, with a way to fetch it. */
+@Composable
+private fun PiperVoiceState(voice: app.homeydash.assistant.PiperVoice, ready: String, missing: String) {
+    val g = GlassTheme.colors
+    val state by voice.state.collectAsState()
     val text = when (val s = state) {
-        app.homeydash.assistant.TarsVoice.State.Ready -> "TARS's voice is on the tablet. It's a fan-made copy of Bill Irwin's voice from the film (TARS-AI, non-commercial licence), for home use."
-        app.homeydash.assistant.TarsVoice.State.Missing -> "TARS's voice isn't downloaded yet (about 70 MB). Until it is, the tablet's own voice speaks."
-        is app.homeydash.assistant.TarsVoice.State.Downloading -> "Downloading ${s.what}: ${(s.progress * 100).toInt()} %"
-        is app.homeydash.assistant.TarsVoice.State.Failed -> "Couldn't get TARS's voice: ${s.message}"
+        app.homeydash.assistant.PiperVoice.State.Ready -> ready
+        app.homeydash.assistant.PiperVoice.State.Missing -> missing
+        is app.homeydash.assistant.PiperVoice.State.Downloading -> "Downloading ${s.what}: ${(s.progress * 100).toInt()} %"
+        is app.homeydash.assistant.PiperVoice.State.Failed -> "Couldn't get the voice: ${s.message}"
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text, style = MaterialTheme.typography.bodyMedium, color = g.muted, modifier = Modifier.weight(1f))
-        if (state is app.homeydash.assistant.TarsVoice.State.Missing || state is app.homeydash.assistant.TarsVoice.State.Failed) {
-            Chip("Download", false) { services.tars.download() }
+        if (state is app.homeydash.assistant.PiperVoice.State.Missing || state is app.homeydash.assistant.PiperVoice.State.Failed) {
+            Chip("Download", false) { voice.download() }
         }
     }
 }
@@ -435,10 +515,15 @@ private fun PrivacyPage(
             Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.45f },
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(secret.title, style = MaterialTheme.typography.labelLarge, color = g.fg)
-            Text(secret.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-            Segmented(Access.entries, settings.access(secret), { it.label }, enabled = enabled) { a ->
-                update { it.copy(secrets = it.secrets + (secret to a)) }
+            // Like an iOS settings row: what it is on the left, a small Off / Local / On switch on the right.
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(secret.title, style = MaterialTheme.typography.labelLarge, color = g.fg)
+                    Text(secret.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                }
+                Segmented(Access.entries, settings.access(secret), { it.label }, enabled = enabled, compact = true) { a ->
+                    update { it.copy(secrets = it.secrets + (secret to a)) }
+                }
             }
             if (secret == Secret.Phones && settings.access(secret) != Access.Off) NavRow(Sym.phone, "Whose phone is whose", onPhones)
         }
@@ -726,9 +811,10 @@ internal fun Label(text: String) {
 }
 
 @Composable
-internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, enabled: Boolean = true, onPick: (T) -> Unit) {
+internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, enabled: Boolean = true, compact: Boolean = false, onPick: (T) -> Unit) {
     val g = GlassTheme.colors
-    Row(Modifier.fillMaxWidth().glass(PillShape).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    // Compact sits beside its title, sized to its words; otherwise it spans the page.
+    Row((if (compact) Modifier.width(IntrinsicSize.Max) else Modifier.fillMaxWidth()).glass(PillShape).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         options.forEach { option ->
             val on = option == selected
             Text(
@@ -741,14 +827,14 @@ internal fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, 
                     .weight(1f)
                     .pressable({ onPick(option) }.takeIf { enabled })
                     .then(if (on) Modifier.background(g.fg, PillShape) else Modifier)
-                    .padding(vertical = 11.dp),
+                    .padding(vertical = if (compact) 7.dp else 11.dp, horizontal = if (compact) 14.dp else 0.dp),
             )
         }
     }
 }
 
 @Composable
-private fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, hint: String = "", onChange: (String) -> Unit) {
+internal fun Field(label: String, value: String, secret: Boolean = false, keyboard: KeyboardType = KeyboardType.Text, hint: String = "", onChange: (String) -> Unit) {
     val g = GlassTheme.colors
     var text by remember { mutableStateOf(value) }
     var reveal by remember { mutableStateOf(false) }
@@ -790,14 +876,14 @@ private fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Boo
 }
 
 @Composable
-internal fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick: () -> Unit) {
+internal fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth()) {
     val g = GlassTheme.colors
     Row(
-        Modifier.fillMaxWidth().pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
+        modifier.pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SymIcon(icon, size = 20.dp)
-        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
+        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 10.dp))
         SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
     }
 }
@@ -832,6 +918,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             Chip(v.label, v == settings.voice) {
                 update { it.copy(voice = v) }
                 if (v == VoiceStyle.Tars) services.tars.download()
+                if (v == VoiceStyle.Alma) services.alma.download()
             }
         }
         Chip("Hear it", false) {
@@ -864,18 +951,30 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         Chip("Battery reminders", settings.batteryReminders) { update { it.copy(batteryReminders = !it.batteryReminders) } }
     }
     Text(
-        "Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, ${settings.persona.label} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
+        "Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, ${batteryVoice(services, settings)} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    if (settings.voice == VoiceStyle.Alma) {
+        PiperVoiceState(
+            services.alma,
+            "Alma's voice is on the tablet, so Swedish answers need no computer and start straight away.",
+            "Alma's voice isn't downloaded yet (about 63 MB). Until it is, the tablet's own voice speaks.",
+        )
+    }
     if (settings.voice.local && settings.voice != VoiceStyle.Tars) {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
-        Field("Voice", settings.voiceServerVoice) { voice -> update { it.copy(voiceServerVoice = voice) } }
+        app.homeydash.agent.Persona.entries.forEach { p ->
+            Field("${p.label}'s voice", settings.warmVoices[p].orEmpty()) { voice ->
+                update { it.copy(warmVoices = if (voice.isBlank()) it.warmVoices - p else it.warmVoices + (p to voice)) }
+            }
+        }
         Text(
-            "On the Mac: \"pip install mlx-audio\", then \"mlx_audio.server --host 0.0.0.0 --port 8090\". " +
-                "Everything stays in the house. Leave Voice empty for the model's own voice. Tap Hear it to try it; " +
-                "if the computer doesn't answer, the tablet's voice speaks and it tries the computer again two minutes later.",
+            "Chatterbox on the Mac copies a voice from a 15-20 second recording in the voices folder: type its name " +
+                "(\"anna\" for anna.wav) for each character, or leave it empty for the model's own voice. People can pick " +
+                "their own under People. Everything stays in the house. Tap Hear it to try it; if the computer doesn't " +
+                "answer, the tablet's voice speaks and it tries the computer again two minutes later.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )

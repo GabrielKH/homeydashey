@@ -20,7 +20,19 @@ data class KnownPerson(
     val prints: Map<String, List<FloatArray>> = emptyMap(),
     /** The voiceprints for the wake name in use, picked by [forWake]; what [VoiceId] matches. */
     val print: List<FloatArray> = emptyList(),
+    /**
+     * The characters this person talks with, in the order picked (TARS and Nova for one, only Nova
+     * for another); empty for the house's. The first answers when no name is said.
+     */
+    val characters: List<Persona> = emptyList(),
+    /** The voice each of their characters speaks in with them; missing for that character's usual voice. */
+    val voices: Map<Persona, VoiceStyle> = emptyMap(),
+    /** The Warm voice recording each of their characters speaks in with them; missing for the house's. */
+    val warmVoices: Map<Persona, String> = emptyMap(),
 ) {
+    /** Their first character, null for the house's. */
+    val character: Persona? get() = characters.firstOrNull()
+
     fun printsFor(wakeName: String): List<FloatArray> = prints[WakeName.key(wakeName)].orEmpty()
 
     /** This person as heard with [wakeName]: [print] holds that name's voiceprints. */
@@ -103,10 +115,13 @@ object WakeName {
      * instead of the name, and "[unk]". Without the decoys, any sound close enough is
      * forced onto the name; [vocabulary] keeps only words the model knows.
      */
-    fun grammar(name: String, vocabulary: Set<String>? = null): String {
-        val own = clean(name).split(' ').toSet()
+    fun grammar(name: String, vocabulary: Set<String>? = null): String = grammar(listOf(name), vocabulary)
+
+    /** The grammar for several names at once ("Nova" and "TARS"), so any of them wakes it. */
+    fun grammar(names: List<String>, vocabulary: Set<String>? = null): String {
+        val own = names.flatMap { clean(it).split(' ') }.toSet()
         val decoys = DECOYS.filter { it !in own && (vocabulary == null || it in vocabulary) }
-        return (phrases(name) + decoys + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
+        return (names.flatMap { phrases(it) }.distinct() + decoys + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
     }
 
     /** Short everyday words; also ones that sound like common names, so they don't wake it. */

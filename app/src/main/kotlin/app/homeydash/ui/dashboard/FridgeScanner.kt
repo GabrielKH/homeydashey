@@ -127,6 +127,8 @@ internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (Fridg
     var last by remember { mutableStateOf<Pair<String, Long>?>(null) }
     var hunt by remember { mutableStateOf<DateHunt?>(null) }
     var seenDate by remember { mutableStateOf<java.time.LocalDate?>(null) }
+    // What the last scan took out because it was already in the fridge, to put back.
+    var used by remember { mutableStateOf<Pair<FridgeItem, String>?>(null) }
     val beep = remember { runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70) }.getOrNull() }
 
     // Face recognition watches the same front camera; it gets the camera back afterwards.
@@ -178,19 +180,42 @@ internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (Fridg
         if (seenDate == d.date) dateFound(d) else seenDate = d.date
     }
 
-    fun handle(raw: String) {
+    fun handle(raw: String, forceAdd: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
         if (busy) return
-        // The same code held in view is read many times a second.
-        last?.let { (code, at) -> if (code == raw && now - at < SAME_CODE_PAUSE_MS) return }
+        // The same code held in view is read many times a second: it counts again only after
+        // it has been out of view for a moment.
+        if (!forceAdd) last?.let { (code, at) ->
+            if (code == raw && now - at < SAME_CODE_PAUSE_MS) {
+                last = raw to now
+                return
+            }
+        }
         // A new product waiting for its date is confirmed first.
         if (hunt?.draft != null) return
         last = raw to now
         hunt = null
         seenDate = null
-        busy = true
+        used = null
         beep?.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
         val code = ScanCodes.parse(raw) ?: ScanCode(raw, key = "qr:$raw")
+        // Already in the fridge and not just bought: scanning it again means it is eaten or finished.
+        val inStock = if (forceAdd) null else kitchen.fridge.scannedAgain(code.key)
+        if (inStock != null) {
+            busy = true
+            scope.launch {
+                try {
+                    val left = kitchen.fridge.useOne(inStock.id)
+                    used = inStock to raw
+                    added = added.filterNot { it == inStock.id && left == 0 }
+                    status = if (left > 0) "Took out one ${inStock.name} · $left left" else "${inStock.name} is finished"
+                } finally {
+                    busy = false
+                }
+            }
+            return
+        }
+        busy = true
         // A GS1 2D code carries its own date; otherwise read it off the pack meanwhile.
         if (code.date == null) hunt = DateHunt(raw)
         status = if (code.date == null) "Now show the date on the pack" else null
@@ -240,13 +265,35 @@ internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (Fridg
             ) {
                 if (allowed) {
                     val readDate = hunt?.date == null && hunt != null
-                    BarcodeCamera(front, readText = readDate, onCode = ::handle, onText = ::handleText, modifier = Modifier.fillMaxSize())
+                    BarcodeCamera(front, readText = readDate, onCode = { handle(it) }, onText = ::handleText, modifier = Modifier.fillMaxSize())
                     // Where to hold the code, or the date.
                     Box(
                         Modifier.fillMaxWidth(0.62f).aspectRatio(if (readDate) 3.2f else 2.2f)
                             .border(3.dp, if (readDate) g.on else Color.White.copy(alpha = 0.85f), RoundedCornerShape(18.dp)),
                     )
                     if (busy) CircularProgressIndicator(color = Color.White)
+                    used?.let { (u, raw) ->
+                        Row(Modifier.align(Alignment.TopEnd).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("Put back" to false, "Add one instead" to true).forEach { (label, addInstead) ->
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Color.White,
+                                    modifier = Modifier
+                                        .pressable({
+                                            used = null
+                                            scope.launch {
+                                                kitchen.fridge.putBack(u)
+                                                status = "Put back ${u.name}"
+                                                if (addInstead) handle(raw, forceAdd = true)
+                                            }
+                                        })
+                                        .background(Color.Black.copy(alpha = 0.55f), PillShape)
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                )
+                            }
+                        }
+                    }
                     if (hunt != null) {
                         Text(
                             "Skip date",
@@ -302,7 +349,7 @@ internal fun ScannerDialog(kitchen: Kitchen, faces: FaceService?, onEdit: (Fridg
                                     "Undo",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = g.fg,
-                                    modifier = Modifier.pressable({ scope.launch { kitchen.fridge.useOne(item.id) } }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
+                                    modifier = Modifier.pressable({ scope.launch { kitchen.fridge.useOne(item.id, eaten = false) } }).glass(PillShape).padding(horizontal = 14.dp, vertical = 8.dp),
                                 )
                             }
                         }

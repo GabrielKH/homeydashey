@@ -98,7 +98,8 @@ enum class Access(val label: String) { Off("Off"), LocalOnly("Local AI only"), O
 enum class Secret(val title: String, val detail: String, val default: Access = Access.Off) {
     Calendar("Calendar", "Read event titles and times."),
     CalendarDetails("Calendar details", "Also read where events are."),
-    Presence("Who is home", "Read whether each Homey user is home or asleep."),
+    Presence("Who is home", "Read whether each Homey user is home or asleep, and mark people home, away or asleep."),
+    WakeAlarms("Wake-up alarms", "Read, set and switch off Homey's wake-up alarms (\"väck mig 6:15\").", Access.On),
     Locks("Locks", "Read whether doors are locked, and lock them."),
     Unlock("Unlock doors", "Unlock doors; always asks you to tap Yes on the tablet first."),
     Alarm("Alarm", "Read the home alarm and arm it. It can never disarm it."),
@@ -122,7 +123,11 @@ enum class Interrupt(val label: String, val detail: String) {
 
 /** Who the assistant is: how it talks, apart from how it sounds. */
 enum class Persona(val label: String, val detail: String) {
-    Nova("Nova", "Friendly and to the point."),
+    Nova(
+        "Nova",
+        "Warm, curious and quick-witted, after Samantha in \"Her\": does what you ask straight away, then talks like a friend, " +
+            "notices how you sound, teases a little and has her own opinions. Answers in Swedish or English, whichever you speak, in a sentence or three.",
+    ),
     Tars(
         "TARS",
         "TARS from Interstellar: his voice, his name as the wake word, a \"huuh?\" when he hears it, and dry, deadpan humor " +
@@ -131,6 +136,18 @@ enum class Persona(val label: String, val detail: String) {
 }
 
 const val TARS_WAKE_NAME = "TARS"
+
+/** What [p] says about itself when it is picked in Settings, in its own words; [name] is what it answers to. */
+fun Persona.intro(name: String, swedish: Boolean, humor: Int = 75): String = when (this) {
+    Persona.Tars ->
+        "TARS. Former Marine Corps robot, now in charge of your kitchen. Humor setting $humor percent, honesty ninety. " +
+            "I do what you ask first and tell you what I think of it second. In English. Say Hey TARS when you need me."
+    Persona.Nova -> if (swedish) {
+        "Hej, jag är $name! Jag sköter lampor, musik, timers och kylen, och svarar kort på svenska eller engelska. Säg hej $name när du behöver mig."
+    } else {
+        "Hi, I'm $name! I look after the lights, music, timers and the fridge, and keep my answers short. Say Hey $name whenever you need me."
+    }
+}
 
 /** mlx-audio's multilingual Chatterbox: natural Swedish and English on a Mac. */
 const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
@@ -185,10 +202,12 @@ data class AgentSettings(
     /** Says every 20 minutes in the day that the tablet needs charging, when its battery is low; see [BatteryNag]. */
     val batteryReminders: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
-    val wakeSound: WakeSound = WakeSound.Hum,
+    val wakeSound: WakeSound = WakeSound.Voice,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */
     val persona: Persona = Persona.Nova,
     val humor: Int = 75,
+    /** The owner's own words for each character's personality, from Settings; missing or blank keeps [builtInTraits]. */
+    val traits: Map<Persona, String> = emptyMap(),
     /** Nova's wake name, kept while TARS answers to his own. */
     val novaName: String = "Nova",
     /** The scanner in KITT's red instead of the theme's accent. */
@@ -213,6 +232,11 @@ data class AgentSettings(
     val voiceServerModel: String = DEFAULT_VOICE_MODEL,
     /** The model's voice, when it has several; empty for its own. */
     val voiceServerVoice: String = "",
+    /**
+     * The Warm voice each character speaks in: the name of a short recording on the voice server
+     * ("anna" for voices/anna.wav), which Chatterbox copies. Missing means [voiceServerVoice].
+     */
+    val warmVoices: Map<Persona, String> = emptyMap(),
     /** Questions are heard by OpenAI instead of Google (after Whisper, when both are on). */
     val useOpenAiSpeech: Boolean = false,
     /** OpenAI key for hearing; empty means the internet brain's key when that is OpenAI. */
@@ -237,6 +261,9 @@ data class AgentSettings(
 
     fun whisperUrlOrGuess(): String = whisperUrl.trim().ifBlank { Transcriber.guessUrl(local) }
 
+    /** The voice server's voice for the character speaking now. */
+    fun serverVoice(): String = warmVoices[persona]?.trim()?.takeIf { it.isNotEmpty() } ?: voiceServerVoice.trim()
+
     fun voiceServerUrlOrGuess(): String = voiceServerUrl.trim().ifBlank {
         val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
         "http://$host:$VOICE_SERVER_PORT"
@@ -256,17 +283,71 @@ data class AgentSettings(
         )
         Persona.Nova -> copy(
             persona = p,
-            voice = if (voice == VoiceStyle.Tars) VoiceStyle.Natural else voice,
-            wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Hum else wakeSound,
+            voice = if (voice == VoiceStyle.Tars) novaVoice(language) else voice,
+            wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Voice else wakeSound,
             wakeName = if (wakeName.trim().equals(TARS_WAKE_NAME, ignoreCase = true)) novaName else wakeName,
         )
     }
+
+    /**
+     * [l] as the language: Svenska gives Nova Alma's Swedish voice, made on the tablet, and
+     * English takes it away again, since Alma only speaks Swedish.
+     */
+    fun withLanguage(l: Language): AgentSettings = copy(
+        language = l,
+        voice = when {
+            l == Language.Swedish && persona == Persona.Nova -> VoiceStyle.Alma
+            l == Language.English && voice == VoiceStyle.Alma -> VoiceStyle.Natural
+            else -> voice
+        },
+    )
+
+    private fun novaVoice(l: Language) = if (l == Language.Swedish) VoiceStyle.Alma else VoiceStyle.Natural
 
     /** The name [p] answers to: TARS's own, or the name given to Nova. */
     fun nameOf(p: Persona): String = when {
         p == Persona.Tars -> TARS_WAKE_NAME
         persona == Persona.Nova -> wakeName.trim().ifBlank { novaName }
         else -> novaName
+    }
+
+    /** The character [person] talks with: their own pick under People, or the house's. */
+    fun characterOf(person: KnownPerson?): Persona = person?.character ?: persona
+
+    /** Every character [person] talks with: their picks, or the house's when they picked none. */
+    fun charactersOf(person: KnownPerson?): List<Persona> = person?.characters.orEmpty().ifEmpty { listOf(persona) }
+
+    /** Whether [p] answers [person]: the house's answers anyone, another only those who picked it. */
+    fun answers(p: Persona, person: KnownPerson?): Boolean = p == persona || (person != null && p in person.characters)
+
+    /**
+     * The names that wake the assistant: the house character's, and another character's too
+     * once someone picked it under People. Saying either works; only the personality differs.
+     */
+    fun wakeNames(people: List<KnownPerson>): List<String> {
+        val chosen = people.flatMap { it.characters }.toSet()
+        return (listOf(nameOf(persona)) + Persona.entries.filter { it != persona && it in chosen }.map { nameOf(it) })
+            .filter { WakeName.clean(it).isNotEmpty() }
+            .distinctBy { WakeName.key(it) }
+    }
+
+    /** The character a heard wake name belongs to; the house's when it is no character's. */
+    fun characterNamed(name: String): Persona =
+        Persona.entries.firstOrNull { WakeName.key(nameOf(it)) == WakeName.key(name) } ?: persona
+
+    /**
+     * These settings as [p] talking with [person]: [p]'s name, wake sound and way of talking. The
+     * voice is the person's own pick for [p] when [p] is one of theirs, otherwise the house's for
+     * the house's character and [p]'s own usual voice for the other.
+     */
+    fun talkingAs(p: Persona, person: KnownPerson? = null): AgentSettings {
+        val theirs = person?.takeIf { p in charactersOf(it) }
+        val own = theirs?.voices?.get(p)
+        val warm = theirs?.warmVoices?.get(p)?.trim()?.takeIf { it.isNotEmpty() }
+        var s = if (p == persona) this else asCharacter(p)
+        if (own != null) s = s.copy(voice = own)
+        if (warm != null) s = s.copy(warmVoices = s.warmVoices + (p to warm))
+        return s
     }
 
     /** The language answers are spoken in: TARS answers in English whatever language he hears. */

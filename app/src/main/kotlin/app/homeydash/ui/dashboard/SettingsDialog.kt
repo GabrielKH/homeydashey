@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.homeydash.ui.components.AppDialog
+import app.homeydash.ui.components.Compact
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
@@ -85,7 +86,7 @@ fun SettingsDialog(
     onDismiss: () -> Unit,
 ) {
     val g = GlassTheme.colors
-    AppDialog(onDismiss) {
+    AppDialog(onDismiss) { Compact {
         Column(
             Modifier
                 .dialogSize(560.dp, tall = true)
@@ -93,7 +94,7 @@ fun SettingsDialog(
                 .glass()
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Settings", style = MaterialTheme.typography.headlineMedium, color = g.fg)
             Text("Appearance", style = MaterialTheme.typography.labelMedium, color = g.muted)
@@ -248,53 +249,14 @@ fun SettingsDialog(
                 style = MaterialTheme.typography.bodyMedium,
                 color = g.muted,
             )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .pressable(onChooseDevices)
-                    .glass(PillShape)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SymIcon(Sym.visibilityOff, size = 20.dp)
-                Text("Choose devices to show", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
-                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            // Two to a row, so the list of pages takes half the height.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NavPill(Sym.visibilityOff, "Devices to show", onChooseDevices, Modifier.weight(1f))
+                NavPill(Sym.sliders, "Hide and sort rooms", onChooseRooms, Modifier.weight(1f))
             }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .pressable(onChooseRooms)
-                    .glass(PillShape)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SymIcon(Sym.sliders, size = 20.dp)
-                Text("Hide and sort rooms", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
-                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
-            }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .pressable(onWeather)
-                    .glass(PillShape)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SymIcon(Sym.mapPin, size = 20.dp)
-                Text("Weather location", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
-                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
-            }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .pressable(onCalendars)
-                    .glass(PillShape)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SymIcon(Sym.calendar, size = 20.dp)
-                Text("Calendars", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
-                SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NavPill(Sym.mapPin, "Weather location", onWeather, Modifier.weight(1f))
+                NavPill(Sym.calendar, "Calendars", onCalendars, Modifier.weight(1f))
             }
             Text("Assistant", style = MaterialTheme.typography.labelMedium, color = g.muted)
             Row(
@@ -355,6 +317,20 @@ fun SettingsDialog(
                 }
             }
         }
+    } }
+}
+
+/** A page to open, as a glass pill with its icon and a chevron; sized by [modifier]. */
+@Composable
+private fun NavPill(icon: app.homeydash.ui.components.Ic, text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val g = GlassTheme.colors
+    Row(
+        modifier.pressable(onClick).glass(PillShape).padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SymIcon(icon, size = 20.dp)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg, maxLines = 1, modifier = Modifier.weight(1f).padding(start = 10.dp))
+        SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
     }
 }
 
@@ -373,7 +349,7 @@ private fun ScreenSettings(
     val hasProximity = remember(context) {
         (context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager)?.getDefaultSensor(Sensor.TYPE_PROXIMITY) != null
     }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Screen", style = MaterialTheme.typography.labelMedium, color = g.muted)
         Text("Dim the screen after", style = MaterialTheme.typography.labelLarge, color = g.fg)
         Row(

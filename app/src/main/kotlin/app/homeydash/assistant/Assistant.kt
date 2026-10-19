@@ -64,8 +64,10 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val agent = Agent(chat, routines = { routines.data.value }, memory = memory)
     val input = SpeechInput(appContext)
     /** TARS's voice, downloaded to the tablet when TARS is chosen. */
-    val tars = TarsVoice(appContext, http, scope)
-    val output = SpeechOutput(appContext, http, tars, scope) { settings.value }
+    val tars = PiperVoice(appContext, http, scope, PiperVoice.TARS)
+    /** Alma's Swedish voice, downloaded to the tablet when Nova speaks Svenska. */
+    val alma = PiperVoice(appContext, http, scope, PiperVoice.ALMA)
+    val output = SpeechOutput(appContext, http, tars, alma, scope) { settings.value }
     val server = AnswerServer(appContext)
     val faces = FaceService(appContext)
     val web = WebSearch(http)
@@ -97,6 +99,32 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
         scope.launch { memory.load() }
     }
 
+    /**
+     * Feeds Homey's presence and the wake-up alarms set on the tablet into the memory graph,
+     * as habits counted without the AI, while the Homey connection lasts. Nothing is kept when
+     * Memory or the matching privacy switch is off.
+     */
+    suspend fun learnFrom(household: app.homeydash.homey.HouseholdStore) = kotlinx.coroutines.coroutineScope {
+        fun people() = faces.people.value.associate { it.id to it.name }
+        launch {
+            household.changes.collect { change ->
+                val s = settings.value
+                if (s.access(Secret.Memory) == Access.Off || s.access(Secret.Presence) == Access.Off) return@collect
+                val fact = app.homeydash.agent.HouseholdMemory.presence(change, java.time.ZoneId.systemDefault(), s.access(Secret.Presence) == Access.LocalOnly)
+                    ?: return@collect
+                runCatching { memory.learn(listOf(fact)) }
+            }
+        }
+        launch {
+            household.alarmSaved.collect { alarm ->
+                val s = settings.value
+                if (s.access(Secret.Memory) == Access.Off || s.access(Secret.WakeAlarms) == Access.Off) return@collect
+                val fact = app.homeydash.agent.HouseholdMemory.alarm(alarm, people(), null, java.time.ZonedDateTime.now(), s.access(Secret.WakeAlarms) == Access.LocalOnly)
+                runCatching { memory.learn(listOf(fact)) }
+            }
+        }
+    }
+
     fun trace(kind: String, text: String, localOnly: Boolean) {
         // Kept in order; a line appended to a small file.
         log.add(kind, text, localOnly)
@@ -112,9 +140,13 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
 
     private val wakeSounds = mutableMapOf<app.homeydash.agent.WakeSound, ShortArray>()
 
-    /** Plays the sound for hearing the wake name and returns how long it lasts, in milliseconds. */
-    fun playWakeSound(sound: app.homeydash.agent.WakeSound): Long {
-        val pcm = synchronized(wakeSounds) { wakeSounds.getOrPut(sound) { app.homeydash.agent.WakeSounds.render(sound) } }
+    /**
+     * Plays the sound for hearing the wake name and returns how long it lasts, in milliseconds.
+     * [voiced] is the answer in the assistant's own voice ("Ja?"), when [sound] is that one and it's made.
+     */
+    fun playWakeSound(sound: app.homeydash.agent.WakeSound, voiced: app.homeydash.agent.Pcm? = null): Long {
+        val rate = voiced?.sampleRate ?: app.homeydash.agent.WakeSounds.RATE
+        val pcm = voiced?.samples ?: synchronized(wakeSounds) { wakeSounds.getOrPut(sound) { app.homeydash.agent.WakeSounds.render(sound) } }
         if (pcm.isEmpty()) return 0
         val track = runCatching {
             android.media.AudioTrack.Builder()
@@ -127,7 +159,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
                 .setAudioFormat(
                     android.media.AudioFormat.Builder()
                         .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(app.homeydash.agent.WakeSounds.RATE)
+                        .setSampleRate(rate)
                         .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
                         .build(),
                 )
@@ -136,7 +168,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
                 .build()
                 .also { it.write(pcm, 0, pcm.size); it.play() }
         }.getOrNull() ?: return 0
-        val ms = pcm.size * 1000L / app.homeydash.agent.WakeSounds.RATE
+        val ms = pcm.size * 1000L / rate
         logScope.launch { delay(ms + 300); runCatching { track.release() } }
         return ms
     }
@@ -257,6 +289,9 @@ class Assistant(
     /** A small moving picture that goes with the answer, like rain while it tells the weather. */
     var scene by mutableStateOf<Scene?>(null)
     val lines = mutableStateListOf<Line>()
+
+    /** The answer line being written as it is said, sentence by sentence; the full answer replaces it. */
+    private var caption: Int? = null
     /** What the assistant is doing for the current question, step by step, as it happens. */
     val activity = mutableStateListOf<AgentStep>()
     var pending by mutableStateOf<PendingAction?>(null)
@@ -279,7 +314,22 @@ class Assistant(
     private var dictating = false
     /** When the conversation stops listening for a next question (elapsed realtime). */
     private var conversationUntil = 0L
-    private val settings: AgentSettings get() = services.settings.value
+    /**
+     * The settings as the character who is talking: the one woken by its name, for the rest of
+     * that conversation, or else the one the person at the tablet picked under People.
+     */
+    private val settings: AgentSettings get() {
+        val s = services.settings.value
+        val people = services.faces.people.value
+        val w = woken?.takeIf { conversing || state != AssistantState.Idle || SystemClock.elapsedRealtime() - it.at < WOKEN_MS }
+        if (w != null) return s.talkingAs(w.character, people.firstOrNull { it.id == w.personId })
+        val here = services.faces.current()?.person?.takeIf { s.access(Secret.Faces) != Access.Off }?.let { p -> people.firstOrNull { it.id == p.id } }
+        return s.talkingAs(s.characterOf(here), here)
+    }
+
+    /** Which character was woken by its name, and by whom when the voice was known. */
+    private class Woken(val character: app.homeydash.agent.Persona, val personId: String?, val at: Long)
+    private var woken: Woken? = null
 
     /** When the last spoken question ended (elapsed realtime) and how long writing it down took, for its [Timing]. */
     private var speechEnd: Long? = null
@@ -337,7 +387,10 @@ class Assistant(
     private var lastNag: String? = null
 
     private suspend fun nagAboutBattery() {
-        val s = settings
+        // In the owner's own character and voice, whoever was last at the tablet.
+        val base = services.settings.value
+        val owner = services.faces.people.value.firstOrNull { it.role == Role.Owner }
+        val s = base.talkingAs(base.characterOf(owner), owner)
         val bm = services.appContext.getSystemService(android.os.BatteryManager::class.java) ?: return
         val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
         val charging = bm.isCharging
@@ -359,7 +412,7 @@ class Assistant(
         services.onActive?.invoke()
         open = true
         lines += Line(false, text)
-        say(text)
+        say(text, s)
         state = AssistantState.Idle
     }
 
@@ -637,9 +690,14 @@ class Assistant(
         state = AssistantState.Idle
     }
 
-    /** The wake name was heard; [person] is whoever the voice belongs to, if known. */
-    fun wake(person: KnownPerson?) {
+    /**
+     * The wake name was heard; [person] is whoever the voice belongs to, if known, and
+     * [character] the one whose name was said, which answers for this conversation.
+     */
+    fun wake(person: KnownPerson?, character: app.homeydash.agent.Persona = services.settings.value.characterOf(person)) {
         voice = Seen(person, SystemClock.elapsedRealtime())
+        woken = Woken(character, person?.id, SystemClock.elapsedRealtime())
+        rememberWoke(person, character)
         // Woken again after it was stopped: a new talk, so the last one's answers aren't still on screen.
         if (!conversing && state == AssistantState.Idle) freshScreen()
         // Said while it was thinking or talking: like a person, it stops and listens.
@@ -663,9 +721,34 @@ class Assistant(
         scope.launch {
             delay(WAKE_SOUND_AFTER_MS)
             if (!waking) return@launch
-            val ms = services.playWakeSound(settings.wakeSound)
+            val ms = services.playWakeSound(settings.wakeSound, wakeAnswer())
             delay(ms + 60)
             if (waking && state == AssistantState.Idle) listen() else waking = false
+        }
+    }
+
+    /** The last "Ja?", so the next one is different. */
+    private var lastWakeAnswer: String? = null
+
+    /** "Ja?" in the voice that talks now, when that wake sound is chosen and already made; else null (the hum plays). */
+    private fun wakeAnswer(): app.homeydash.agent.Pcm? {
+        val s = settings
+        if (s.wakeSound != app.homeydash.agent.WakeSound.Voice) return null
+        val swedish = s.answers != app.homeydash.agent.Language.English
+        val options = app.homeydash.agent.ThinkingSounds.answers(s.persona, swedish)
+        val ready = options.filter { services.output.hasSound(it, swedish, s.voice) }
+        if (ready.size < options.size) services.output.prepareSounds(options, swedish, s.voice)
+        val text = app.homeydash.agent.ThinkingSounds.pick(ready, lastWakeAnswer) ?: return null
+        lastWakeAnswer = text
+        return services.output.prepared(text, swedish, s.voice)
+    }
+
+    /** Counts who wakes which character, for the memory, once the house has more than one in use. */
+    private fun rememberWoke(person: KnownPerson?, character: app.homeydash.agent.Persona) {
+        val s = services.settings.value
+        if (person == null || s.access(Secret.Memory) == Access.Off || s.wakeNames(services.faces.people.value).size < 2) return
+        scope.launch {
+            runCatching { services.memory.learn(listOf(app.homeydash.agent.Memory.woke(app.homeydash.agent.Asker(person.id, person.name), character, java.time.ZonedDateTime.now()))) }
         }
     }
 
@@ -758,9 +841,29 @@ class Assistant(
                 app.homeydash.agent.Language.Auto -> app.homeydash.agent.Confirmation.looksSwedish(text)
             }
             val begun = java.util.concurrent.atomic.AtomicBoolean(false)
+            var filler: String? = null
+            caption = null
             val speaking = live?.let { pieces ->
                 launch {
-                    services.output.speakLive(pieces, swedish, settings.voice, onStart = { clock.sound(isFiller = !begun.get()); state = AssistantState.Speaking }, onFrame = ::meter)
+                    services.output.speakLive(
+                        pieces, swedish, settings.voice,
+                        onStart = { clock.sound(isFiller = !begun.get()); state = AssistantState.Speaking },
+                        onFrame = ::meter,
+                        // The words appear as they're heard, not all at once after the voice is done.
+                        onSentence = { sentence ->
+                            val words = sentence.trim()
+                            fun letters(x: String) = x.filter { it.isLetter() }.lowercase()
+                            if (filler?.let { letters(it) == letters(words) } != true) {
+                                val at = caption?.takeIf { it == lines.lastIndex && !lines[it].fromUser }
+                                if (at == null) {
+                                    lines += Line(false, words)
+                                    caption = lines.lastIndex
+                                } else {
+                                    lines[at] = lines[at].copy(text = lines[at].text + " " + words)
+                                }
+                            }
+                        },
+                    )
                 }
             }
             // Not for follow-ups: those may turn out to be people talking to each other.
@@ -772,6 +875,7 @@ class Assistant(
                     val sound = app.homeydash.agent.ThinkingSounds.pick(ready, lastHmm)
                     if (!begun.get() && sound != null) {
                         lastHmm = sound
+                        filler = sound
                         services.trace("voice", "Said \"$sound\" while the answer took a moment.", false)
                         pieces.trySend(sound)
                     }
@@ -928,7 +1032,10 @@ class Assistant(
         }
         pending = services.agent.pending
         val brain: Connection? = reply.brain
-        lines += Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions, steps = steps())
+        val line = Line(false, reply.text, error = reply.error, brain = brain?.provider?.label, local = brain?.local, actions = reply.actions, steps = steps())
+        val at = caption?.takeIf { it == lines.lastIndex && !lines[it].fromUser }
+        caption = null
+        if (at != null) lines[at] = line else lines += line
         val clock = timing?.also { timing = null }
         if (settings.speak && !reply.error && !reply.spoken) {
             if (clock != null && clock.sentenceAt == 0L) clock.sentenceAt = SystemClock.elapsedRealtime()
@@ -976,10 +1083,9 @@ class Assistant(
     }
 
     /** Says [text] on the chosen speaker, or on the tablet when there is none or it fails; [onStart] when it starts. */
-    private suspend fun say(text: String, onStart: () -> Unit = {}) {
+    private suspend fun say(text: String, s: AgentSettings = settings, onStart: () -> Unit = {}) {
         state = AssistantState.Speaking
         answering = true
-        val s = settings
         val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
         if (speaker != null && sayOn(speaker.second, text, s, onStart)) return
         services.output.speak(text, s.answers, s.voice, ::meter, onStart)
@@ -1085,6 +1191,8 @@ class Assistant(
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */
         const val WAKE_SOUND_AFTER_MS = 200L
+        /** How long a woken character stays after the wake when no conversation follows. */
+        const val WOKEN_MS = 60_000L
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
         const val HINT_CHARS = 400

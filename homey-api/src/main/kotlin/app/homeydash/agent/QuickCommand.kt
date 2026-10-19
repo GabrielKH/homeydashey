@@ -3,8 +3,8 @@ package app.homeydash.agent
 /**
  * Plain on, off and dim commands, understood without the AI: "tänd taklampan i
  * vardagsrummet", "släck i köket", "sätt köksbordet på 30 %", "turn off the hall light".
- * They are run straight away, which is faster and can't go wrong the way a small model
- * can (promising to do something and not doing it). Anything else goes to the AI.
+ * No longer run before the AI (Gabriel, 2026-10-18: everything goes through the AI, its
+ * rules carry these words); kept with its tests should a fast path come back.
  */
 object QuickCommand {
     /** What to do: [device] or every light in [roomId], set to [on] or to [dim] (0..1). */
@@ -27,31 +27,47 @@ object QuickCommand {
     private val MANY =Regex("""\b(alla|allt|lamporna|lampor|ljuset|lights|everything)\b""")
     private val ROOM_WORDS = Regex("""\b(alla lampor(?:na)?|lamporna|lampor|ljuset|ljus|allt|alla|all the lights|all lights|the lights|lights|everything|in|i)\b""")
 
-    fun parse(text: String, view: HomeView): Action? {
+    /** "min nattlampa", "my lamp": the person asking owns it. */
+    private val MINE = Regex("""(?<![\p{L}\d_])(min|mitt|mina|my)(?![\p{L}\d_])""")
+
+    /** [who] is the name of the person asking, when the tablet knows them; "min nattlampa" is theirs. */
+    fun parse(text: String, view: HomeView, who: String? = null): Action? {
         val t = text.lowercase().trim().trimEnd('.', '!', '?').replace(Regex("\\s+"), " ")
         val swedish = Confirmation.looksSwedish(text)
         DIM.matchEntire(t)?.let { m ->
             val pct = m.groupValues[2].toInt().coerceIn(0, 100)
-            return target(m.groupValues[1], view, swedish, on = null, dim = pct / 100.0)
+            return target(m.groupValues[1], view, swedish, on = null, dim = pct / 100.0, who = who)
         }
         (ON.matchEntire(t)?.groupValues?.get(2) ?: ON_AFTER.matchEntire(t)?.groupValues?.get(1))?.let {
-            return target(it, view, swedish, on = true, dim = null)
+            return target(it, view, swedish, on = true, dim = null, who = who)
         }
         (OFF.matchEntire(t)?.groupValues?.get(2) ?: OFF_AFTER.matchEntire(t)?.groupValues?.get(1))?.let {
-            return target(it, view, swedish, on = false, dim = null)
+            return target(it, view, swedish, on = false, dim = null, who = who)
         }
         // "sätt taklampan i vardagsrummet": speech often drops the "på", so a bare "sätt" on a
         // lamp means on. Only when it names a device; anything else goes to the AI.
         ON_BARE.matchEntire(t)?.groupValues?.get(1)?.let { w ->
-            return target(w, view, swedish, on = true, dim = null)?.takeIf { it.device != null }
+            return target(w, view, swedish, on = true, dim = null, who = who)?.takeIf { it.device != null }
         }
         return null
     }
 
-    private fun target(words: String, view: HomeView, swedish: Boolean, on: Boolean?, dim: Double?): Action? {
+    private fun target(words: String, view: HomeView, swedish: Boolean, on: Boolean?, dim: Double?, who: String?): Action? {
         val w = words.trim()
         if (w.isEmpty()) return null
         val cap = if (dim != null) "dim" else "onoff"
+        // "tänd min nattlampa": only the lamp named after the person asking ("Nattlampa Gabriel",
+        // "Gabriels nattlampa"), never another one that merely matches "nattlampa". Unknown
+        // person, or nothing named after them: the AI works it out or asks.
+        if (MINE.containsMatchIn(w)) {
+            val rest = w.replace(MINE, " ").replace(Regex("\\s+"), " ").trim()
+            val name = who?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val theirs = listOf("$rest $name", "$name $rest", "${name}s $rest", "$name's $rest").firstNotNullOfOrNull { q ->
+                view.device(q)?.takeIf { NameMatch.normalize(it.name).contains(NameMatch.normalize(name)) }
+            } ?: return null
+            val c = theirs.capability(cap)
+            return if (theirs.secret == null && c != null && c.setable) Action(theirs, null, on, dim, swedish) else null
+        }
         // "lamporna", "the lights", "allt" or a bare "i köket" mean the whole room, not one lamp.
         val wholeRoom = MANY.containsMatchIn(w) || w.startsWith("i ") || w.startsWith("in ")
         // "tänd taklamporna": a group of cards the owner made comes before a single lamp.
