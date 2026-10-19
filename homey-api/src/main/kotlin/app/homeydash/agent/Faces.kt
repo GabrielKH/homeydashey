@@ -103,6 +103,9 @@ object FaceMatcher {
  * offline speech model limited to these phrases, so it hears nothing else.
  */
 object WakeName {
+    private val NOT_WAKE = Regex("[^a-z' ]")
+    private val SPACES = Regex("\\s+")
+
     /** Phrases that wake the assistant for [name]. */
     fun phrases(name: String): List<String> {
         val n = clean(name)
@@ -168,5 +171,5 @@ object WakeName {
     fun key(name: String): String = clean(name).removePrefix("hey ").removePrefix("hej ").ifEmpty { "nova" }
 
     fun clean(text: String): String =
-        text.lowercase().replace(Regex("[^a-z' ]"), " ").split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+        text.lowercase().replace(NOT_WAKE, " ").split(SPACES).filter { it.isNotEmpty() }.joinToString(" ")
 }

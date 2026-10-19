@@ -937,13 +937,15 @@ class Agent(
 
 /** Spots a spoken yes or no in Swedish or English. */
 object Confirmation {
+    private val SPACES = Regex("\\s+")
+    private val SWEDISH_WORD = Regex("""\b(och|jag|du|det|är|inte|på|av|ja|nej|tänd|släck|hur|vad)\b""", RegexOption.IGNORE_CASE)
     private val YES = Regex("""^\s*(ja|japp|jajamän|jo|absolut|visst|kör|gör det|okej|ok|yes|yeah|yep|sure|do it|go ahead|please do|confirm)\b.*""", RegexOption.IGNORE_CASE)
     private val NO = Regex("""^\s*(nej|nä|nää|avbryt|stopp|låt bli|no|nope|cancel|stop|don'?t)\b.*""", RegexOption.IGNORE_CASE)
 
     /** true for yes, false for no, null when the text is about something else. */
     fun parse(text: String): Boolean? {
         val t = text.trim().trimEnd('.', '!')
-        if (t.split(Regex("\\s+")).size > 5) return null
+        if (t.split(SPACES).size > 5) return null
         return when {
             NO.matches(t) -> false
             YES.matches(t) -> true
@@ -952,7 +954,7 @@ object Confirmation {
     }
 
     fun looksSwedish(text: String): Boolean =
-        text.any { it in "åäöÅÄÖ" } || Regex("""\b(och|jag|du|det|är|inte|på|av|ja|nej|tänd|släck|hur|vad)\b""", RegexOption.IGNORE_CASE).containsMatchIn(text)
+        text.any { it in "åäöÅÄÖ" } || SWEDISH_WORD.containsMatchIn(text)
 }
 
 /** "Friday 16 October 2026 (2026-10-16), week 42, 16:45": the day, date and week number, as weeks are counted in Sweden (ISO). */

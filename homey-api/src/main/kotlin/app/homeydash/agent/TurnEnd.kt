@@ -6,6 +6,8 @@ package app.homeydash.agent
  * instead of answering half a question. Used on what Whisper heard up to a pause.
  */
 object TurnEnd {
+    private val SPACES = Regex("\\s+")
+
     /**
      * True when [text] reads as a finished question or request. [held] is a long, even sound
      * just before the pause (a drawn-out "ööhh" or "mmm"), which Whisper often leaves out.
@@ -29,7 +31,7 @@ object TurnEnd {
     /** [text] without its hesitation sounds, for the AI: "Öh, tänd, ehm, lampan" is "tänd lampan". */
     fun clean(text: String): String {
         val kept = ArrayList<String>()
-        for (w in text.trim().split(Regex("\\s+"))) {
+        for (w in text.trim().split(SPACES)) {
             if (NameMatch.normalize(w) !in FILLERS) {
                 kept += w
                 continue

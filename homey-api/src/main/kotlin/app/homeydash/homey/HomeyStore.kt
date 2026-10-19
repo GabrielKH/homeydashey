@@ -249,7 +249,7 @@ class HomeyStore(
                 for (change in run) {
                     val device = (devices ?: snap.devices)[change.deviceId] ?: continue
                     val updated = device.withCapabilityValue(change.capabilityId, change.value)
-                    if (updated != device) (devices ?: snap.devices.toMutableMap().also { devices = it })[device.id] = updated
+                    if (updated !== device) (devices ?: snap.devices.toMutableMap().also { devices = it })[device.id] = updated
                 }
                 devices?.let { snap.copy(devices = it) } ?: snap
             }
@@ -262,7 +262,7 @@ class HomeyStore(
             is HomeyEvent.CapabilityChanged -> _snapshot.update { snap ->
                 val device = snap.devices[event.deviceId] ?: return@update snap
                 val updated = device.withCapabilityValue(event.capabilityId, event.value)
-                if (updated == device) snap else snap.copy(devices = snap.devices + (device.id to updated))
+                if (updated === device) snap else snap.copy(devices = snap.devices + (device.id to updated))
             }
             is HomeyEvent.DeviceChanged -> {
                 realtime.subscribe(HomeyRealtime.deviceUri(event.device.id))

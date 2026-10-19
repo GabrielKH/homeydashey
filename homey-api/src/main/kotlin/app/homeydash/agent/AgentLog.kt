@@ -34,6 +34,8 @@ class AgentLog(private val file: File?, private val zone: ZoneId = ZoneId.system
 
     private val entries = ArrayDeque<Entry>()
     private var loaded = false
+    /** Lines in the file, which can run past [MAX_ENTRIES] until it is rewritten. */
+    private var fileLines = 0
 
     @Synchronized
     fun add(kind: String, text: String, localOnly: Boolean = false, at: Long = System.currentTimeMillis()) {
@@ -44,7 +46,11 @@ class AgentLog(private val file: File?, private val zone: ZoneId = ZoneId.system
         file?.let { f ->
             runCatching {
                 f.parentFile?.mkdirs()
-                if (entries.size == MAX_ENTRIES) save() else f.appendText(json.encodeToString(Entry.serializer(), entry) + "\n")
+                // Appends, and rewrites the file only once it holds twice what is kept, instead of on every line once full.
+                if (fileLines >= MAX_ENTRIES * 2) save() else {
+                    f.appendText(json.encodeToString(Entry.serializer(), entry) + "\n")
+                    fileLines++
+                }
             }
         }
     }
@@ -70,7 +76,9 @@ class AgentLog(private val file: File?, private val zone: ZoneId = ZoneId.system
         val f = file ?: return
         if (!f.exists()) return
         runCatching {
-            f.readLines().forEach { line ->
+            val lines = f.readLines()
+            fileLines = lines.size
+            lines.forEach { line ->
                 runCatching { json.decodeFromString(Entry.serializer(), line) }.getOrNull()?.let(entries::addLast)
             }
         }
@@ -82,6 +90,7 @@ class AgentLog(private val file: File?, private val zone: ZoneId = ZoneId.system
         runCatching {
             f.parentFile?.mkdirs()
             f.writeText(entries.joinToString("") { json.encodeToString(Entry.serializer(), it) + "\n" })
+            fileLines = entries.size
         }
     }
 

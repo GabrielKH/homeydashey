@@ -357,7 +357,6 @@ fun DashboardScreen(
     val visibleById = remember(snapshot.devices, hidden) { DashboardLayout.visible(snapshot.devices, hidden) }
     val visibleDevices = remember(visibleById) { visibleById.values }
     val speakers = remember(visibleDevices, actions.deviceCards) { musicSpeakers(visibleDevices, actions) }
-    val groupable = remember(visibleDevices, actions.deviceCards) { visibleDevices.filter { actions.grouping(it.id) != null }.sortedBy { it.name.lowercase() } }
 
     val favourites = remember(overviewDevices, visibleById) { overviewDevices.mapNotNull { visibleById[it] } }
 
@@ -594,7 +593,7 @@ fun DashboardScreen(
             RemoteSheet(
                 device = device,
                 actions = actions,
-                others = snapshot.devices.values.toList(),
+                others = remember(snapshot.devices) { snapshot.devices.values.toList() },
                 chosenApps = remoteApps[device.id],
                 onChooseApps = { display.setRemoteApps(device.id, it) },
                 onDismiss = actions::close,
@@ -602,7 +601,11 @@ fun DashboardScreen(
         } ?: SideEffect { actions.close() }
         is Sheet.Vacuum -> snapshot.devices[sheet.deviceId]?.let { VacuumSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
         is Sheet.Music -> MusicSheet(sheet.zoneId, sheet.deviceId, speakers, snapshot.zones, actions, actions::close)
-        is Sheet.Group -> snapshot.devices[sheet.deviceId]?.let { GroupSheet(it, groupable, snapshot.zones, actions, actions::close) } ?: SideEffect { actions.close() }
+        is Sheet.Group -> snapshot.devices[sheet.deviceId]?.let { device ->
+            // Worked out only while the sheet is open, not on every Homey update.
+            val groupable = remember(visibleDevices, actions.deviceCards) { visibleDevices.filter { actions.grouping(it.id) != null }.sortedBy { it.name.lowercase() } }
+            GroupSheet(device, groupable, snapshot.zones, actions, actions::close)
+        } ?: SideEffect { actions.close() }
         Sheet.Rooms -> RoomsDialog(
             zones = snapshot.zones,
             hiddenRooms = hiddenRooms,

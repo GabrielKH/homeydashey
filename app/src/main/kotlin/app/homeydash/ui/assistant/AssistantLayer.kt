@@ -142,9 +142,14 @@ fun FaceWatch(services: app.homeydash.assistant.AssistantServices, settings: Age
 private fun Orb(state: AssistantState, level: () -> Float, onClick: () -> Unit, onLongClick: () -> Unit) {
     val g = GlassTheme.colors
     val active = state != AssistantState.Idle
-    val pulse = rememberInfiniteTransition(label = "orb")
-    val breathe by pulse.animateFloat(1f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
-    val spin by pulse.animateFloat(0f, 360f, infiniteRepeatable(tween(2400)), label = "spin")
+    // The pulse runs only while the orb is busy, so the idle orb doesn't ask for a new frame 60 times a second.
+    var breathe: androidx.compose.runtime.State<Float>? = null
+    var spin: androidx.compose.runtime.State<Float>? = null
+    if (active) {
+        val pulse = rememberInfiniteTransition(label = "orb")
+        breathe = pulse.animateFloat(1f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
+        spin = pulse.animateFloat(0f, 360f, infiniteRepeatable(tween(2400)), label = "spin")
+    }
     // The level is read here, so only the orb recomposes as the voice changes.
     val voice by animateFloatAsState(if (active) level() else 0f, spring(stiffness = 400f), label = "level")
     Box(
@@ -153,7 +158,7 @@ private fun Orb(state: AssistantState, level: () -> Float, onClick: () -> Unit, 
             .graphicsLayer {
                 val scale = when (state) {
                     AssistantState.Listening -> 1f + voice * 0.18f
-                    AssistantState.Thinking, AssistantState.Speaking -> breathe
+                    AssistantState.Thinking, AssistantState.Speaking -> breathe?.value ?: 1f
                     AssistantState.Idle -> 1f
                 }
                 scaleX = scale
@@ -180,7 +185,7 @@ private fun Orb(state: AssistantState, level: () -> Float, onClick: () -> Unit, 
             filled = active,
             size = 32.dp,
             tint = if (active) g.onInk else g.fg,
-            modifier = if (state == AssistantState.Thinking) Modifier.graphicsLayer { rotationZ = spin } else Modifier,
+            modifier = if (state == AssistantState.Thinking) Modifier.graphicsLayer { rotationZ = spin?.value ?: 0f } else Modifier,
         )
     }
 }

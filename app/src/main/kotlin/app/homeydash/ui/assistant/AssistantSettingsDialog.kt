@@ -176,7 +176,7 @@ fun AssistantSettingsDialog(
 private val PAGES = mapOf(
     "voice" to "Voice and look",
     "listen" to "Listening",
-    "brain" to "AI brains",
+    "brain" to "AI brains and servers",
     "privacy" to "Privacy and security",
     "spotify" to "Spotify on Sonos",
     "logs" to "Logs for Claude",
@@ -226,7 +226,7 @@ private fun Main(
     val pages = listOf(
         Triple(Sym.speaker, "Voice and look") { onPage("voice") },
         Triple(Sym.mic, "Listening") { onPage("listen") },
-        Triple(Sym.autoAwesome, "AI brains: ${settings.mode.label}") { onPage("brain") },
+        Triple(Sym.autoAwesome, "AI and servers: ${settings.mode.label}") { onPage("brain") },
         Triple(Sym.flow, "Routines (${services.routines.data.value.routines.size})", onRoutines),
         Triple(Sym.lightbulb, "Memory: " + if (settings.access(Secret.Memory) != Access.Off) "${services.memory.data.value.facts.size} facts" else "off") { onPage("memory") },
         Triple(Sym.shieldLock, "Privacy and security") { onPage("privacy") },
@@ -423,7 +423,24 @@ private fun BrainPage(
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
-    Label("Local AI on your computer")
+    Label("Internet AI")
+    val internet = settings.internet ?: Connection(Provider.Gemini)
+    Segmented(listOf(Provider.Gemini, Provider.OpenAI), internet.provider, { it.label }) { p ->
+        update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
+    }
+    ConnectionFields(services, internet) { c -> update { it.copy(internet = c) } }
+    Servers(services, settings, update)
+    SpeedTest(services, settings, preview)
+}
+
+/** Every server on your own computer in one place: the local AI, Whisper and the Warm voice's model. */
+@Composable
+private fun Servers(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    var result by remember { mutableStateOf<Pair<app.homeydash.agent.Hearer, String>?>(null) }
+    Label("Servers on your computer")
+    Text("Local AI", style = MaterialTheme.typography.labelLarge, color = g.fg)
     val local = settings.local ?: Connection(Provider.Ollama)
     ConnectionFields(services, local, keyHint = "Only if the server asks for one") { c -> update { it.copy(local = c) } }
     SwitchRow(
@@ -432,13 +449,25 @@ private fun BrainPage(
             "and it works on servers like vMLX that lose tool calls on long prompts.",
         settings.compactTools,
     ) { on -> update { it.copy(compactTools = on) } }
-    Label("Internet AI")
-    val internet = settings.internet ?: Connection(Provider.Gemini)
-    Segmented(listOf(Provider.Gemini, Provider.OpenAI), internet.provider, { it.label }) { p ->
-        update { it.copy(internet = if (p == internet.provider) internet else Connection(p)) }
+    Text("Whisper (hears your questions)", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Field("Address", settings.whisperUrl.ifBlank { settings.whisperUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(whisperUrl = url) } }
+    HearingTest(
+        app.homeydash.agent.Hearer.Whisper,
+        result,
+        "On the Mac: \"brew install whisper-cpp\", download a model, then run whisper-server with --host 0.0.0.0 --port 8080. " +
+            if (settings.useWhisper) "It's on under Listening." else "Turn it on under Listening.",
+    ) { h ->
+        result = h to "Testing…"
+        scope.launch { result = h to (services.transcriber.test(services.settings.value, h)?.let { "Didn't work: $it" } ?: "Works.") }
     }
-    ConnectionFields(services, internet) { c -> update { it.copy(internet = c) } }
-    SpeedTest(services, settings, preview)
+    Text("Voice model (the Warm voice)", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
+    Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
+    Text(
+        "mlx-audio on the Mac speaks the Warm voice. Which recording each character copies is under Voice and look.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
 }
 
 /**
@@ -661,11 +690,11 @@ private fun Hearing(services: AssistantServices, settings: AgentSettings, update
         settings.useWhisper,
     ) { on -> update { it.copy(useWhisper = on) } }
     if (settings.useWhisper) {
-        Field("Address", settings.whisperUrl.ifBlank { settings.whisperUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(whisperUrl = url) } }
-        HearingTest(app.homeydash.agent.Hearer.Whisper, result, "On the Mac: \"brew install whisper-cpp\", download a model, then run whisper-server with --host 0.0.0.0 --port 8080.") { h ->
-            result = h to "Testing…"
-            scope.launch { result = h to (services.transcriber.test(services.settings.value, h)?.let { "Didn't work: $it" } ?: "Works.") }
-        }
+        Text(
+            "Whisper's address and its test are under AI brains and servers, with the other servers on your computer.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
     }
     SwitchRow(
         "OpenAI",
@@ -963,8 +992,6 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         )
     }
     if (settings.voice.local && settings.voice != VoiceStyle.Tars) {
-        Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
-        Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
         app.homeydash.agent.Persona.entries.forEach { p ->
             Field("${p.label}'s voice", settings.warmVoices[p].orEmpty()) { voice ->
                 update { it.copy(warmVoices = if (voice.isBlank()) it.warmVoices - p else it.warmVoices + (p to voice)) }
@@ -974,7 +1001,8 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             "Chatterbox on the Mac copies a voice from a 15-20 second recording in the voices folder: type its name " +
                 "(\"anna\" for anna.wav) for each character, or leave it empty for the model's own voice. People can pick " +
                 "their own under People. Everything stays in the house. Tap Hear it to try it; if the computer doesn't " +
-                "answer, the tablet's voice speaks and it tries the computer again two minutes later.",
+                "answer, the tablet's voice speaks and it tries the computer again two minutes later. " +
+                "The voice server's address is under AI brains and servers.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
