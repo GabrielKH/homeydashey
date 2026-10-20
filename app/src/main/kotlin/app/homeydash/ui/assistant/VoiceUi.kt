@@ -147,34 +147,43 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                     if (!deciding) {
                         deciding = true
                         launch {
-                            val began = SystemClock.elapsedRealtime()
-                            val judged = judgeHit(assistant.roomMediaPlaying(), services, settings, hit, names, knownFor(hit.name), taught, armed = SystemClock.elapsedRealtime() < armedUntil)
-                            val verdict = judged.verdict
-                            val who = judged.who
-                            val character = judged.character
-                            val prior = judged.prior
-                            if (verdict.undecided) armedUntil = SystemClock.elapsedRealtime() + ARMED_MS
-                            services.trace(
-                                "wake",
-                                // Not through format(): what Whisper heard and the notes can hold a "%".
-                                "\"${character.label}\" ${if (hit.spotted) "spotted" else "found as taught"} (prior ${"%.2f".format(prior)}): ${verdict.line()}, judge ${judged.share} % in ${SystemClock.elapsedRealtime() - began} ms. ${who.log}",
-                                localOnly = false,
-                            )
-                            // Over its own voice, only someone it knows can cut in, so TARS saying
-                            // "TARS" doesn't interrupt himself.
-                            val selfHeard = speaking && known.isNotEmpty() && who.person == null
-                            if (verdict.wake && selfHeard) services.trace("wake", "Ignored a wake while talking: no known voice.", localOnly = false)
-                            // The other character answers people it recognises; with nobody taught it can't tell, so anyone.
-                            val stranger = who.person == null && known.isNotEmpty() && (settings.onlyKnownVoices || character != settings.persona)
-                            if (verdict.wake && stranger && !selfHeard) services.trace("wake", "Ignored \"${character.label}\": the voice isn't someone it knows.", localOnly = false)
-                            // Another character answers those who picked it under People.
-                            val notTheirs = !selfHeard && !stranger && who.person != null && !settings.answers(character, who.person)
-                            if (verdict.wake && notTheirs) services.trace("wake", "Ignored \"${character.label}\": ${who.person?.name} hasn't picked ${character.label} under People.", localOnly = false)
-                            if (verdict.wake && !selfHeard && !stranger && !notTheirs) {
-                                wake.stop(token)
-                                assistant.wake(who.person, character, hit.sound)
+                            // Never left stuck on: a failed judgement mustn't stop every later wake.
+                            try {
+                                val began = SystemClock.elapsedRealtime()
+                                val judged = judgeHit(assistant.roomMediaPlaying(), services, settings, hit, names, knownFor(hit.name), taught, armed = SystemClock.elapsedRealtime() < armedUntil)
+                                val verdict = judged.verdict
+                                val who = judged.who
+                                val character = judged.character
+                                val prior = judged.prior
+                                if (verdict.undecided) armedUntil = SystemClock.elapsedRealtime() + ARMED_MS
+                                services.trace(
+                                    "wake",
+                                    // Not through format(): what Whisper heard and the notes can hold a "%".
+                                    "\"${character.label}\" ${if (hit.spotted) "spotted" else "found as taught"} (prior ${"%.2f".format(prior)}): ${verdict.line()}, judge ${judged.share} % in ${SystemClock.elapsedRealtime() - began} ms. ${who.log}",
+                                    localOnly = false,
+                                )
+                                // Over its own voice, only someone it knows can cut in, so TARS saying
+                                // "TARS" doesn't interrupt himself.
+                                val selfHeard = speaking && known.isNotEmpty() && who.person == null
+                                if (verdict.wake && selfHeard) services.trace("wake", "Ignored a wake while talking: no known voice.", localOnly = false)
+                                // The other character answers people it recognises; with nobody taught it can't tell, so anyone.
+                                val stranger = who.person == null && known.isNotEmpty() && (settings.onlyKnownVoices || character != settings.persona)
+                                if (verdict.wake && stranger && !selfHeard) services.trace("wake", "Ignored \"${character.label}\": the voice isn't someone it knows.", localOnly = false)
+                                // Another character answers those who picked it under People.
+                                val notTheirs = !selfHeard && !stranger && who.person != null && !settings.answers(character, who.person)
+                                if (verdict.wake && notTheirs) services.trace("wake", "Ignored \"${character.label}\": ${who.person?.name} hasn't picked ${character.label} under People.", localOnly = false)
+                                if (verdict.wake && !selfHeard && !stranger && !notTheirs) {
+                                    wake.stop(token)
+                                    assistant.wake(who.person, character, hit.sound)
+                                    // Now the voice can teach the tablet a little more of itself.
+                                    who.learn?.invoke()
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                services.trace("wake", "A wake being judged was cut off: the listener restarted.", localOnly = false)
+                                throw e
+                            } finally {
+                                deciding = false
                             }
-                            deciding = false
                         }
                     }
                 },
@@ -274,7 +283,7 @@ private suspend fun judgeHit(
 }
 
 /** Who said the wake name, how far over the closest known voice's bar the voiceprint was (null without voiceprints), and why. */
-private class Speaker(val person: KnownPerson?, val log: String, val margin: Float? = null)
+private class Speaker(val person: KnownPerson?, val log: String, val margin: Float? = null, val learn: (() -> Unit)? = null)
 
 /** How long a hit that ended undecided keeps the wake bar lowered for a repeat. */
 private const val ARMED_MS = 4_000L
@@ -289,19 +298,22 @@ private fun whoSpoke(services: AssistantServices, wakeName: String, known: List<
     if (print != null && withPrints.isNotEmpty()) {
         val person = VoiceId.match(print, withPrints)
         val best = withPrints.maxOf { VoiceId.margin(print, it) }
-        if (person != null && VoiceId.margin(print, person) >= LEARN_MARGIN) services.faces.addPrints(person.id, wakeName, listOf(print))
-        if (person != null) return Speaker(person, "Voiceprint matched someone taught (%.2f over their bar).".format(best), best)
+        // Learned only once the wake is decided: a new voiceprint changes the people, which
+        // restarts the listener, and that mustn't cut off the wake being judged.
+        val learn = if (person != null && VoiceId.margin(print, person) >= LEARN_MARGIN) ({ services.faces.addPrints(person.id, wakeName, listOf(print)) }) else null
+        if (person != null) return Speaker(person, "Voiceprint matched someone taught (%.2f over their bar).".format(best), best, learn)
         return Speaker(null, "Voiceprint %.2f below the closest person's bar.".format(-best), best)
     }
     val older = known.filter { it.print.isEmpty() && it.voice.isNotEmpty() }
     val person = vector?.let { FaceMatcher.matchVoice(it, older) }
     if (person != null && vector != null) {
-        if (FaceMatcher.voiceScore(vector, person) >= FaceMatcher.VOICE_LEARN) {
+        val learn = if (FaceMatcher.voiceScore(vector, person) >= FaceMatcher.VOICE_LEARN) ({
             services.faces.addVoice(person.id, listOf(vector))
             // Their first voiceprints come from wakes the older match is sure of.
             print?.let { services.faces.addPrints(person.id, wakeName, listOf(it)) }
-        }
-        return Speaker(person, "Wake name heard; older voice match recognised someone taught.")
+            Unit
+        }) else null
+        return Speaker(person, "Wake name heard; older voice match recognised someone taught.", learn = learn)
     }
     val why = if (print == null) "no voiceprint (model not ready or too little sound)" else "nobody has voiceprints yet"
     return Speaker(null, "Voice not recognised: $why.")

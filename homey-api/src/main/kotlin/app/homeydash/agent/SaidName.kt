@@ -25,7 +25,7 @@ object SaidName {
     const val MIN_BAR = 0.12f
     const val MAX_BAR = 0.22f
     /** The bar is how far most of their own repeats are from the others, with this much room. */
-    private const val ROOM = 1.25f
+    private const val ROOM = 1.6f
 
     /** A spoken name as frames of [BANDS] unit vectors. */
     class Shape(val frames: Array<FloatArray>) {
