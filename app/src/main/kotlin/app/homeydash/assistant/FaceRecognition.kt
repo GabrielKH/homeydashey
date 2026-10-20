@@ -269,6 +269,13 @@ class FaceService(private val context: Context) {
         save()
     }
 
+    /** Adds ways of saying [wakeName] (see [app.homeydash.agent.SaidName]) to someone's, from teaching their voice. */
+    fun addSaid(id: String, wakeName: String, more: List<app.homeydash.agent.SaidName.Shape>) {
+        if (more.isEmpty()) return
+        _people.update { list -> list.map { if (it.id == id) it.withSaid(wakeName, more) else it } }
+        save()
+    }
+
     /** The character and voice someone talks with; null for the house's. */
     fun setCharacters(id: String, characters: List<app.homeydash.agent.Persona>, voices: Map<app.homeydash.agent.Persona, app.homeydash.agent.VoiceStyle>) {
         _people.update { list -> list.map { if (it.id == id) it.copy(characters = characters, voices = voices) else it } }
@@ -310,6 +317,7 @@ class FaceService(private val context: Context) {
                     put("characters", buildJsonArray { p.characters.forEach { add(JsonPrimitive(it.name)) } })
                     put("voices", buildJsonObject { p.voices.forEach { (c, v) -> put(c.name, v.name) } })
                     put("warmVoices", buildJsonObject { p.warmVoices.forEach { (c, v) -> put(c.name, v) } })
+                    put("saidNames", buildJsonObject { p.saidNames.forEach { (wake, list) -> put(wake, buildJsonArray { list.forEach { add(JsonPrimitive(it)) } }) } })
                 })
             }
         }
@@ -354,6 +362,7 @@ class FaceService(private val context: Context) {
                 characters = characters(o),
                 voices = voices(o),
                 warmVoices = (o["warmVoices"] as? JsonObject)?.mapNotNull { (c, v) -> persona(c)?.let { p -> v.jsonPrimitive.contentOrNull?.takeIf { it.isNotBlank() }?.let { p to it } } }?.toMap().orEmpty(),
+                saidNames = (o["saidNames"] as? JsonObject)?.mapValues { (_, v) -> (v as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty() }.orEmpty(),
                 prints = if (o["printsBy"]?.jsonPrimitive?.contentOrNull == PRINTS_BY) (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }.orEmpty() else emptyMap(),
             )
         }

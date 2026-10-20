@@ -109,6 +109,8 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
             fun knownFor(name: String) = people.map { it.forWake(name) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
                 .takeIf { k -> k.any { it.print.isNotEmpty() } } ?: all
             val known = all
+            // How the people here say each name, from teaching their voices.
+            val taught = names.map { n -> taughtFor(people, n) }
             var token: Int? = null
             var deciding = false
             // Talking over the answer works for voices it knows, so its own voice can't cut itself off.
@@ -146,45 +148,16 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                         deciding = true
                         launch {
                             val began = SystemClock.elapsedRealtime()
-                            val name = hit.name
-                            val print = hit.sound?.let { services.prints.of(it) }
-                            val heardBy = knownFor(name)
-                            val who = whoSpoke(services, name, heardBy, null, print)
-                            val character = settings.characterNamed(name)
-                            // The wake judge: the spotter's hit, the voiceprint, Homey's view of the room,
-                            // past false wakes and, only when still unsure, Whisper on the Mac, added up
-                            // until the evidence crosses a line either way.
-                            val facts = services.memory.data.value.facts
-                            val prior = WakeJudge.prior(
-                                mediaPlaying = assistant.roomMediaPlaying(),
-                                nobodyHome = false,
-                                faceKnown = services.faces.current()?.person != null,
-                                hourShare = Memory.wakeHourShare(facts, java.time.LocalTime.now().hour),
-                            )
-                            val falseWakes = Memory.falseWakes(facts)
-                            val witnesses = listOf(
-                                WakeJudge.Witness { WakeJudge.spotter(hit.greeting) },
-                                WakeJudge.Witness { WakeJudge.voice(who.margin, who.person?.name) },
-                                WakeJudge.Witness {
-                                    val sound = hit.sound
-                                    if (sound == null || falseWakes.isEmpty()) null else WakeJudge.fingerprint(SoundPrint.closest(SoundPrint.of(sound), falseWakes))
-                                },
-                                WakeJudge.Witness {
-                                    val sound = hit.sound ?: return@Witness null
-                                    if (settings.hearers().isEmpty()) return@Witness null
-                                    val text = runCatching {
-                                        kotlinx.coroutines.runBlocking { services.transcriber.transcribe(settings, VoiceFx.writeWav(Pcm(16000, sound)), null, names.joinToString(", ")).text }
-                                    }.getOrNull() ?: return@Witness null
-                                    WakeJudge.whisper(text, names)
-                                },
-                            )
-                            val verdict = withContext(Dispatchers.Default) {
-                                WakeJudge(alpha = MicSensitivity.alpha(settings.micSensitivity)).judge(prior, witnesses, armed = SystemClock.elapsedRealtime() < armedUntil)
-                            }
+                            val judged = judgeHit(assistant.roomMediaPlaying(), services, settings, hit, names, knownFor(hit.name), taught, armed = SystemClock.elapsedRealtime() < armedUntil)
+                            val verdict = judged.verdict
+                            val who = judged.who
+                            val character = judged.character
+                            val prior = judged.prior
                             if (verdict.undecided) armedUntil = SystemClock.elapsedRealtime() + ARMED_MS
                             services.trace(
                                 "wake",
-                                "\"${character.label}\" spotted (prior %.2f): ${verdict.line()} in ${SystemClock.elapsedRealtime() - began} ms. ${who.log}".format(prior),
+                                // Not through format(): what Whisper heard and the notes can hold a "%".
+                                "\"${character.label}\" ${if (hit.spotted) "spotted" else "found as taught"} (prior ${"%.2f".format(prior)}): ${verdict.line()}, judge ${judged.share} % in ${SystemClock.elapsedRealtime() - began} ms. ${who.log}",
                                 localOnly = false,
                             )
                             // Over its own voice, only someone it knows can cut in, so TARS saying
@@ -210,6 +183,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                 echo = speaking,
                 onTalk = onTalk,
                 talkEasy = easy,
+                taught = taught,
             )
             try {
                 awaitCancellation()
@@ -224,6 +198,77 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
             onDispose {}
         }
     }
+}
+
+/** What the wake judge made of one hit, with who it heard and the room's prior. */
+private class Judged(val verdict: WakeJudge.Verdict, val judge: WakeJudge, val who: Speaker, val character: app.homeydash.agent.Persona, val prior: Double) {
+    /** The score as a share of what waking needs, for the meter. */
+    val share: Int get() = WakeJudge.share(verdict, judge)
+}
+
+/** How the people who taught their voice say [name], for the listener; null when nobody did. */
+private fun taughtFor(people: List<KnownPerson>, name: String): app.homeydash.assistant.Taught? {
+    val each = people.map { it.saidFor(name) }.filter { it.size >= 2 }
+    if (each.isEmpty()) return null
+    // Each person's own repeats set their bar; the most forgiving one is used for all.
+    val bar = each.mapNotNull { app.homeydash.agent.SaidName.bar(it) }.maxOrNull() ?: return null
+    return app.homeydash.assistant.Taught(each.flatten(), bar)
+}
+
+/**
+ * The wake judge on one hit: the room's prior from Homey, then the witnesses in cost order
+ * (the spotter, how close it came to the name as taught, the voiceprint, past false wakes and,
+ * only while still unsure, Whisper on the Mac), until the evidence crosses a line either way.
+ */
+private suspend fun judgeHit(
+    mediaPlaying: Boolean,
+    services: AssistantServices,
+    settings: AgentSettings,
+    hit: app.homeydash.assistant.WakeHit,
+    names: List<String>,
+    heardBy: List<KnownPerson>,
+    taught: List<app.homeydash.assistant.Taught?>,
+    armed: Boolean,
+): Judged {
+    val name = hit.name
+    val print = hit.sound?.let { services.prints.of(it) }
+    val who = whoSpoke(services, name, heardBy, null, print)
+    val character = settings.characterNamed(name)
+    val facts = services.memory.data.value.facts
+    val prior = WakeJudge.prior(
+        mediaPlaying = mediaPlaying,
+        nobodyHome = false,
+        faceKnown = services.faces.current()?.person != null,
+        hourShare = Memory.wakeHourShare(facts, java.time.LocalTime.now().hour),
+    )
+    val falseWakes = Memory.falseWakes(facts)
+    val t = taught.getOrNull(names.indexOf(name))
+    val witnesses = listOf(
+        WakeJudge.Witness { if (hit.spotted) WakeJudge.spotter(hit.greeting) else null },
+        WakeJudge.Witness {
+            when {
+                hit.said != null -> WakeJudge.said(hit.said, hit.bar)
+                t != null && hit.sound != null -> app.homeydash.agent.SaidName.find(t.shapes, app.homeydash.agent.SaidName.heard(hit.sound))?.let { WakeJudge.said(it.distance, t.bar) }
+                else -> null
+            }
+        },
+        WakeJudge.Witness { WakeJudge.voice(who.margin, who.person?.name) },
+        WakeJudge.Witness {
+            val sound = hit.sound
+            if (sound == null || falseWakes.isEmpty()) null else WakeJudge.fingerprint(SoundPrint.closest(SoundPrint.of(sound), falseWakes))
+        },
+        WakeJudge.Witness {
+            val sound = hit.sound ?: return@Witness null
+            if (settings.hearers().isEmpty()) return@Witness null
+            val text = runCatching {
+                kotlinx.coroutines.runBlocking { services.transcriber.transcribe(settings, VoiceFx.writeWav(Pcm(16000, sound)), null, names.joinToString(", ")).text }
+            }.getOrNull() ?: return@Witness null
+            WakeJudge.whisper(text, names)
+        },
+    )
+    val judge = WakeJudge(alpha = MicSensitivity.alpha(settings.micSensitivity))
+    val verdict = withContext(Dispatchers.Default) { judge.judge(prior, witnesses, armed) }
+    return Judged(verdict, judge, who, character, prior)
 }
 
 /** Who said the wake name, how far over the closest known voice's bar the voiceprint was (null without voiceprints), and why. */
@@ -321,19 +366,14 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
     NameField(settings.wakeName) { name ->
         update { it.copy(wakeName = name, novaName = if (it.persona == app.homeydash.agent.Persona.Nova && name.isNotBlank()) name.trim() else it.novaName) }
     }
-    val unknown = if (models == VoiceModels.State.Ready) {
-        services.voiceModels.vocabulary?.let { WakeName.unknownWords(settings.wakeName, it) }.orEmpty()
-    } else {
-        emptyList()
-    }
     Text(
         when {
             WakeName.clean(settings.wakeName).isEmpty() -> "Give the assistant a name."
-            unknown.isNotEmpty() -> "The wake model doesn't know \"${unknown.joinToString(" ")}\". Pick a name that is an English word or common name, like Nova, Jarvis or Max."
-            else -> "Use a name of two syllables or more that isn't said much at home. Any Swedish or English question works after it."
+            else -> "Use a name of two syllables or more that isn't said much at home. Any Swedish or English question works after it. " +
+                "Teaching your voice under People also teaches it how you say the name, so it is found even when the spotter misses it."
         },
         style = MaterialTheme.typography.bodyMedium,
-        color = if (unknown.isNotEmpty()) g.danger else g.muted,
+        color = g.muted,
     )
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
@@ -391,6 +431,140 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    ListenTest(services, settings)
+}
+
+/** One thing said during the listening test, and what each part of the wake made of it. */
+private class TestLine(val words: String, val spotted: String?, val said: String?, val share: Int, val verdict: String, val wake: Boolean)
+
+/**
+ * Settings → Voice activation → Test listening: shows live how loud the microphone hears the
+ * room and when the voice gate counts it as speech, and for each thing said what was heard
+ * (Whisper, when a computer hears), whether the spotter caught a name, how close it came to
+ * the name as taught, and the judge's score as a share of what waking needs. Each line also
+ * goes to the logs, so the sweet spot can be found from them.
+ */
+@Composable
+private fun ListenTest(services: AssistantServices, settings: AgentSettings) {
+    val g = GlassTheme.colors
+    val context = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            if (open) "Stop the test" else "Test listening",
+            style = MaterialTheme.typography.labelLarge,
+            color = g.fg,
+            modifier = Modifier.pressable({ open = !open }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+        )
+        Text(
+            if (open) "Say the name, other things, and let the TV play. Nothing wakes while testing." else "Meters for sound, the name and the wake judge, with the words it heard.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+            modifier = Modifier.weight(1f),
+        )
+    }
+    if (!open || !micGranted(context)) return
+    val people by services.faces.people.collectAsState()
+    var level by remember { mutableStateOf(0f) }
+    var speaking by remember { mutableStateOf(false) }
+    val lines = remember { mutableStateListOf<TestLine>() }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val names = settings.wakeNames(people)
+    DisposableEffect(names, people, settings.micSensitivity) {
+        val wake = services.wake
+        // The dashboard's listener lets go of the microphone while this runs.
+        wake.enrolling = true
+        val taught = names.map { taughtFor(people, it) }
+        val hits = ArrayList<app.homeydash.assistant.WakeHit>()
+        val token = wake.start(
+            names,
+            onHeard = { hits += it },
+            onError = { lines.add(0, TestLine(it, null, null, 0, "", false)) },
+            sensitivity = settings.micSensitivity,
+            taught = taught,
+            onSpeech = { sound ->
+                val caught = hits.toList()
+                hits.clear()
+                scope.launch {
+                    // The name it heard, or else the one this came closest to as taught, so the
+                    // judge's score shows even when nothing caught it.
+                    val hit = caught.lastOrNull() ?: run {
+                        val shape = withContext(Dispatchers.Default) { app.homeydash.agent.SaidName.heard(sound) }
+                        val best = names.indices.mapNotNull { i -> taught[i]?.let { t -> app.homeydash.agent.SaidName.find(t.shapes, shape)?.let { Triple(i, it.distance, t.bar) } } }
+                            .minByOrNull { it.second / it.third }
+                        app.homeydash.assistant.WakeHit(names[best?.first ?: 0], false, sound, 0L, spotted = false, said = best?.second, bar = best?.third)
+                    }
+                    val heardBy = people.map { it.forWake(hit.name) }.filter { it.voice.isNotEmpty() || it.print.isNotEmpty() }
+                    val judged = judgeHit(false, services, settings, hit, names, heardBy, taught, armed = false)
+                    val words = if (settings.hearers().isEmpty()) {
+                        "(no computer set to hear words)"
+                    } else {
+                        runCatching { services.transcriber.transcribe(settings, VoiceFx.writeWav(Pcm(16000, sound)), null, names.joinToString(", ")).text }
+                            .getOrElse { "(couldn't hear words: ${it.message})" }.ifBlank { "(no words)" }
+                    }
+                    // How close it came to the name as taught, as a share of the bar (under 100 % counts).
+                    val share = if (hit.said != null && hit.bar != null) {
+                        hit.said / hit.bar
+                    } else {
+                        taught.getOrNull(names.indexOf(hit.name))?.let { t ->
+                            val heard = withContext(Dispatchers.Default) { app.homeydash.agent.SaidName.heard(hit.sound ?: sound) }
+                            app.homeydash.agent.SaidName.find(t.shapes, heard)?.let { it.distance / t.bar }
+                        }
+                    }
+                    val saidText = share?.let { "%.0f %% of the bar".format(it * 100) }
+                    val line = TestLine(words, caught.lastOrNull()?.let { (if (it.spotted) "spotted " else "found as taught ") + it.name }, saidText, judged.share, judged.verdict.line(), judged.verdict.wake)
+                    lines.add(0, line)
+                    while (lines.size > 8) lines.removeAt(lines.lastIndex)
+                    services.trace(
+                        "wake-test",
+                        "Heard \"$words\" (${"%.1f".format(sound.size / 16000f)} s): ${line.spotted ?: "no name caught"}${saidText?.let { ", said like taught $it" } ?: ""}, judge ${line.share} % (${judged.verdict.line()}). ${judged.who.log}",
+                        localOnly = false,
+                    )
+                }
+            },
+            onLevel = { l, sp -> level = l; speaking = sp },
+        )
+        onDispose {
+            wake.stop(token)
+            wake.enrolling = false
+        }
+    }
+    SoundMeter(level, speaking)
+    if (lines.isEmpty()) Text("Waiting for speech…", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+    lines.forEach { line ->
+        Column(Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("\"${line.words}\"", style = MaterialTheme.typography.labelLarge, color = g.fg)
+            Text(
+                listOfNotNull(line.spotted ?: "no name caught", line.said?.let { "said like taught: $it" }).joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = g.muted,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Judge", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                LinearProgressIndicator(
+                    progress = { line.share / 100f },
+                    modifier = Modifier.weight(1f),
+                    color = if (line.wake) g.on else g.muted,
+                    trackColor = g.glassLine,
+                )
+                Text("${line.share} %" + if (line.wake) " · wakes" else "", style = MaterialTheme.typography.labelLarge, color = g.fg)
+            }
+            if (line.verdict.isNotEmpty()) Text(line.verdict, style = MaterialTheme.typography.bodySmall, color = g.muted)
+        }
+    }
+}
+
+/** The microphone's level, lit when the voice gate counts it as speech. */
+@Composable
+private fun SoundMeter(level: Float, speaking: Boolean) {
+    val g = GlassTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Sound", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        // Loudness on a log scale: a quiet room near the left, a raised voice near the right.
+        val shown = ((20 * kotlin.math.log10(level.coerceAtLeast(1e-4f)) + 60f) / 60f).coerceIn(0f, 1f)
+        LinearProgressIndicator(progress = { shown }, modifier = Modifier.weight(1f), color = if (speaking) g.on else g.muted, trackColor = g.glassLine)
+        Text(if (speaking) "speech" else "quiet", style = MaterialTheme.typography.labelLarge, color = if (speaking) g.fg else g.muted)
+    }
 }
 
 @Composable
@@ -426,6 +600,9 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
     val context = LocalContext.current
     val samples = remember { mutableStateListOf<FloatArray>() }
     val prints = remember { mutableStateListOf<FloatArray>() }
+    val shapes = remember { mutableStateListOf<app.homeydash.agent.SaidName.Shape>() }
+    var level by remember { mutableStateOf(0f) }
+    var speaking by remember { mutableStateOf(false) }
     val jobs = remember { mutableListOf<kotlinx.coroutines.Job>() }
     var noSound by remember { mutableStateOf(0) }
     var failed by remember { mutableStateOf<String?>(null) }
@@ -446,19 +623,31 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
         DisposableEffect(Unit) {
             val wake = services.wake
             wake.enrolling = true
+            // Each thing said is one phrase, found by the voice gate alone: teaching doesn't need
+            // the spotter to recognise the name first, so it works however the name is said.
             val token = wake.start(
                 listOf(wakeName),
-                onHeard = { hit ->
-                    val sound = hit.sound
-                    if (sound == null) error = "Didn't catch that; say it a little slower." else if (samples.size < VOICE_SAMPLES) {
-                        error = null
-                        failed = null
-                        samples += FloatArray(0)
-                        jobs += scope.launch { services.prints.of(sound)?.let { prints += it } ?: run { noSound++ } }
-                    }
-                },
+                onHeard = {},
                 onError = { error = it },
                 sensitivity = settings.micSensitivity,
+                onSpeech = { sound ->
+                    val seconds = sound.size / 16000f
+                    when {
+                        samples.size >= VOICE_SAMPLES -> Unit
+                        seconds < 0.4f -> error = "That was very short; say the whole \"$phrase\"."
+                        seconds > 3.5f -> error = "That was long; say just \"$phrase\", then pause."
+                        else -> {
+                            error = null
+                            failed = null
+                            samples += FloatArray(0)
+                            jobs += scope.launch {
+                                services.prints.of(sound)?.let { prints += it } ?: run { noSound++ }
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { app.homeydash.agent.SaidName.of(sound) }?.let { shapes += it }
+                            }
+                        }
+                    }
+                },
+                onLevel = { l, sp -> level = l; speaking = sp },
             )
             onDispose {
                 wake.stop(token)
@@ -471,6 +660,8 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                 jobs.toList().joinAll()
                 // Teaching again adds to what the tablet already knows of the voice.
                 services.faces.addPrints(person.id, wakeName, prints.toList())
+                // And how they say the name, so it is found even when the spotter misses it.
+                services.faces.addSaid(person.id, wakeName, shapes.toList())
                 val why = when {
                     printModel !is app.homeydash.assistant.VoicePrints.State.Ready -> "the voiceprint model isn't on the tablet ($printModel)"
                     noSound == samples.size -> "the sound of the name wasn't caught"
@@ -478,13 +669,15 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                 }
                 services.trace(
                     "wake",
-                    "Taught \"Hey $wakeName\": ${samples.size} phrases, ${prints.size} voiceprints" + if (prints.isEmpty()) " (none made: $why)." else ".",
+                    "Taught \"Hey $wakeName\": ${samples.size} phrases, ${prints.size} voiceprints, ${shapes.size} ways of saying it" +
+                        (app.homeydash.agent.SaidName.bar(shapes.toList())?.let { " (bar %.3f)".format(it) } ?: "") + if (prints.isEmpty()) " (none made: $why)." else ".",
                     localOnly = false,
                 )
                 if (prints.isEmpty()) {
                     // Nothing new was learned for this name; say why instead of closing as if it worked.
                     failed = "Couldn't make voiceprints for \"Hey $wakeName\": $why. Try again."
                     samples.clear()
+                    shapes.clear()
                     jobs.clear()
                     noSound = 0
                 } else {
@@ -507,6 +700,7 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
             color = g.fg,
         )
         LinearProgressIndicator(progress = { samples.size / VOICE_SAMPLES.toFloat() }, modifier = Modifier.fillMaxWidth(), color = g.on, trackColor = g.glassLine)
+        SoundMeter(level, speaking)
         error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = g.muted) }
         failed?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = g.danger) }
         Box {

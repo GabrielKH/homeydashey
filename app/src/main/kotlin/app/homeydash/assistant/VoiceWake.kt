@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.homeydash.agent.MicSensitivity
 import app.homeydash.agent.TalkOver
+import app.homeydash.agent.SaidName
 import app.homeydash.agent.WakeKeywords
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
@@ -159,7 +160,15 @@ class WakeHit(
     val sound: ShortArray?,
     /** Where in the listening (in samples) the name ended, for [WakeListener.afterName]. */
     val nameEnd: Long,
+    /** The spotter heard it; false when only the way the people here say it matched ([said]). */
+    val spotted: Boolean = true,
+    /** How close it came to the name as taught ([SaidName]), with that name's bar; null when not looked for. */
+    val said: Float? = null,
+    val bar: Float? = null,
 )
+
+/** How the people here say one of the names: their taught shapes and how close a match must be. */
+class Taught(val shapes: List<SaidName.Shape>, val bar: Float)
 
 /**
  * Listens on the tablet's microphone for the assistant's name, entirely offline: Silero VAD
@@ -204,6 +213,9 @@ class WakeListener(context: Context, private val models: VoiceModels, private va
         echo: Boolean = false,
         onTalk: ((sound: ShortArray) -> Unit)? = null,
         talkEasy: Boolean = false,
+        taught: List<Taught?> = emptyList(),
+        onSpeech: ((ShortArray) -> Unit)? = null,
+        onLevel: ((level: Float, speech: Boolean) -> Unit)? = null,
     ): Int {
         stop()
         val gen = generation
@@ -227,7 +239,9 @@ class WakeListener(context: Context, private val models: VoiceModels, private va
             val main = Handler(Looper.getMainLooper())
             reader = thread(name = "wake-mic") {
                 val talk: ((ShortArray) -> Unit)? = onTalk?.let { handler -> { sound -> main.post { if (gen == generation) handler(sound) } } }
-                spot(kws, stream, names, gain, isLive = { gen == generation }, echo = echo, onTalk = talk, talkEasy = talkEasy) { hit, failure ->
+                val speechOut: ((ShortArray) -> Unit)? = onSpeech?.let { h -> { sound -> main.post { if (gen == generation) h(sound) } } }
+                val levelOut: ((Float, Boolean) -> Unit)? = onLevel?.let { h -> { l, sp -> main.post { if (gen == generation) h(l, sp) } } }
+                spot(kws, stream, names, gain, isLive = { gen == generation }, echo = echo, onTalk = talk, talkEasy = talkEasy, taught = taught, onSpeech = speechOut, onLevel = levelOut) { hit, failure ->
                     main.post {
                         if (gen != generation) return@post
                         if (failure != null) onError(failure) else if (hit != null) onHeard(hit)
@@ -315,6 +329,9 @@ class WakeListener(context: Context, private val models: VoiceModels, private va
         echo: Boolean,
         onTalk: ((ShortArray) -> Unit)?,
         talkEasy: Boolean,
+        taught: List<Taught?>,
+        onSpeech: ((ShortArray) -> Unit)?,
+        onLevel: ((Float, Boolean) -> Unit)?,
         emit: (WakeHit?, String?) -> Unit,
     ) {
         val (record, canceller) = open(echo) ?: run {
@@ -335,6 +352,38 @@ class WakeListener(context: Context, private val models: VoiceModels, private va
             var hangover = 0
             var fedToSpotter = 0L
             val talk = onTalk?.let { TalkOver(RATE, talkEasy) }
+            // Where the speech going on now started, and the last name found the way it was taught.
+            var speechFrom = 0L
+            var saidEnd = -1L
+            var spottedEnd = -1L
+            var sinceSearch = 0
+            var loudest = 0f
+            var windows = 0
+            val searching = taught.any { it != null }
+            /** Looks for the names as taught in the speech so far (the last few seconds of it). */
+            fun search(final: Boolean) {
+                val from = maxOf(speechFrom, fed - RATE * SEARCH_SECONDS)
+                val heard = Recent.of(ring, fed).cut(from, fed) ?: return
+                val shape = SaidName.heard(heard)
+                var best: Pair<Int, SaidName.Match>? = null
+                taught.forEachIndexed { i, t ->
+                    if (t == null) return@forEachIndexed
+                    val m = SaidName.find(t.shapes, shape) ?: return@forEachIndexed
+                    if (m.distance <= t.bar && (best == null || m.distance / t.bar < best!!.second.distance / taught[best!!.first]!!.bar)) best = i to m
+                }
+                val (i, m) = best ?: return
+                val end = from + (m.end + 1L) * SaidName.FRAME_MS * RATE / 1000
+                // Wait while the name may still be going on, unless the speech has ended.
+                if (!final && fed - end < RATE / 4) return
+                if (end <= saidEnd + RATE / 2 || (spottedEnd >= 0 && kotlin.math.abs(end - spottedEnd) < RATE)) return
+                if (muted) return
+                saidEnd = end
+                lastHit = end
+                val t = taught[i]!!
+                val length = (t.shapes.maxOf { it.size } * SaidName.FRAME_MS * RATE / 1000).toLong()
+                val name = names.getOrNull(i) ?: return
+                emit(WakeHit(name, true, Recent.of(ring, fed).cut(end - length - RATE * 15 / 100, end + RATE * 15 / 100), end, spotted = false, said = m.distance, bar = t.bar), null)
+            }
             while (isLive()) {
                 var got = 0
                 while (got < WINDOW && isLive()) {
@@ -357,15 +406,32 @@ class WakeListener(context: Context, private val models: VoiceModels, private va
                 }
                 for (i in 0 until WINDOW) window[i] = buf[i] / 32768f
                 val speech = gate == null || gate.compute(window) >= SPEECH
+                if (onLevel != null) {
+                    for (v in window) loudest = maxOf(loudest, kotlin.math.abs(v))
+                    if (++windows % LEVEL_WINDOWS == 0) {
+                        onLevel(loudest, speaking || speech)
+                        loudest = 0f
+                    }
+                }
                 if (speech) {
                     if (!speaking) {
                         speaking = true
+                        speechFrom = fed - WINDOW * (before.size + 1L)
                         for (w in before) { stream.acceptWaveform(w, RATE); fedToSpotter += WINDOW }
                         before.clear()
                     }
                     hangover = HANGOVER_WINDOWS
                 } else if (speaking) {
-                    if (--hangover <= 0) speaking = false
+                    if (--hangover <= 0) {
+                        speaking = false
+                        // The speech has ended: one last look for a taught name, and the whole of it for whoever listens.
+                        if (searching) search(final = true)
+                        onSpeech?.let { h -> Recent.of(ring, fed).cut(speechFrom, fed)?.let(h) }
+                    }
+                }
+                if (speaking && searching && ++sinceSearch >= SEARCH_WINDOWS) {
+                    sinceSearch = 0
+                    search(final = false)
                 }
                 if (!speaking) {
                     before.addLast(window.copyOf())
@@ -383,9 +449,12 @@ class WakeListener(context: Context, private val models: VoiceModels, private va
                 if (muted) continue
                 // The spotter speaks up within a chunk or two of the name's last sound.
                 val end = fed - RATE / 10
+                // Already found the way it was taught a moment ago.
+                if (saidEnd >= 0 && end - saidEnd < RATE) continue
                 val stamps = result.timestamps
                 val length: Long = if (stamps.size >= 2) ((stamps.last() - stamps.first()) * RATE).toLong() + RATE / 5 else (RATE / 2).toLong()
                 lastHit = end
+                spottedEnd = end
                 emit(WakeHit(name, tag.greeting, Recent.of(ring, fed).cut(end - length - RATE * 15 / 100, end + RATE * 15 / 100), end), null)
             }
         } finally {
@@ -552,5 +621,11 @@ class WakeListener(context: Context, private val models: VoiceModels, private va
         const val BEFORE_WINDOWS = 10
         /** Windows after speech seems to end that still go to the spotter (about 0.3 s). */
         const val HANGOVER_WINDOWS = 10
+        /** How often (in windows, about a quarter second) speech is searched for the names as taught. */
+        const val SEARCH_WINDOWS = 8
+        /** How much of the latest speech is searched. */
+        const val SEARCH_SECONDS = 3
+        /** How often the level meter is told (about 0.1 s). */
+        const val LEVEL_WINDOWS = 3
     }
 }

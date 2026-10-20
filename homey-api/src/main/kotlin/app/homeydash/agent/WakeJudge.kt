@@ -102,6 +102,31 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
             return Evidence("voice", lambda, if (who != null) "$who's" else "nobody known")
         }
 
+        /**
+         * How close what was heard came to the name as the people here taught it ([SaidName]):
+         * well inside their bar is strong evidence, near it some, far outside it against. With a
+         * known voice that wakes it; near the bar, Whisper has the last word. Null when nobody
+         * taught the name.
+         */
+        fun said(distance: Float?, bar: Float?): Evidence? {
+            if (distance == null || bar == null) return null
+            val share = distance / bar
+            val lambda = when {
+                share <= 0.8f -> 3.5
+                share <= 1.0f -> 2.5
+                share <= 1.15f -> 0.5
+                else -> -1.5
+            }
+            return Evidence("said like taught", lambda, "%.0f %% of the bar".format(share * 100))
+        }
+
+        /**
+         * The score as a share of what waking needs, 0–100 %, for a meter: 0 at the line where a
+         * hit is dropped, 100 at the line where it wakes.
+         */
+        fun share(verdict: Verdict, judge: WakeJudge): Int =
+            (((verdict.score - judge.lower) / (judge.upper - judge.lower)) * 100).toInt().coerceIn(0, 100)
+
         /** The tablet's own voice (its text-to-speech is a taught voice too): near-certain evidence against. */
         fun itself(): Evidence = Evidence("voice", -8.0, "its own")
 

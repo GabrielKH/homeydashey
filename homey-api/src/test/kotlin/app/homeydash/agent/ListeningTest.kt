@@ -279,3 +279,59 @@ class WakeKeywordsTest {
         assertTrue(WakeKeywords.stream(lines).contains("/"))
     }
 }
+
+class SaidNameTest {
+    /** A made-up word: a few vowel-like tones in a row, each a harmonic stack, with a little noise. */
+    private fun word(pitches: List<Double>, formants: List<Double>, msEach: Int = 160, seed: Int = 1): ShortArray {
+        val rng = java.util.Random(seed.toLong())
+        val per = 16000 * msEach / 1000
+        val out = ShortArray(per * pitches.size + 6400)
+        for ((k, f0) in pitches.withIndex()) for (i in 0 until per) {
+            val t = i / 16000.0
+            var v = 0.0
+            for (h in 1..12) {
+                val f = f0 * h
+                val gain = kotlin.math.exp(-kotlin.math.abs(f - formants[k]) / 150.0)
+                v += gain * kotlin.math.sin(2 * Math.PI * f * t)
+            }
+            out[3200 + k * per + i] = (v * 3000 + rng.nextGaussian() * 60).toInt().coerceIn(-32768, 32767).toShort()
+        }
+        for (i in 0 until 3200) out[i] = (rng.nextGaussian() * 60).toInt().toShort()
+        for (i in out.size - 3200 until out.size) out[i] = (rng.nextGaussian() * 60).toInt().toShort()
+        return out
+    }
+
+    private val nova = listOf(500.0, 900.0, 1400.0, 700.0)
+    private val other = listOf(2400.0, 300.0, 2000.0, 350.0)
+
+    @Test
+    fun `the name as taught is found again, said a little differently, inside other speech`() {
+        val taught = (1..4).mapNotNull { SaidName.of(word(listOf(120.0, 125.0, 130.0, 110.0), nova, 160, seed = it)) }
+        assertEquals(4, taught.size)
+        val bar = SaidName.bar(taught)!!
+        val said = word(listOf(120.0, 125.0, 130.0, 110.0) + listOf(150.0, 140.0, 145.0, 130.0), nova + other, 160, seed = 9)
+        val found = SaidName.find(taught, SaidName.heard(said))!!
+        assertTrue("%.3f vs %.3f".format(found.distance, bar), found.distance <= bar)
+        val notIt = SaidName.find(taught, SaidName.heard(word(listOf(120.0, 125.0, 130.0, 110.0), other, 160, seed = 5)))!!
+        assertTrue("%.3f vs %.3f".format(notIt.distance, bar), notIt.distance > bar)
+    }
+
+    @Test
+    fun `a taught name survives saving, and the judge weighs it`() {
+        val shape = SaidName.of(word(listOf(120.0, 125.0, 130.0, 110.0), nova))!!
+        val back = SaidName.decode(SaidName.encode(shape))!!
+        assertEquals(shape.size, back.size)
+        assertTrue(SaidName.distance(shape, back)!!.distance < 0.02f)
+        val person = KnownPerson("g", "Gabriel", Role.Owner, emptyList()).withSaid("Nova", listOf(shape, shape))
+        assertEquals(2, person.saidFor("nova").size)
+        assertEquals(3.5, WakeJudge.said(0.08f, 0.2f)!!.lambda, 1e-9)
+        assertEquals(-1.5, WakeJudge.said(0.3f, 0.2f)!!.lambda, 1e-9)
+        assertNull(WakeJudge.said(null, 0.2f))
+        val woke = WakeJudge(alpha = MicSensitivity.alpha(50)).judge(
+            0.5,
+            listOf(WakeJudge.Witness { WakeJudge.said(0.1f, 0.2f) }, WakeJudge.Witness { WakeJudge.voice(0.05f, "Gabriel") }),
+        )
+        assertTrue(woke.line(), woke.wake)
+        assertEquals(100, WakeJudge.share(woke, WakeJudge(alpha = MicSensitivity.alpha(50))))
+    }
+}

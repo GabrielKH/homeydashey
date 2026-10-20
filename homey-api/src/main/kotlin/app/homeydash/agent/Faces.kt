@@ -29,6 +29,8 @@ data class KnownPerson(
     val voices: Map<Persona, VoiceStyle> = emptyMap(),
     /** The Warm voice recording each of their characters speaks in with them; missing for the house's. */
     val warmVoices: Map<Persona, String> = emptyMap(),
+    /** How they say each wake name ([SaidName.encode]), by the name's key, from teaching their voice. */
+    val saidNames: Map<String, List<String>> = emptyMap(),
 ) {
     /** Their first character, null for the house's. */
     val character: Persona? get() = characters.firstOrNull()
@@ -38,10 +40,22 @@ data class KnownPerson(
     /** This person as heard with [wakeName]: [print] holds that name's voiceprints. */
     fun forWake(wakeName: String): KnownPerson = copy(print = printsFor(wakeName))
 
+    /** How they say [wakeName], as taught; empty when not taught. */
+    fun saidFor(wakeName: String): List<SaidName.Shape> = saidNames[WakeName.key(wakeName)].orEmpty().mapNotNull { SaidName.decode(it) }
+
+    /** [more] ways of saying [wakeName] added, keeping the newest [SAID_KEPT]. */
+    fun withSaid(wakeName: String, more: List<SaidName.Shape>): KnownPerson {
+        val key = WakeName.key(wakeName)
+        return copy(saidNames = saidNames + (key to (saidNames[key].orEmpty() + more.map { SaidName.encode(it) }).takeLast(SAID_KEPT)))
+    }
+
     /** [more] voiceprints said with [wakeName] added to the ones already kept. */
     fun withPrints(wakeName: String, more: List<FloatArray>): KnownPerson =
         copy(prints = prints + (WakeName.key(wakeName) to VoiceId.with(printsFor(wakeName), more)))
 }
+
+/** How many taught ways of saying a name are kept per person: the newest. */
+const val SAID_KEPT = 8
 
 /** Matches a face embedding against the people enrolled on this tablet. */
 object FaceMatcher {
