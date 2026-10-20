@@ -883,7 +883,8 @@ class Agent(
         append("Everything the dashboard shows is yours to use: answer the weather from the weather in the note (or the weather tool), never say you can't see it. ")
         append("When the user lets you choose (\"play something\", \"välj själv\"), choose yourself instead of asking. ")
         append("Remember what the user already told you in this conversation and never ask the same question twice. ")
-        append("Call each tool once per thing to do; when a tool says it's done, don't call it again, just answer.\n")
+        append("Call each tool once per thing to do; when a tool says it's done, don't call it again, just answer. ")
+        append("Tools check with Homey afterwards: say a thing is done only when the tool's answer says so, and when it says Homey still reports the old value or shows no change, say that instead.\n")
         // The owner's own topics marked "always" belong to every question.
         skills(settings).filter { it.always }.forEach { s -> s.rules.forEach { append(it).append('\n') } }
         val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }

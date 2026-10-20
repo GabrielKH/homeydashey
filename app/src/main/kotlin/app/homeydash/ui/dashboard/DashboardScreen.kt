@@ -55,6 +55,7 @@ import app.homeydash.homey.FlowCards
 import app.homeydash.homey.MusicSource
 import app.homeydash.homey.Device
 import app.homeydash.homey.RemoteAction
+import app.homeydash.homey.RemoteKey
 import app.homeydash.homey.Remotes
 import app.homeydash.homey.SpeakerGrouping
 import app.homeydash.homey.DashboardLayout
@@ -179,6 +180,25 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
             is RemoteAction.Capability -> {
                 val value = if (action.toggle) device.capability(action.capability)?.value?.let { (it as? JsonPrimitive)?.booleanOrNull } != true else true
                 set(device.id, action.capability, JsonPrimitive(value))
+            }
+        }
+    }
+
+    /**
+     * The media player's power button: the same power key the device's remote sends (a TV app's
+     * own key card when it has one, which works where switching onoff fails), else onoff.
+     */
+    fun power(device: Device) {
+        scope.launch {
+            val power = Remotes.buttons(device.capabilities, cards(device.id)) { c, a ->
+                if (a.type == "dropdown") FlowCards.dropdownItems(a) else autocomplete(c, a.name, "")
+            }[RemoteKey.Power]
+            when (power) {
+                is RemoteAction.Card -> store.runAction(power.card, power.args)
+                else -> {
+                    val on = device.capability("onoff")?.value?.let { (it as? JsonPrimitive)?.booleanOrNull } == true
+                    store.setCapability(device.id, "onoff", JsonPrimitive(!on))
+                }
             }
         }
     }

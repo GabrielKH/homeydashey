@@ -3,6 +3,7 @@ package app.homeydash.agent
 import app.homeydash.homey.FlowCardAction
 import app.homeydash.homey.FlowCards
 import app.homeydash.homey.RemoteAction
+import app.homeydash.homey.RemoteKey
 import app.homeydash.homey.Remotes
 import app.homeydash.homey.VacuumCommand
 import app.homeydash.homey.VacuumRoom
@@ -304,10 +305,15 @@ class AgentTools(
         if (device.unreachable) {
             return ToolResult("Homey can't reach ${device.name} right now, so it can't be changed. Tell the user it may be unplugged, switched off at the wall or out of range.", lo)
         }
+        // A TV's own power key is what its remote sends; switching onoff often fails or shows an error on the TV.
+        if (capabilityId == "onoff" && device.deviceClass in TV_CLASSES) {
+            val power = actionsOf(device)?.let { cards -> Remotes.buttons(device.capabilities.map { it.id }, cards) { c, a -> home.choices(c, a, "") } }?.get(RemoteKey.Power)
+            if (power is RemoteAction.Card) return tvPower(device, power, (value as? JsonPrimitive)?.booleanOrNull == true, lo)
+        }
         home.setCapability(device.id, capabilityId, value)
         // Homey sometimes accepts a change the device never makes; check before saying it's done.
-        val now = home.readBack(device.id, capabilityId)
-        if (now != null && !same(now, value)) {
+        val now = stillReports(device, capabilityId, value, tries = if (device.deviceClass in TV_CLASSES) TV_TRIES else 2)
+        if (now != null) {
             return ToolResult(
                 "Homey accepted it, but ${device.name} still reports $capabilityId = ${text(now)}, so it didn't change. " +
                     "Tell the user plainly; it may be out of range or switched off at the wall.",
@@ -316,6 +322,55 @@ class AgentTools(
         }
         return ToolResult("Done: ${device.name} $capabilityId = ${text(value)}.", lo)
     }
+
+    /**
+     * Switches a TV with its own power key, only when it isn't already as asked (the key
+     * flips it), then waits for Homey to show it on or off before saying so.
+     */
+    private suspend fun tvPower(d: AgentDevice, power: RemoteAction.Card, on: Boolean, lo: Boolean): ToolResult {
+        val word = if (on) "on" else "off"
+        val was = (home.readBack(d.id, "onoff") as? JsonPrimitive)?.booleanOrNull
+        if (was == on) return ToolResult("Done: ${d.name} was already $word.", lo)
+        home.runAction(power.card, power.args)
+        val now = stillReports(d, "onoff", JsonPrimitive(on), TV_TRIES)
+            ?: return ToolResult("Done: ${d.name} onoff = $on (Homey shows it $word).", lo)
+        return ToolResult(
+            "Pressed ${d.name}'s power key, but Homey still reports onoff = ${text(now)}, so it isn't $word yet. Tell the user plainly; it may need a moment or the TV may not be reachable.",
+            lo,
+        )
+    }
+
+    /**
+     * Asks Homey up to [tries] times whether [capabilityId] now reads [value]: null when it does
+     * or Homey can't tell, else the value it still reports. Slow devices like TVs get more tries.
+     */
+    private suspend fun stillReports(d: AgentDevice, capabilityId: String, value: JsonElement, tries: Int): JsonElement? {
+        var now: JsonElement? = null
+        repeat(tries) {
+            val read = home.readBack(d.id, capabilityId) ?: return null
+            if (same(read, value)) return null
+            now = read
+        }
+        return now
+    }
+
+    /**
+     * What Homey reports about [d] after an action, compared with [before]: the capabilities
+     * that changed, or a note that nothing did yet, so the AI says "sent" rather than "done".
+     */
+    private suspend fun afterwards(d: AgentDevice, before: Map<String, JsonElement?>): String {
+        val after = home.readDevice(d.id) ?: return ""
+        val changed = after.capabilitiesObj.mapNotNull { (id, c) ->
+            val was = before[id]
+            val now = c.value ?: return@mapNotNull null
+            if (was != null && same(was, now)) null else "$id ${text(now)}" + (was?.let { " (was ${text(it)})" } ?: "")
+        }
+        return if (changed.isEmpty()) " Homey shows no change on ${d.name} yet, so tell the user it was sent, not that it is done."
+        else " Homey now reports: ${changed.take(6).joinToString()}."
+    }
+
+    private fun valuesOf(d: AgentDevice): Map<String, JsonElement?> =
+        home.device(d.id)?.capabilitiesObj?.mapValues { it.value.value } ?: d.capabilities.associate { it.id to it.value }
 
     /** [lightsOnly]: the user said lights ("släck lamporna"), so only lights change, hidden ones still left alone. */
     private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String, lightsOnly: Boolean = false): ToolResult {
@@ -559,8 +614,9 @@ class AgentTools(
                 put(arg.name, element)
             }
         }
+        val before = valuesOf(d)
         home.runAction(card, JsonObject(args))
-        return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}.")
+        return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}." + afterwards(d, before))
     }
 
     /**
@@ -705,13 +761,8 @@ class AgentTools(
         val d = view.device(alias) ?: return unknown(alias)
         val cards = actionsOf(d) ?: return ok("${d.name}'s remote can't be used here.")
         val presses = RemoteKeys.parse(keys) ?: return ok("Name the buttons: ${RemoteKeys.NAMES}.")
-        val keyCard = Remotes.keyCard(cards)
-        val items = when (keyCard?.arg?.type) {
-            "dropdown" -> FlowCards.dropdownItems(keyCard.arg)
-            "autocomplete" -> home.choices(keyCard.card, keyCard.arg, "")
-            else -> emptyList()
-        }
-        val buttons = Remotes.actions(d.capabilities.map { it.id }, cards, keyCard, Remotes.keyItems(items))
+        val buttons = Remotes.buttons(d.capabilities.map { it.id }, cards) { c, a -> home.choices(c, a, "") }
+        val before = valuesOf(d)
         val missing = presses.distinct().filter { it !in buttons }
         if (missing.isNotEmpty()) {
             return ok("${d.name} has no button for ${missing.joinToString { RemoteKeys.name(it) }}" +
@@ -730,7 +781,16 @@ class AgentTools(
                 }
             }
         }
-        return ok("Done: pressed ${presses.joinToString { RemoteKeys.name(it) }} on ${d.name}.")
+        val pressed = "pressed ${presses.joinToString { RemoteKeys.name(it) }} on ${d.name}"
+        // Power flips it: say what Homey shows once it has had time to switch.
+        val wasOn = (before["onoff"] as? JsonPrimitive)?.booleanOrNull
+        if (RemoteKey.Power in presses && wasOn != null) {
+            val wanted = if (presses.count { it == RemoteKey.Power } % 2 == 1) !wasOn else wasOn
+            val now = stillReports(d, "onoff", JsonPrimitive(wanted), TV_TRIES)
+                ?: return ok("Done: $pressed; Homey shows it ${if (wanted) "on" else "off"}.")
+            return ok("Pressed: $pressed, but Homey still reports onoff = ${text(now)}. Tell the user plainly; it may need a moment.")
+        }
+        return ok("Done: $pressed.")
     }
 
     private fun openPage(page: String): ToolResult {
@@ -1075,6 +1135,9 @@ class AgentTools(
         private const val MAX_ACTIONS = 40
 
         private const val REMOTE_GAP_MS = 350L
+        private val TV_CLASSES = setOf("tv", "settopbox")
+        /** Reads of a TV's state after switching it, about 1.5 s apart: TVs take a few seconds. */
+        private const val TV_TRIES = 5
         private const val DOCK = "its dock"
         private const val VACUUM_GAP_MS = 4_000L
         private const val VACUUM_CHECK_MS = 6_000L

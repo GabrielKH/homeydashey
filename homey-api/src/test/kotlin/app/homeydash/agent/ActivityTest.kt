@@ -135,6 +135,40 @@ class ActivityTest {
         assertTrue(StepText.failed(missing.text))
     }
 
+    /** A TV whose onoff fails, like many TV apps', but whose own power key works, and which shows what it is now. */
+    private class PowerKeyTv(var on: Boolean, val turnsOn: Boolean = true) : HomeControl {
+        val power = app.homeydash.homey.FlowCardAction("homey:device:d-tv:toggle_power", title = "Power")
+        val ran = mutableListOf<String>()
+        override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) = error("The TV says: not supported")
+        override fun deviceActions(deviceId: String) = if (deviceId == "d-tv") listOf(power) else emptyList()
+        override suspend fun runAction(card: app.homeydash.homey.FlowCardAction, args: JsonObject) { ran += card.cardId; if (turnsOn) on = !on }
+        override suspend fun readBack(deviceId: String, capability: String): JsonElement? = if (capability == "onoff") JsonPrimitive(on) else null
+        override suspend fun setMood(mood: Mood) {}
+        override suspend fun flows() = emptyList<HomeyFlow>()
+        override suspend fun triggerFlow(flow: HomeyFlow) {}
+        override suspend fun people() = emptyList<HomeyPerson>()
+        override suspend fun variables() = emptyList<LogicVariable>()
+        override suspend fun playMusic(deviceId: String, query: String): String? = null
+    }
+
+    @Test fun `a TV is switched with its own power key, and only said done once Homey shows it`() = runTest {
+        val alias = view().devices.first { it.name == "TV" }.alias
+        fun on(value: String) = ToolCall("p", "set_device", JsonObject(mapOf("device" to JsonPrimitive(alias), "capability" to JsonPrimitive("onoff"), "value" to JsonPrimitive(value))))
+        val off = PowerKeyTv(on = false)
+        val done = AgentTools(view(), off, FakeDashboard()).run(on("true"))
+        assertEquals(listOf("toggle_power"), off.ran)
+        assertTrue(done.text, done.text.startsWith("Done: TV onoff = true"))
+        // Already on: the key flips it, so it isn't pressed.
+        val already = PowerKeyTv(on = true)
+        assertTrue(AgentTools(view(), already, FakeDashboard()).run(on("true")).text.contains("already on"))
+        assertTrue(already.ran.isEmpty())
+        // The key was sent but the TV never came on: say so rather than done.
+        val stuck = PowerKeyTv(on = false, turnsOn = false)
+        val result = AgentTools(view(), stuck, FakeDashboard()).run(on("true"))
+        assertTrue(result.text, result.text.contains("still reports onoff = false"))
+        assertTrue(StepText.failed(result.text) || !result.text.startsWith("Done"))
+    }
+
     @Test fun `the log keeps local-only lines and keys on the tablet`() {
         val file = File.createTempFile("agentlog", ".jsonl").apply { delete() }
         val log = AgentLog(file, ZoneId.of("UTC"))

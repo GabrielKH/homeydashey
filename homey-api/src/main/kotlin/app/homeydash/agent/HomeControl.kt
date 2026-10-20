@@ -60,6 +60,9 @@ interface HomeControl {
      */
     suspend fun readBack(deviceId: String, capability: String): JsonElement? = null
 
+    /** The whole device as Homey now reports it, asked fresh; null when it can't tell. */
+    suspend fun readDevice(deviceId: String): Device? = null
+
     /** Runs a Flow card; throws when Homey refuses. */
     suspend fun runAction(card: FlowCardAction, args: JsonObject) {}
 
@@ -116,6 +119,11 @@ class StoreHomeControl(
         // Gives the device a moment to answer Homey before asking.
         kotlinx.coroutines.delay(READ_BACK_MS)
         return store.readBack(deviceId, capability)
+    }
+
+    override suspend fun readDevice(deviceId: String): Device? {
+        kotlinx.coroutines.delay(READ_BACK_MS)
+        return store.readDevice(deviceId)
     }
 
     override suspend fun setMood(mood: Mood) = store.setMood(mood)
