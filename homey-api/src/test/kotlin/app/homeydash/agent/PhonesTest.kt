@@ -94,9 +94,17 @@ class PhonesTest {
     fun ringsTheAskersOwnPhoneAndSaysItIsHome() = runTest {
         val home = Home()
         val r = find(AgentTools(view(settings()), home, Dash()), "my phone")
-        assertEquals(listOf("homey:device:p1:play_sound", "homey:device:p1:update_device_data"), home.rang)
-        // The battery is read fresh after asking Find My once, not from the last poll.
-        assertTrue(r.text, r.text.contains("Ringing Gabriels iPhone") && r.text.contains("home") && r.text.contains("31 %"))
+        // Only the sound: asking for a location would wake the phone's GPS.
+        assertEquals(listOf("homey:device:p1:play_sound"), home.rang)
+        assertTrue(r.text, r.text.contains("Ringing Gabriels iPhone") && r.text.contains("home") && r.text.contains("54 %"))
+    }
+
+    @Test
+    fun askingWhereAsksFindMyOnceAndReadsItFresh() = runTest {
+        val home = Home()
+        val r = find(AgentTools(view(settings()), home, Dash()), action = "where")
+        assertEquals(listOf("homey:device:p1:update_device_data"), home.rang)
+        assertTrue(r.text, r.text.contains("31 %"))
     }
 
     @Test
