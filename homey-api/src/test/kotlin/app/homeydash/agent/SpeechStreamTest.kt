@@ -104,9 +104,7 @@ class SpeechStreamTest {
         override fun goodnight() {}
         override suspend fun weather() = "Sunny"
         override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean) = emptyList<AgentEvent>()
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 
@@ -211,5 +209,27 @@ class SpeechStreamTest {
         repeat(20) { assertTrue(ThinkingSounds.pick(all, first) != first) }
         assertEquals("Hmm…", ThinkingSounds.pick(listOf("Hmm…"), "Hmm…"))
         assertEquals(null, ThinkingSounds.pick(emptyList(), null))
+    }
+
+    @Test
+    fun `what a round said is kept for the next round, and cleared after`() {
+        val said = mutableListOf<String>()
+        val out = SpeechStream({ said += it })
+        out.feed("Jag tänder lamporna i vardagsrummet. ")
+        out.feed("CALL set_room {}")
+        out.finish()
+        assertEquals("Jag tänder lamporna i vardagsrummet.", out.heardThisRound())
+        out.next()
+        assertEquals("", out.heardThisRound())
+    }
+
+    @Test
+    fun `a hum is said as a word, never spelled out`() {
+        assertEquals("ehm, det vet jag inte.", ThinkingSounds.sayable("Hmm, det vet jag inte.", true))
+        assertEquals("um… let me see", ThinkingSounds.sayable("Hmmm… let me see", false))
+        assertEquals("Hampus och Emma", ThinkingSounds.sayable("Hampus och Emma", true))
+        for (p in Persona.entries) for (sv in listOf(true, false)) {
+            (ThinkingSounds.all(p, sv) + ThinkingSounds.answers(p, sv)).forEach { assertEquals(it, ThinkingSounds.sayable(it, sv)) }
+        }
     }
 }

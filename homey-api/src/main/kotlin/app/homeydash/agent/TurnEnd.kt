@@ -6,6 +6,8 @@ package app.homeydash.agent
  * instead of answering half a question. Used on what Whisper heard up to a pause.
  */
 object TurnEnd {
+    private val SPACES = Regex("\\s+")
+
     /**
      * True when [text] reads as a finished question or request. [held] is a long, even sound
      * just before the pause (a drawn-out "ööhh" or "mmm"), which Whisper often leaves out.
@@ -21,7 +23,7 @@ object TurnEnd {
         // Only the name ("Hey TARS"): the question comes next.
         if (wakeName.isNotBlank() && WakeName.heard(raw, wakeName)) return false
         val last = words.last()
-        if (last in FILLERS) return false
+        if (filler(last)) return false
         if (last in OPEN_ENDINGS) return false
         return true
     }
@@ -29,8 +31,8 @@ object TurnEnd {
     /** [text] without its hesitation sounds, for the AI: "Öh, tänd, ehm, lampan" is "tänd lampan". */
     fun clean(text: String): String {
         val kept = ArrayList<String>()
-        for (w in text.trim().split(Regex("\\s+"))) {
-            if (NameMatch.normalize(w) !in FILLERS) {
+        for (w in text.trim().split(SPACES)) {
+            if (!filler(NameMatch.normalize(w))) {
                 kept += w
                 continue
             }
@@ -44,10 +46,21 @@ object TurnEnd {
         return kept.joinToString(" ")
     }
 
+    /**
+     * Whether a word (as [NameMatch.normalize] writes it) is a hesitation sound: one of
+     * [FILLERS], or a drawn-out vowel with or without a hum, as Whisper writes "ööö", "äää",
+     * "eeeh" or "mmmm" ("ooo", "aaa", "eeeh", "mmmm").
+     */
+    fun filler(word: String): Boolean = word in FILLERS || (word.length >= 2 && word !in WORDS && DRAWN.matches(word))
+
+    /** Real words a drawn-out sound could be mistaken for. */
+    private val WORDS = setOf("am", "om")
+    private val DRAWN = Regex("(a+|e+|o+|u+|y+)h*m*|h*m+|n{2,}")
+
     /** Hesitation sounds in Swedish and English, as [NameMatch.normalize] writes them. */
     val FILLERS = setOf(
         "oh", "ohm", "ohh", "ohhm", "ah", "ahm", "ahh", "eh", "ehm", "ehh", "em", "hm", "hmm", "hmmm",
-        "mm", "mmm", "um", "umm", "uh", "uhm", "uhh", "er", "erm", "oeh", "aeh",
+        "mm", "mmm", "um", "umm", "uh", "uhm", "uhh", "er", "erm", "oeh", "aeh", "o",
     )
 
     /**

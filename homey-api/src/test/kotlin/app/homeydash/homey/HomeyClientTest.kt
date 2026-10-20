@@ -92,4 +92,18 @@ class HomeyClientTest {
         val error = runCatching { HomeyConnector(OkHttpClient()).connect(server.url("/").toString(), "nope") }.exceptionOrNull()
         assertTrue(error is HomeyConnectException && "API key" in error.message!!)
     }
+
+    @Test fun `lists installed apps and runs an app's card with its result`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"com.apple.findmy": {"id": "com.apple.findmy", "name": "Find My", "enabled": true, "state": "running"}}"""))
+        val apps = client.apps()
+        assertEquals("/api/manager/apps/app", server.takeRequest().path)
+        assertTrue(apps.getValue("com.apple.findmy").running)
+
+        server.enqueue(MockResponse().setBody("""{"json": "[]"}"""))
+        val result = client.runAppAction("no.runely.calendar", "get_calendars_metadata")
+        val request = server.takeRequest()
+        assertEquals("/api/manager/flow/flowcardaction/homey:app:no.runely.calendar/homey:app:no.runely.calendar:get_calendars_metadata/run", request.path)
+        assertEquals("POST", request.method)
+        assertEquals("[]", (result as kotlinx.serialization.json.JsonObject)["json"]!!.let { (it as JsonPrimitive).content })
+    }
 }

@@ -27,11 +27,29 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * TARS's voice, spoken on the tablet itself: the Piper voice the TARS-AI project trained on the
- * film, downloaded once from Hugging Face (about 60 MB) and run with sherpa-onnx. Swedish answers
- * are read with Swedish pronunciation in the same voice, so TARS speaks Swedish with his accent.
+ * A Piper voice spoken on the tablet itself, downloaded once (about 60 MB) and run with
+ * sherpa-onnx: TARS's voice ([tars]) or Alma's Swedish one ([alma]).
  */
-class TarsVoice(context: Context, http: OkHttpClient, private val scope: CoroutineScope) {
+class PiperVoice(context: Context, http: OkHttpClient, private val scope: CoroutineScope, private val spec: Spec) {
+    /**
+     * Which voice: where it is kept and fetched from. A [bilingual] voice also reads Swedish
+     * with Swedish pronunciation, so TARS speaks Swedish with his accent; the others only speak
+     * their own language. [speaker] picks one of a voice's several speakers; the noise and length
+     * settings are the ones the voice's maker recommends, or sherpa's own when null.
+     */
+    class Spec(
+        val folder: String,
+        val file: String,
+        val what: String,
+        val modelUrls: List<String>,
+        val configUrls: List<String>,
+        val bilingual: Boolean,
+        val speaker: String? = null,
+        val noiseScale: Float? = null,
+        val noiseScaleW: Float? = null,
+        val lengthScale: Float? = null,
+    )
+
     sealed interface State {
         data object Missing : State
         data class Downloading(val progress: Float, val what: String) : State
@@ -39,17 +57,18 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
         data class Failed(val message: String) : State
     }
 
-    private val dir = File(context.filesDir, "tars")
-    private val english = File(dir, "TARS-en.onnx")
-    private val swedish = File(dir, "TARS-sv.onnx")
-    private val config = File(dir, "TARS.onnx.json")
+    private val dir = File(context.filesDir, spec.folder)
+    private val english = File(dir, "${spec.file}-en.onnx")
+    private val swedish = File(dir, "${spec.file}-sv.onnx")
+    private val config = File(dir, "${spec.file}.onnx.json")
     private val tokens = File(dir, "tokens.txt")
-    private val espeak = File(dir, "espeak-ng-data")
+    // The pronunciation rules are the same for every voice, so they are kept once, where TARS's were.
+    private val espeak = File(File(context.filesDir, "tars"), "espeak-ng-data")
     private val http = http.newBuilder().readTimeout(60, TimeUnit.SECONDS).build()
     private var job: Job? = null
     private val engines = java.util.concurrent.ConcurrentHashMap<Boolean, OfflineTts>()
 
-    private fun ready() = english.exists() && swedish.exists() && tokens.exists() && File(espeak, "phontab").exists()
+    private fun ready() = (english.exists() || !spec.bilingual) && swedish.exists() && tokens.exists() && File(espeak, "phontab").exists()
 
     private val _state = MutableStateFlow<State>(if (ready()) State.Ready else State.Missing)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -57,7 +76,7 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
     fun download() {
         if (job?.isActive == true || ready()) return
         job = scope.launch {
-            _state.value = State.Downloading(0f, "TARS's voice")
+            _state.value = State.Downloading(0f, spec.what)
             _state.value = try {
                 withContext(Dispatchers.IO) { fetchAll() }
                 State.Ready
@@ -71,21 +90,24 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
 
     private fun fetchAll() {
         dir.mkdirs()
-        val raw = File(dir, "TARS.onnx.part")
-        fetch(MODEL_URLS, raw, "TARS's voice")
-        fetch(CONFIG_URLS, config, "TARS's voice settings")
+        val raw = File(dir, "${spec.file}.onnx.part")
+        fetch(spec.modelUrls, raw, spec.what)
+        fetch(spec.configUrls, config, "${spec.what} settings")
         if (!File(espeak, "phontab").exists()) {
-            val archive = File(dir, "espeak-ng-data.tar.bz2")
+            espeak.parentFile?.mkdirs()
+            val archive = File(espeak.parentFile, "espeak-ng-data.tar.bz2")
             fetch(listOf(ESPEAK_URL), archive, "pronunciation rules")
-            untar(archive, dir)
+            untar(archive, espeak.parentFile!!)
             archive.delete()
         }
         val cfg = Json.parseToJsonElement(config.readText()).jsonObject
         tokens.writeText(PiperModel.tokens(cfg))
         // One copy reads English, the other Swedish; sherpa takes the language from the model file.
-        raw.copyTo(english, overwrite = true)
-        english.appendBytes(PiperModel.metadataBytes(PiperModel.metadata(cfg)))
-        if (!raw.renameTo(swedish)) throw IOException("Couldn't save TARS's voice.")
+        if (spec.bilingual) {
+            raw.copyTo(english, overwrite = true)
+            english.appendBytes(PiperModel.metadataBytes(PiperModel.metadata(cfg)))
+        }
+        if (!raw.renameTo(swedish)) throw IOException("Couldn't save ${spec.what}.")
         swedish.appendBytes(PiperModel.metadataBytes(PiperModel.metadata(cfg, espeakVoice = "sv")))
     }
 
@@ -144,25 +166,25 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
         }
     }
 
-    /** [text] in TARS's voice, or null before the voice is downloaded. */
+    /** [text] in this voice, or null before it is downloaded, or for English in a Swedish-only voice. */
     suspend fun speak(text: String, inSwedish: Boolean, speed: Float = 1f): Pcm? = withContext(Dispatchers.Default) {
-        if (_state.value != State.Ready || text.isBlank()) return@withContext null
+        if (_state.value != State.Ready || text.isBlank() || (!inSwedish && !spec.bilingual)) return@withContext null
         runCatching { synth(text, inSwedish, speed) }.getOrNull()
     }
 
-    /** Whether his voice is on the tablet. */
+    /** Whether the voice is on the tablet. */
     val isReady: Boolean get() = _state.value == State.Ready
 
     /**
      * Loads the voice ahead of the first answer (reading the 60 MB model takes a moment), so
-     * TARS starts talking as soon as the text is there.
+     * it starts talking as soon as the text is there.
      */
-    fun warm(inSwedish: Boolean = false) {
+    fun warm(inSwedish: Boolean = !spec.bilingual) {
         if (!isReady || engines.containsKey(inSwedish)) return
         scope.launch(Dispatchers.Default) { runCatching { engine(inSwedish) } }
     }
 
-    @Volatile private var neutral: Int? = null
+    @Volatile private var speakerId: Int? = null
 
     @Synchronized
     private fun engine(inSwedish: Boolean): OfflineTts =
@@ -171,7 +193,11 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
             OfflineTts(
                 config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
-                        vits = OfflineTtsVitsModelConfig(model = model.path, tokens = tokens.path, dataDir = espeak.path),
+                        vits = OfflineTtsVitsModelConfig(model = model.path, tokens = tokens.path, dataDir = espeak.path).apply {
+                            spec.noiseScale?.let { noiseScale = it }
+                            spec.noiseScaleW?.let { noiseScaleW = it }
+                            spec.lengthScale?.let { lengthScale = it }
+                        },
                         numThreads = 4,
                     ),
                 ),
@@ -181,18 +207,38 @@ class TarsVoice(context: Context, http: OkHttpClient, private val scope: Corouti
     @Synchronized
     private fun synth(text: String, inSwedish: Boolean, speed: Float): Pcm {
         val tts = engine(inSwedish)
-        // The calm mood of TARS's eight sounds most like the film.
-        val sid = neutral ?: PiperModel.speakerId(Json.parseToJsonElement(config.readText()).jsonObject, "neutral").also { neutral = it }
+        val sid = spec.speaker?.let { name -> speakerId ?: PiperModel.speakerId(Json.parseToJsonElement(config.readText()).jsonObject, name).also { speakerId = it } } ?: 0
         val audio = tts.generate(text, sid = sid, speed = speed)
         val samples = ShortArray(audio.samples.size) { i -> (audio.samples[i].coerceIn(-1f, 1f) * 32767).toInt().toShort() }
         return Pcm(audio.sampleRate, samples)
     }
 
-    private companion object {
-        const val MODEL_URLS_BASE = "https://huggingface.co/olivierdion007/TARS-AI/resolve/main/TARS.onnx"
-        const val GITHUB_BASE = "https://github.com/TARS-AI-Community/TARS-AI/raw/refs/heads/V3/src/character/TARS/voice/TARS.onnx"
-        val MODEL_URLS = listOf(MODEL_URLS_BASE, GITHUB_BASE)
-        val CONFIG_URLS = listOf("$MODEL_URLS_BASE.json", "$GITHUB_BASE.json")
-        const val ESPEAK_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/espeak-ng-data.tar.bz2"
+    companion object {
+        private const val TARS_HF = "https://huggingface.co/olivierdion007/TARS-AI/resolve/main/TARS.onnx"
+        private const val TARS_GITHUB = "https://github.com/TARS-AI-Community/TARS-AI/raw/refs/heads/V3/src/character/TARS/voice/TARS.onnx"
+        private const val ALMA_HF = "https://huggingface.co/yeagersthlm/piper-voice-sv-alma/resolve/main/sv_SE-alma-medium.onnx"
+        // Piper's own Alma, before the retraining, in case the retrained one is gone.
+        private const val ALMA_PIPER = "https://huggingface.co/rhasspy/piper-voices/resolve/main/sv/sv_SE/alma/medium/sv_SE-alma-medium.onnx"
+        private const val ESPEAK_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/espeak-ng-data.tar.bz2"
+
+        /**
+         * The voice the TARS-AI project trained on the film; its calm mood, of his eight, sounds
+         * most like the film.
+         */
+        val TARS = Spec(
+            folder = "tars", file = "TARS", what = "TARS's voice",
+            modelUrls = listOf(TARS_HF, TARS_GITHUB), configUrls = listOf("$TARS_HF.json", "$TARS_GITHUB.json"),
+            bilingual = true, speaker = "neutral",
+        )
+
+        /**
+         * Alma, a Swedish woman's voice retrained 10 000 epochs on the NST corpus by Daniel Nylander
+         * (CC BY 4.0), with his recommended settings.
+         */
+        val ALMA = Spec(
+            folder = "alma", file = "alma", what = "Alma's voice",
+            modelUrls = listOf(ALMA_HF, ALMA_PIPER), configUrls = listOf("$ALMA_HF.json", "$ALMA_PIPER.json"),
+            bilingual = false, noiseScale = 0.8f, noiseScaleW = 0.6f, lengthScale = 0.9f,
+        )
     }
 }

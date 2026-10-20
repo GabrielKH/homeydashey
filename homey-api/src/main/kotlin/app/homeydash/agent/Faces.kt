@@ -20,16 +20,47 @@ data class KnownPerson(
     val prints: Map<String, List<FloatArray>> = emptyMap(),
     /** The voiceprints for the wake name in use, picked by [forWake]; what [VoiceId] matches. */
     val print: List<FloatArray> = emptyList(),
+    /**
+     * The characters this person talks with, in the order picked (TARS and Nova for one, only Nova
+     * for another); empty for the house's. The first answers when no name is said.
+     */
+    val characters: List<Persona> = emptyList(),
+    /** The voice each of their characters speaks in with them; missing for that character's usual voice. */
+    val voices: Map<Persona, VoiceStyle> = emptyMap(),
+    /** The Warm voice recording each of their characters speaks in with them; missing for the house's. */
+    val warmVoices: Map<Persona, String> = emptyMap(),
+    /** How they say each wake name ([SaidName.encode]), by the name's key, from teaching their voice. */
+    val saidNames: Map<String, List<String>> = emptyMap(),
+    /** How sure the wake judge must be before waking for them (see [WakeJudge.upper]), by the name's key; missing for the usual. */
+    val strictness: Map<String, Int> = emptyMap(),
 ) {
+    /** Their first character, null for the house's. */
+    val character: Persona? get() = characters.firstOrNull()
+
     fun printsFor(wakeName: String): List<FloatArray> = prints[WakeName.key(wakeName)].orEmpty()
 
     /** This person as heard with [wakeName]: [print] holds that name's voiceprints. */
     fun forWake(wakeName: String): KnownPerson = copy(print = printsFor(wakeName))
 
+    /** How they say [wakeName], as taught; empty when not taught. */
+    fun saidFor(wakeName: String): List<SaidName.Shape> = saidNames[WakeName.key(wakeName)].orEmpty().mapNotNull { SaidName.decode(it) }
+
+    /** How sure the wake judge must be that they called [wakeName], 0–100. */
+    fun strictnessFor(wakeName: String): Int = strictness[WakeName.key(wakeName)] ?: WakeJudge.STRICTNESS
+
+    /** [more] ways of saying [wakeName] added, keeping the newest [SAID_KEPT]. */
+    fun withSaid(wakeName: String, more: List<SaidName.Shape>): KnownPerson {
+        val key = WakeName.key(wakeName)
+        return copy(saidNames = saidNames + (key to (saidNames[key].orEmpty() + more.map { SaidName.encode(it) }).takeLast(SAID_KEPT)))
+    }
+
     /** [more] voiceprints said with [wakeName] added to the ones already kept. */
     fun withPrints(wakeName: String, more: List<FloatArray>): KnownPerson =
         copy(prints = prints + (WakeName.key(wakeName) to VoiceId.with(printsFor(wakeName), more)))
 }
+
+/** How many taught ways of saying a name are kept per person: the newest. */
+const val SAID_KEPT = 8
 
 /** Matches a face embedding against the people enrolled on this tablet. */
 object FaceMatcher {
@@ -91,6 +122,9 @@ object FaceMatcher {
  * offline speech model limited to these phrases, so it hears nothing else.
  */
 object WakeName {
+    private val NOT_WAKE = Regex("[^a-z' ]")
+    private val SPACES = Regex("\\s+")
+
     /** Phrases that wake the assistant for [name]. */
     fun phrases(name: String): List<String> {
         val n = clean(name)
@@ -103,10 +137,13 @@ object WakeName {
      * instead of the name, and "[unk]". Without the decoys, any sound close enough is
      * forced onto the name; [vocabulary] keeps only words the model knows.
      */
-    fun grammar(name: String, vocabulary: Set<String>? = null): String {
-        val own = clean(name).split(' ').toSet()
+    fun grammar(name: String, vocabulary: Set<String>? = null): String = grammar(listOf(name), vocabulary)
+
+    /** The grammar for several names at once ("Nova" and "TARS"), so any of them wakes it. */
+    fun grammar(names: List<String>, vocabulary: Set<String>? = null): String {
+        val own = names.flatMap { clean(it).split(' ') }.toSet()
         val decoys = DECOYS.filter { it !in own && (vocabulary == null || it in vocabulary) }
-        return (phrases(name) + decoys + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
+        return (names.flatMap { phrases(it) }.distinct() + decoys + "[unk]").joinToString(",", "[", "]") { "\"" + it + "\"" }
     }
 
     /** Short everyday words; also ones that sound like common names, so they don't wake it. */
@@ -153,5 +190,5 @@ object WakeName {
     fun key(name: String): String = clean(name).removePrefix("hey ").removePrefix("hej ").ifEmpty { "nova" }
 
     fun clean(text: String): String =
-        text.lowercase().replace(Regex("[^a-z' ]"), " ").split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+        text.lowercase().replace(NOT_WAKE, " ").split(SPACES).filter { it.isNotEmpty() }.joinToString(" ")
 }

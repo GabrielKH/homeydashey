@@ -8,6 +8,7 @@ import kotlin.random.Random
 
 /** The little sound the assistant makes when it hears its name, before it listens. */
 enum class WakeSound(val label: String, val detail: String) {
+    Voice("\"Ja?\"", "It answers in its own voice: \"Ja?\", \"Japp?\" or \"Ja, du?\", a little different each time."),
     Hum("Mmm", "A soft hum that rises a little, like Siri's \"mm?\"."),
     Huh("Huuh", "A breathy, funky \"huuh?\"."),
     Chime("Chime", "Two short, soft tones."),
@@ -25,6 +26,8 @@ object WakeSounds {
     /** 16-bit mono samples at [RATE]; empty for [WakeSound.Off]. */
     fun render(sound: WakeSound): ShortArray = when (sound) {
         WakeSound.Off -> ShortArray(0)
+        // Said in the voice (see ThinkingSounds.answers); the hum stands in until that is made.
+        WakeSound.Voice -> render(WakeSound.Hum)
         WakeSound.Chime -> chime()
         // A hummed "m": one strong low resonance, the rest muffled by the closed lips.
         WakeSound.Hum -> voiced(

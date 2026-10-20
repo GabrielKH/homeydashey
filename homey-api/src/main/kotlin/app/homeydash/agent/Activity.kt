@@ -74,8 +74,14 @@ object StepText {
             "open_device" -> "Opening ${device()}"
             "goodnight" -> "Getting goodnight ready"
             "timer" -> when (str("action").lowercase()) {
-                "start" -> "Starting a ${str("minutes")} min timer" + (str("label").takeIf { it.isNotEmpty() }?.let { " for $it" } ?: "")
-                "cancel" -> "Stopping a timer"
+                "start" -> if (str("minutes").isEmpty()) "Starting the ${str("label")} timer" else
+                    "Starting a ${str("minutes")} min timer" + (str("label").takeIf { it.isNotEmpty() }?.let { " for $it" } ?: "")
+                "cancel", "stop" -> "Stopping a timer"
+                "cancel_all" -> "Stopping the timers"
+                "rename" -> "Naming the timer " + str("new_label")
+                "add" -> "Changing a timer"
+                "pause" -> "Pausing a timer"
+                "resume" -> "Starting the timer again"
                 else -> "Checking the timers"
             }
             "recipe_timers" -> "Starting the recipe's timers"
@@ -83,9 +89,23 @@ object StepText {
             "set_theme" -> "Switching to ${str("mode")}"
             "calendar" -> "Reading the calendar"
             "who_is_home" -> "Checking who's home"
+            "set_presence" -> "Marking ${str("person").ifBlank { "you" }} ${str("state").lowercase()}"
+            "alarms" -> when (str("action").lowercase()) {
+                "set", "create", "add", "change", "update" -> "Setting a wake-up alarm" + (str("time").takeIf { it.isNotEmpty() }?.let { " for $it" } ?: "")
+                "off", "disable", "cancel" -> "Switching off ${str("name").ifBlank { "the alarm" }}"
+                "on", "enable" -> "Switching on ${str("name").ifBlank { "the alarm" }}"
+                "skip" -> "Skipping the next wake-up"
+                "delete", "remove" -> "Deleting ${str("name").ifBlank { "the alarm" }}"
+                else -> "Checking the alarms"
+            }
+            "find_phone" -> (if (str("action").lowercase() in setOf("where", "var")) "Looking for " else "Ringing ") +
+                str("phone").ifBlank { "your phone" }.let { if (it.contains("phone", true) || it.contains("telefon", true) || it.contains("mobil", true)) it else "$it's phone" }
             "variables" -> "Reading Homey's variables"
             "ask_internet" -> "Searching the internet"
             "run_routine" -> "Running ${str("name")}"
+            "recall" -> "Remembering ${str("about")}".trimEnd()
+            "remember" -> "Noting that down"
+            "forget_memory" -> "Forgetting ${str("about")}".trimEnd()
             else -> call.name.replace('_', ' ').replaceFirstChar(Char::uppercase) + args(a)
         }
     }

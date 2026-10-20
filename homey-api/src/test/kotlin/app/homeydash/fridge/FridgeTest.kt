@@ -26,7 +26,7 @@ class FridgeTest {
         }
     }
     private val dir = Files.createTempDirectory("fridge").toFile()
-    private val fridge = Fridge(dir, products, date = { today }).also { runBlocking { it.load() } }
+    private val fridge = Fridge(dir, listOf(products), date = { today }).also { runBlocking { it.load() } }
 
     @Test
     fun namesAreSortedIntoTheRightKind() {
@@ -113,7 +113,7 @@ class FridgeTest {
         assertEquals(1, fridge.items.value.size)
         assertEquals(2, fridge.items.value.single().quantity)
         // It is all saved.
-        val reread = Fridge(dir, products, date = { today }).also { it.load() }
+        val reread = Fridge(dir, listOf(products), date = { today }).also { it.load() }
         assertEquals(2, reread.items.value.single().quantity)
         assertEquals(Source.Known, reread.identify(code).source)
     }

@@ -87,9 +87,7 @@ class AgentTest {
         override suspend fun weather() = "Sunny, 18 °C"
         override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean) =
             listOf(AgentEvent("Dentist", "09:00", "10:00", false, if (withLocations) "Main street 1" else null))
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 
@@ -598,7 +596,7 @@ class AgentTest {
         assertEquals("TARS", tars.wakeName)
         val nova = tars.asCharacter(Persona.Nova)
         assertEquals(VoiceStyle.Natural, nova.voice)
-        assertEquals(WakeSound.Hum, nova.wakeSound)
+        assertEquals(WakeSound.Voice, nova.wakeSound)
         assertEquals("Nova", nova.wakeName)
         assertEquals("Kim", AgentSettings(wakeName = "Kim").asCharacter(Persona.Nova).wakeName)
     }
@@ -644,6 +642,37 @@ class AgentTest {
         assertFalse(FollowUp.ends("stoppa musiken"))
         assertFalse(FollowUp.ends("tack, släck lampan"))
         assertFalse(FollowUp.ends("då förstår jag"))
+    }
+
+    @Test
+    fun `every goodbye ends it, in Swedish and English, alone or after a request`() {
+        for (bye in listOf(
+            "Bye.", "God bye.", "Good bye!", "Bye bye", "Tack, hej då", "Hejdå", "Det är bra nu", "Det är bra nu, tack",
+            "You can go now", "You can go now, thanks", "Du kan gå nu", "Du kan gå nu tack. Bye.", "Vi ses", "Ha det så bra",
+            "No, that's okay. Thank you.", "Nej tack", "That's all for now", "I'm done", "Jag är klar", "Glöm det", "Never mind",
+            "See you later", "Sluta lyssna", "Okej, adjö Nova",
+        )) assertTrue(bye, FollowUp.ends(bye, "Nova"))
+        // A bare "no" ends it only after an offer of more.
+        assertFalse(FollowUp.ends("Nej"))
+        assertTrue(FollowUp.ends("Nej", offered = true))
+        assertTrue(FollowUp.ends("No.", offered = true))
+        assertTrue(FollowUp.offers("Done. Anything else you need right now?"))
+        assertTrue(FollowUp.offers("Klart! Något mer jag kan göra?"))
+        assertFalse(FollowUp.offers("The lights are on."))
+        // Requests are still requests.
+        assertFalse(FollowUp.ends("Nej, tänd lampan"))
+        assertFalse(FollowUp.ends("Du kan gå till köket"))
+        assertFalse(FollowUp.ends("Spela vi ses i Göteborg"))
+
+        assertEquals("Släck i köket", FollowUp.closing("Släck i köket, tack, hej då"))
+        assertEquals("Turn off the TV", FollowUp.closing("Turn off the TV, you can go now"))
+        assertEquals("Släck allt", FollowUp.closing("Släck allt, hej då"))
+        assertEquals("Men du har alltid stängt av alla…", FollowUp.closing("Men du har alltid stängt av alla… men du kan gå nu tack. Bye."))
+        assertEquals("Stäng av tv:n", FollowUp.closing("Stäng av tv:n, okej, det var allt Nova", "Nova"))
+        // A polite "tack" after a request isn't a goodbye; a goodbye alone has no request.
+        assertNull(FollowUp.closing("Tänd lampan tack"))
+        assertNull(FollowUp.closing("Hej då"))
+        assertNull(FollowUp.closing("Tänd lampan"))
     }
 
     @Test
@@ -745,12 +774,6 @@ class AgentTest {
         server.shutdown()
     }
 
-    @Test fun `TARS answers a quick Swedish command in English`() = runTest {
-        val tars = AgentSettings(persona = Persona.Tars, language = Language.Auto)
-        val reply = Agent(ChatClient(OkHttpClient())).ask("släck kitchen lamp", tars, { view(tars) }, { AgentTools(it, FakeHome(), FakeDashboard()) })
-        assertTrue(reply.text, reply.text.contains(" off") && !reply.text.contains("släckt"))
-    }
-
     @Test fun `Gemini's thought signature goes back with its tool call`() {
         val m = ChatClient.parseResponse(
             """{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","extra_content":{"google":{"thought_signature":"sig"}},
@@ -770,9 +793,6 @@ class AgentTest {
         val tools = AgentTools(view(), home, FakeDashboard())
         val r = tools.run(call("set_device", "device" to "light_1", "capability" to "onoff", "value" to "false"))
         assertTrue(r.text, r.text.startsWith(QuickCommand.NOT_CHANGED_PREFIX))
-        // Without the AI too, and in Swedish.
-        val reply = Agent(ChatClient(OkHttpClient())).ask("släck kitchen lamp", AgentSettings(), { view() }, { AgentTools(it, home, FakeDashboard()) })
-        assertTrue(reply.text, reply.text.contains("svarar inte") && reply.error)
         // A lamp Homey can't reach isn't even tried.
         val offline = devices + ("d-lamp" to devices.getValue("d-lamp").copy(available = false))
         val v = HomeView.build(zones, offline, moods, emptySet(), AgentSettings(), true)
@@ -904,7 +924,7 @@ class AgentTest {
         server.shutdown()
     }
 
-    @Test fun `plain on, off and dim commands run without the AI`() = runTest {
+    @Test fun `plain on, off and dim words are understood`() = runTest {
         val v = view()
         val lamp = QuickCommand.parse("Tänd kitchen lamp!", v)!!
         assertEquals("Kitchen lamp", lamp.device?.name)
@@ -921,11 +941,12 @@ class AgentTest {
         assertEquals(true, QuickCommand.parse("sätt kitchen lamp", v)!!.on)
         assertNull(QuickCommand.parse("sätt en timer", v))
 
-        // Through the agent: no AI is set up at all, and it still works.
+        // Through the agent the AI does it now, with these words in its rules; with no AI nothing changes.
         val home = FakeHome()
         val reply = Agent(ChatClient(OkHttpClient())).ask("släck spots", AgentSettings(), { view(local = it) }, { AgentTools(it, home, FakeDashboard()) })
-        assertEquals("Spots är släckt.", reply.text)
-        assertEquals(Triple("d-spot", "onoff", JsonPrimitive(false)), home.sets.single())
+        assertTrue(home.sets.isEmpty())
+        assertTrue(reply.error)
+        assertTrue(Agent(ChatClient(OkHttpClient())).rules(AgentSettings()).contains("a bare \"sätt taklampan\" means on"))
     }
 
     @Test fun `next step while cooking is answered without the AI, and the open recipe is in the instructions`() = runTest {
@@ -1066,6 +1087,7 @@ class AgentTest {
         assertFalse(Addressed.matches("ja men jag ringer dig sen"))
         assertTrue(Addressed.matches("Vad är klockan"))
         assertTrue(Addressed.matches("TARS, det är slut"))
+        assertTrue(Addressed.matches("Nej, det är inte i köket, det är laddat i dockan. Skicka det bara till köket."))
         server.shutdown()
     }
 
@@ -1082,5 +1104,98 @@ class AgentTest {
         )
         assertEquals(SceneLook.Party, SceneLook.of("fest"))
         assertEquals(SceneLook.Cozy, SceneLook.of("Cozy"))
+    }
+
+    @Test
+    fun `the character comes last so switching keeps the rest cached`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val nova = AgentSettings()
+        val tars = nova.asCharacter(Persona.Tars)
+        val a = agent.fixed(nova, view(nova))
+        val b = agent.fixed(tars, view(tars))
+        val same = a.commonPrefixWith(b)
+        assertTrue(same.contains("The home ("))
+        assertTrue(a.removePrefix(same).length < 1500)
+        assertTrue(b.substringAfter("The home (").contains("TARS"))
+    }
+
+    @Test
+    fun `a guest's prompt starts the same as the owner's, so the server keeps it`() {
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val owner = AgentSettings()
+        val guest = owner.forRole(Role.Guest)
+        val a = agent.fixed(owner, view(owner), compactTools = emptyList())
+        val b = agent.fixed(guest, view(guest), compactTools = emptyList())
+        assertTrue(a.commonPrefixWith(b).contains("The home ("))
+        assertTrue(b.indexOf("A guest is using the tablet") > b.indexOf("The home ("))
+    }
+
+    @Test
+    fun `a later round read from scratch means the server keeps nothing`() {
+        assertTrue(Agent.keepsNothing(ChatStats(totalMs = 1, promptTokens = 5456, cachedTokens = 0)))
+        assertTrue(!Agent.keepsNothing(ChatStats(totalMs = 1, promptTokens = 5028, cachedTokens = 4096)))
+        assertTrue(!Agent.keepsNothing(ChatStats(totalMs = 1, promptTokens = 5028, cachedTokens = null)))
+    }
+
+    @Test
+    fun `turning off the lights in a room changes only the lights`() {
+        fun call(cap: String, cls: String? = null) = ToolCall("1", "set_room", kotlinx.serialization.json.buildJsonObject {
+            put("room", kotlinx.serialization.json.JsonPrimitive("Vardagsrum")); put("capability", kotlinx.serialization.json.JsonPrimitive(cap))
+            put("value", kotlinx.serialization.json.JsonPrimitive("false")); cls?.let { put("device_class", kotlinx.serialization.json.JsonPrimitive(it)) }
+        })
+        val q = "Kan du stänga av lamporna i vardagsrummet?"
+        assertEquals("true", (Agent.lightsOnly(call("onoff"), q)!!.arguments[AgentTools.LIGHTS_ONLY] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals(null, Agent.lightsOnly(call("volume_set"), q))
+        assertEquals(null, Agent.lightsOnly(call("screen_on"), q))
+        assertEquals(call("onoff"), Agent.lightsOnly(call("onoff"), "Stäng av allt i vardagsrummet"))
+        assertEquals(call("volume_set"), Agent.lightsOnly(call("volume_set"), "Sänk volymen i vardagsrummet"))
+        assertEquals(call("onoff", "socket"), Agent.lightsOnly(call("onoff", "socket"), q))
+    }
+
+    @Test
+    fun `the owner's own words replace a character's personality`() {
+        val agent = Agent(ChatClient(okhttp3.OkHttpClient()))
+        val nova = AgentSettings()
+        assertTrue(agent.rules(nova).contains(builtInTraits(Persona.Nova)))
+        val own = nova.copy(traits = mapOf(Persona.Nova to "grumpy pirate who loves the dishwasher"))
+        val rules = agent.rules(own)
+        assertTrue(rules.contains("Personality: grumpy pirate who loves the dishwasher"))
+        assertTrue(!rules.contains(builtInTraits(Persona.Nova)))
+        val tars = nova.asCharacter(Persona.Tars).copy(humor = 40, traits = mapOf(Persona.Tars to "a calm butler"))
+        assertTrue(agent.rules(tars).contains("Personality: a calm butler\nYour humor setting is 40 %."))
+        assertTrue(agent.rules(nova.asCharacter(Persona.Tars)).contains("you are TARS"))
+    }
+
+    @Test
+    fun `a CALL written after a sentence is still run, and not spoken`() {
+        val (calls, rest) = ChatClient.callsInText("I can try to find that for you. CALL ask_internet {\"query\": \"Sveriges statsminister\"}")
+        assertEquals("ask_internet", calls.single().name)
+        assertEquals("Sveriges statsminister", (calls.single().arguments["query"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("I can try to find that for you.", rest)
+        assertTrue(ChatClient.callsInText("Ring CALL CENTER om det behövs.").first.isEmpty())
+        assertEquals("I can try. " to true, SpeechStream.speakable("I can try. CALL ask_internet {}"))
+    }
+
+    @Test
+    fun `the tool rule comes after the character`() {
+        val agent = Agent(ChatClient(okhttp3.OkHttpClient()))
+        val fixed = agent.fixed(AgentSettings(), view(), compactTools = emptyList())
+        assertTrue(fixed.trimEnd().endsWith(Agent.TOOLS_LAST_WRITTEN.trimEnd()))
+        assertTrue(fixed.indexOf("Personality:") < fixed.indexOf(Agent.TOOLS_LAST_WRITTEN))
+        assertTrue(Agent.CLAIM.containsMatchIn("Jag tändde alla lampor i vardagsrummet åt dig!"))
+    }
+
+    @Test
+    fun `my night light is the one named after whoever asks`() {
+        val z: Map<String, Zone> = HomeyJson.decodeFromString("""{"z-bed":{"id":"z-bed","name":"Sovrum"}}""")
+        fun lamp(id: String, name: String) = """"$id":{"id":"$id","name":"$name","zone":"z-bed","class":"light","capabilities":["onoff"],
+              "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":false,"setable":true}}}"""
+        val raw: Map<String, Device> = HomeyJson.decodeFromString("{" + lamp("d-m", "Nattlampa Maja") + "," + lamp("d-g", "Gabriel\u2019s Nattlampa") + "}")
+        val v = HomeView.build(z, raw, emptyMap(), emptySet(), AgentSettings(), true)
+        assertEquals("Gabriel\u2019s Nattlampa", QuickCommand.parse("Kan du tända min nattlampa?", v, "Gabriel")?.device?.name)
+        assertEquals("Nattlampa Maja", QuickCommand.parse("släck min nattlampa", v, "Maja")?.device?.name)
+        // Nobody known, or nothing named after them: the AI decides, never a guess.
+        assertNull(QuickCommand.parse("tänd min nattlampa", v, null))
+        assertNull(QuickCommand.parse("tänd min nattlampa", v, "Anna"))
     }
 }

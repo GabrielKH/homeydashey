@@ -64,6 +64,8 @@ class HomeView(
     val settings: AgentSettings,
     /** Each room's parent room, so a room includes the rooms inside it. */
     private val parents: Map<String, String?> = emptyMap(),
+    /** Phones from Homey's Find My app; only the find_phone tool uses them, never the device list. */
+    val phones: List<AgentDevice> = emptyList(),
 ) {
     private val byAlias = devices.associateBy { it.alias }
 
@@ -290,7 +292,7 @@ class HomeView(
         ): HomeView {
             val roomNames = zones.mapValues { it.value.name }
             val counters = mutableMapOf<String, Int>()
-            val shown = devices.values
+            val all = devices.values
                 // The assistant sees devices hidden on the dashboard too, unless the owner chose otherwise.
                 .filter { it.id !in settings.hiddenDevices && (settings.seeHiddenDevices || (!it.hidden && it.id !in hidden)) }
                 // Sorted by id, so aliases stay the same while the devices do.
@@ -298,7 +300,8 @@ class HomeView(
                 .mapNotNull { device ->
                     val secret = secretOf(device)
                     if (secret != null && !settings.allows(secret, local)) return@mapNotNull null
-                    val prefix = aliasPrefix(device.effectiveClass)
+                    val phone = secret == Secret.Phones
+                    val prefix = if (phone) "phone" else aliasPrefix(device.effectiveClass)
                     val n = (counters[prefix] ?: 0) + 1
                     counters[prefix] = n
                     AgentDevice(
@@ -309,7 +312,9 @@ class HomeView(
                         room = device.zone?.let { roomNames[it] },
                         // A lamp on a smart plug is a light, as on the dashboard.
                         deviceClass = if (DashboardLayout.isSwitchableLight(device)) "light" else device.effectiveClass,
-                        capabilities = device.capabilities.mapNotNull { id -> device.capability(id)?.let(::visibleCapability) },
+                        capabilities = device.capabilities
+                            .filter { !phone || !Phones.isCoordinates(it) }
+                            .mapNotNull { id -> device.capability(id)?.let(::visibleCapability) },
                         secret = secret,
                         hiddenOnDashboard = device.hidden || device.id in hidden,
                         kind = kindOf(device),
@@ -319,13 +324,15 @@ class HomeView(
                     )
                 }
                 .sortedWith(compareBy({ it.room ?: "" }, { it.name.lowercase() }))
+            // Phones stay out of the device list: only find_phone may use them, and only for their owners.
+            val (phones, shown) = all.partition { it.secret == Secret.Phones }
             val agentMoods = moods.values.sortedBy { it.id }.mapIndexed { i, mood -> AgentMood("mood_${i + 1}", mood, mood.zone?.let { roomNames[it] }) }
                 .sortedBy { it.mood.name.lowercase() }
             val parents = zones.mapValues { it.value.parent }
             val direct = shown.mapNotNull { it.roomId }.toSet() + moods.values.mapNotNull { it.zone }
             // A room with lamps only in the rooms inside it is still a room people name.
             val usedRooms = direct.flatMap { generateSequence(it) { z -> parents[z] }.take(10).toList() }.toSet()
-            return HomeView(shown, roomNames.filterKeys { it in usedRooms }, agentMoods, local, settings, parents)
+            return HomeView(shown, roomNames.filterKeys { it in usedRooms }, agentMoods, local, settings, parents, phones)
         }
 
         private const val KIND_WEIGHT = 0.9
@@ -366,6 +373,7 @@ class HomeView(
             val cls = device.effectiveClass
             val caps = device.capabilities
             return when {
+                Phones.isPhone(device) -> Secret.Phones
                 cls == "lock" || "locked" in caps -> Secret.Locks
                 cls == "homealarm" || caps.any { it.startsWith("homealarm_state") } -> Secret.Alarm
                 cls == "camera" || cls == "doorbell" -> Secret.Cameras
@@ -382,7 +390,7 @@ class HomeView(
 
         /** "Taklampa, Sovrum" or "Taklampa (Sovrum)": a name with the room that tells it apart. */
         private val ROOMED = Regex("""^(.+?)\s*(?:\((.+)\)|,\s*(.+))$""")
-        private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood)[_ ](\d+)\b""", RegexOption.IGNORE_CASE)
+        private val ALIAS = Regex("""\b(light|socket|player|climate|sensor|blind|vacuum|lock|alarm|camera|fan|device|mood|phone)[_ ](\d+)\b""", RegexOption.IGNORE_CASE)
 
         private fun aliasPrefix(cls: String): String = when (cls) {
             "light" -> "light"

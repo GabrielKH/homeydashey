@@ -1,5 +1,6 @@
 package app.homeydash.ui.assistant
 
+import app.homeydash.ui.dashboard.SettingsBox
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,21 +74,22 @@ internal fun RoutineList(services: AssistantServices, onEdit: (Routine) -> Unit,
             Toggle(r.enabled, onClick = { scope.launch { services.routines.save(r.copy(enabled = !r.enabled)) } })
         }
     }
-    NavRow(Sym.add, "New routine") { onEdit(Routine(name = "", phrases = emptyList(), steps = listOf(RoutineStep(StepKind.Answer)))) }
+    NavRow(Sym.add, "New routine", { onEdit(Routine(name = "", phrases = emptyList(), steps = listOf(RoutineStep(StepKind.Answer)))) })
 
-    Label("Standing instructions")
-    Text(
-        "Followed in every answer, one per line, e.g. \"Kalla mig Gabbe\" or \"Svara alltid kort\". Say \"kom ihåg att…\" to add one by voice.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
-    )
-    var text by remember(data.instructions.isEmpty()) { mutableStateOf(data.instructions) }
-    LaunchedEffect(text) {
-        if (text == data.instructions) return@LaunchedEffect
-        delay(SAVE_AFTER_MS)
-        services.routines.setInstructions(text)
+    SettingsBox("Standing instructions") {
+        Text(
+            "Followed in every answer, one per line, e.g. \"Kalla mig Gabbe\" or \"Svara alltid kort\". Say \"kom ihåg att…\" to add one by voice.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
+        var text by remember(data.instructions.isEmpty()) { mutableStateOf(data.instructions) }
+        LaunchedEffect(text) {
+            if (text == data.instructions) return@LaunchedEffect
+            delay(SAVE_AFTER_MS)
+            services.routines.setInstructions(text)
+        }
+        TextBox(text, singleLine = false, hint = "One instruction per line") { text = it }
     }
-    TextBox(text, singleLine = false, hint = "One instruction per line") { text = it }
 }
 
 /** Editing one routine; every change is saved as you go. */
@@ -263,7 +265,7 @@ private fun Picker(options: List<Pair<String, String>>, selected: String, onPick
 
 /** A text field whose text lives with the caller, so reordered steps keep their own words. */
 @Composable
-private fun TextBox(value: String, singleLine: Boolean = true, hint: String = "", onChange: (String) -> Unit) {
+internal fun TextBox(value: String, singleLine: Boolean = true, hint: String = "", onChange: (String) -> Unit) {
     val g = GlassTheme.colors
     BasicTextField(
         value = value,

@@ -12,7 +12,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.homeydash.agent.MicSensitivity
 import app.homeydash.agent.TalkOver
-import app.homeydash.agent.WakeName
+import app.homeydash.agent.SaidName
+import app.homeydash.agent.WakeKeywords
+import com.k2fsa.sherpa.onnx.FeatureConfig
+import com.k2fsa.sherpa.onnx.KeywordSpotter
+import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
+import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineStream
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,11 +33,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.floatOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
@@ -144,66 +150,101 @@ class VoiceModels(context: Context, http: OkHttpClient, private val scope: Corou
     }
 }
 
+/** The wake name as the spotter heard it, with the sound of it for a voiceprint and a fingerprint. */
+class WakeHit(
+    /** Which of the names it was, as given to [WakeListener.start]. */
+    val name: String,
+    /** A greeting came first ("hey Nova"): two words are harder to hear by mistake than one. */
+    val greeting: Boolean,
+    /** The sound of the name with a little room either side, at least a second; null when too little was kept. */
+    val sound: ShortArray?,
+    /** Where in the listening (in samples) the name ended, for [WakeListener.afterName]. */
+    val nameEnd: Long,
+    /** The spotter heard it; false when only the way the people here say it matched ([said]). */
+    val spotted: Boolean = true,
+    /** How close it came to the name as taught ([SaidName]), with that name's bar; null when not looked for. */
+    val said: Float? = null,
+    val bar: Float? = null,
+)
+
+/** How the people here say one of the names: their taught shapes and how close a match must be. */
+class Taught(val shapes: List<SaidName.Shape>, val bar: Float)
+
 /**
- * Listens on the tablet's microphone for the assistant's name, entirely offline (Vosk).
- * The recogniser only knows the wake phrases, so ordinary talk is ignored and never
- * written down. Each wake phrase also gives a voice "fingerprint" for telling people apart.
+ * Listens on the tablet's microphone for the assistant's name, entirely offline: Silero VAD
+ * (sherpa-onnx) lets only speech through, and a keyword spotter (a small zipformer transducer
+ * that knows nothing but the names, see [WakeKeywords]) says when a name was said, within a
+ * couple of tenths of a second of it. Ordinary talk is never written down. The microphone is
+ * one stream into a ring buffer, so what was said right after the name is still there for
+ * the question ([afterName]) and the sound of the name itself for a voiceprint ([WakeHit.sound]).
  */
-class WakeListener(private val models: VoiceModels, private val scope: CoroutineScope) {
+class WakeListener(context: Context, private val models: VoiceModels, private val scope: CoroutineScope) {
+    private val assets = context.applicationContext.assets
     private var model: Model? = null
     private var speakerModel: SpeakerModel? = null
+    private var spotter: KeywordSpotter? = null
+    private var vad: Vad? = null
+    private val tokens: Set<String> by lazy { WakeKeywords.tokensOf(assets.open("ear/tokens.txt").bufferedReader().readText()) }
     @Volatile private var generation = 0
     /** The thread reading the microphone; it closes its own recorder and recogniser when it ends. */
     private var reader: Thread? = null
+    /** What the microphone last heard, kept when the reader stops, for [afterName]. */
+    @Volatile private var lastHeard: Recent? = null
+    @Volatile private var lastHit: Long = -1
 
     /** True while People is learning someone's voice; the dashboard leaves the mic alone. */
     var enrolling by mutableStateOf(false)
 
+    /** While the assistant itself says one of the names, a hit is its own voice and is dropped. */
+    @Volatile var muted = false
+
     /**
-     * Starts listening for [name]. [onHeard] gets the phrase, its Vosk voice vector (null when
-     * the phrase was too short to tell) and the sound of the name being said, for a voiceprint
-     * (see [VoicePrints]). Callbacks come on the main thread. Returns a token
-     * for [stop], so one user can't stop another's listening. [sensitivity] (0–100) sets the
-     * microphone gain and how sure the match must be. With [onTalk] (while the assistant talks),
-     * someone talking over it for a moment is handed over too, with the last of what was heard.
+     * Starts listening for [names] (one per character in use). [onHeard] gets each spotted
+     * name, on the main thread. Returns a token for [stop], so one user can't stop another's
+     * listening. [sensitivity] (0–100) sets the microphone gain. With [onTalk] (while the
+     * assistant talks), someone talking over it for a moment is handed over too, with the
+     * last of what was heard.
      */
     fun start(
-        name: String,
-        onHeard: (text: String, voice: FloatArray?, sound: ShortArray?) -> Unit,
+        names: List<String>,
+        onHeard: (WakeHit) -> Unit,
         onError: (String) -> Unit,
         sensitivity: Int = MicSensitivity.DEFAULT,
         echo: Boolean = false,
         onTalk: ((sound: ShortArray) -> Unit)? = null,
         talkEasy: Boolean = false,
+        taught: List<Taught?> = emptyList(),
+        onSpeech: ((ShortArray) -> Unit)? = null,
+        onLevel: ((level: Float, speech: Boolean) -> Unit)? = null,
     ): Int {
         stop()
         val gen = generation
         scope.launch(Dispatchers.Main) {
-            val loaded = withContext(Dispatchers.IO) { runCatching { load(); models.vocabulary } }
+            val loaded = withContext(Dispatchers.IO) { runCatching { loadEar() } }
             if (gen != generation) return@launch
-            loaded.exceptionOrNull()?.let { onError("Couldn't load the voice model: ${it.message}"); return@launch }
-            val rec = try {
-                Recognizer(model, RATE.toFloat(), WakeName.grammar(name, loaded.getOrNull())).apply {
-                    setSpeakerModel(speakerModel)
-                    setWords(true)
-                }
+            loaded.exceptionOrNull()?.let { onError("Couldn't load the wake-word spotter: ${it.message}"); return@launch }
+            val kws = spotter ?: return@launch
+            val keywords = WakeKeywords.keywords(names, tokens)
+            if (keywords.isEmpty()) {
+                onError("None of the names can be listened for.")
+                return@launch
+            }
+            val stream = try {
+                kws.createStream(WakeKeywords.stream(keywords))
             } catch (e: Exception) {
                 onError("Couldn't listen for the wake name: ${e.message}")
                 return@launch
             }
-            val minConfidence = MicSensitivity.minConfidence(sensitivity)
             val gain = MicSensitivity.gain(sensitivity)
             val main = Handler(Looper.getMainLooper())
             reader = thread(name = "wake-mic") {
                 val talk: ((ShortArray) -> Unit)? = onTalk?.let { handler -> { sound -> main.post { if (gen == generation) handler(sound) } } }
-                read(rec, gain, isLive = { gen == generation }, echo = echo, onTalk = talk, talkEasy = talkEasy) { result, failure, recent ->
+                val speechOut: ((ShortArray) -> Unit)? = onSpeech?.let { h -> { sound -> main.post { if (gen == generation) h(sound) } } }
+                val levelOut: ((Float, Boolean) -> Unit)? = onLevel?.let { h -> { l, sp -> main.post { if (gen == generation) h(l, sp) } } }
+                spot(kws, stream, names, gain, isLive = { gen == generation }, echo = echo, onTalk = talk, talkEasy = talkEasy, taught = taught, onSpeech = speechOut, onLevel = levelOut) { hit, failure ->
                     main.post {
                         if (gen != generation) return@post
-                        if (failure != null) {
-                            onError(failure)
-                        } else {
-                            parse(result, name, minConfidence, recent)?.let { onHeard(it.text, it.voice, it.sound) }
-                        }
+                        if (failure != null) onError(failure) else if (hit != null) onHeard(hit)
                     }
                 }
             }
@@ -212,9 +253,9 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
     }
 
     /**
-     * Hears one question offline with the wake model, in English only: the fallback when
-     * Google's speech service can't be reached. [onText] gets what was said, or "" when
-     * nothing was said in time. Returns a token for [stop].
+     * Hears one question offline with the dictation model (Vosk, English only, downloaded
+     * under Voice): the fallback when Google's speech service can't be reached. [onText] gets
+     * what was said, or "" when nothing was said in time. Returns a token for [stop].
      */
     fun dictate(onText: (String) -> Unit, onError: (String) -> Unit): Int {
         stop()
@@ -232,7 +273,7 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
             val main = Handler(Looper.getMainLooper())
             main.postDelayed({ if (gen == generation) { stop(); onText("") } }, DICTATION_MS)
             reader = thread(name = "dictation-mic") {
-                read(rec, 1f, isLive = { gen == generation }) { result, failure, _ ->
+                read(rec, 1f, isLive = { gen == generation }) { result, failure ->
                     main.post {
                         if (gen != generation) return@post
                         if (failure != null) {
@@ -253,70 +294,204 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         return gen
     }
 
-    /**
-     * Reads the microphone into [rec] until [isLive] turns false. Uses the voice recognition
-     * input, which on tablets with several microphones is the tuned (beam-formed) mix, asks
-     * for a wide pickup so the whole kitchen is heard, and applies [gain]. With [echo] (while
-     * the assistant talks) it uses the call input with the tablet's echo canceller instead, so
-     * its own voice is mostly taken out and someone saying the wake name over it is heard.
-     */
+    /** Opens the microphone for the room: the voice-recognition input (beam-formed where there is one), or the call input with echo cancelling. */
     @SuppressLint("MissingPermission") // WakeWatch only starts with the microphone permission.
-    private fun read(
-        rec: Recognizer,
-        gain: Float,
-        isLive: () -> Boolean,
-        echo: Boolean = false,
-        onTalk: ((ShortArray) -> Unit)? = null,
-        talkEasy: Boolean = false,
-        emit: (String?, String?, Recent?) -> Unit,
-    ) {
+    private fun open(echo: Boolean): Pair<AudioRecord, android.media.audiofx.AcousticEchoCanceler?>? {
         val size = maxOf(AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), RATE / 5 * 2)
         val source = if (echo) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
-        val record = try {
-            AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
-        } catch (e: Exception) {
+        val record = runCatching { AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size) }.getOrNull() ?: return null
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            return null
+        }
+        // Far-field (-1 is the widest): hear the room, not just someone right in front of the tablet.
+        runCatching { record.setPreferredMicrophoneFieldDimension(-1f) }
+        val canceller = if (echo && android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+            runCatching { android.media.audiofx.AcousticEchoCanceler.create(record.audioSessionId)?.apply { enabled = true } }.getOrNull()
+        } else {
+            null
+        }
+        return record to canceller
+    }
+
+    /**
+     * Reads the microphone until [isLive] turns false, keeping the last [RECENT_SECONDS] in a
+     * ring. Each 32 ms window goes to the voice-activity model; only speech (with a little
+     * before and after it) goes on to the spotter, so the TV's hum and the dishwasher never
+     * reach a model that could take them for a name.
+     */
+    private fun spot(
+        kws: KeywordSpotter,
+        stream: OnlineStream,
+        names: List<String>,
+        gain: Float,
+        isLive: () -> Boolean,
+        echo: Boolean,
+        onTalk: ((ShortArray) -> Unit)?,
+        talkEasy: Boolean,
+        taught: List<Taught?>,
+        onSpeech: ((ShortArray) -> Unit)?,
+        onLevel: ((Float, Boolean) -> Unit)?,
+        emit: (WakeHit?, String?) -> Unit,
+    ) {
+        val (record, canceller) = open(echo) ?: run {
+            stream.release()
+            emit(null, "The microphone isn't available.")
+            return
+        }
+        val gate = vad
+        val ring = ShortArray(RATE * RECENT_SECONDS)
+        var fed = 0L
+        try {
+            record.startRecording()
+            val buf = ShortArray(WINDOW)
+            val window = FloatArray(WINDOW)
+            // Windows just before speech started, played into the spotter when it does.
+            val before = ArrayDeque<FloatArray>()
+            var speaking = false
+            var hangover = 0
+            var fedToSpotter = 0L
+            val talk = onTalk?.let { TalkOver(RATE, talkEasy) }
+            // Where the speech going on now started, and the last name found the way it was taught.
+            var speechFrom = 0L
+            var saidEnd = -1L
+            var spottedEnd = -1L
+            var sinceSearch = 0
+            var loudest = 0f
+            var windows = 0
+            val searching = taught.any { it != null }
+            /** Looks for the names as taught in the speech so far (the last few seconds of it). */
+            fun search(final: Boolean) {
+                val from = maxOf(speechFrom, fed - RATE * SEARCH_SECONDS)
+                val heard = Recent.of(ring, fed).cut(from, fed) ?: return
+                val shape = SaidName.heard(heard)
+                var best: Pair<Int, SaidName.Match>? = null
+                taught.forEachIndexed { i, t ->
+                    if (t == null) return@forEachIndexed
+                    val m = SaidName.find(t.shapes, shape) ?: return@forEachIndexed
+                    if (m.distance <= t.bar && (best == null || m.distance / t.bar < best!!.second.distance / taught[best!!.first]!!.bar)) best = i to m
+                }
+                val (i, m) = best ?: return
+                val end = from + (m.end + 1L) * SaidName.FRAME_MS * RATE / 1000
+                // Wait while the name may still be going on, unless the speech has ended.
+                if (!final && fed - end < RATE / 4) return
+                if (end <= saidEnd + RATE / 2 || (spottedEnd >= 0 && kotlin.math.abs(end - spottedEnd) < RATE)) return
+                if (muted) return
+                saidEnd = end
+                lastHit = end
+                val t = taught[i]!!
+                val length = (t.shapes.maxOf { it.size } * SaidName.FRAME_MS * RATE / 1000).toLong()
+                val name = names.getOrNull(i) ?: return
+                emit(WakeHit(name, true, Recent.of(ring, fed).cut(end - length - RATE * 15 / 100, end + RATE * 15 / 100), end, spotted = false, said = m.distance, bar = t.bar), null)
+            }
+            while (isLive()) {
+                var got = 0
+                while (got < WINDOW && isLive()) {
+                    val n = record.read(buf, got, WINDOW - got)
+                    if (n < 0) {
+                        if (isLive()) emit(null, "The microphone stopped.")
+                        return
+                    }
+                    got += n
+                }
+                if (got < WINDOW) break
+                if (gain != 1f) {
+                    for (i in 0 until WINDOW) buf[i] = (buf[i] * gain).toInt().coerceIn(-32768, 32767).toShort()
+                }
+                for (i in 0 until WINDOW) ring[((fed + i) % ring.size).toInt()] = buf[i]
+                fed += WINDOW
+                if (talk != null && talk.feed(buf, WINDOW)) {
+                    val keep = minOf(fed, RATE * TalkOver.SOUND_MS / 1000L).toInt()
+                    onTalk?.invoke(ShortArray(keep) { ring[((fed - keep + it) % ring.size).toInt()] })
+                }
+                for (i in 0 until WINDOW) window[i] = buf[i] / 32768f
+                val speech = gate == null || gate.compute(window) >= SPEECH
+                if (onLevel != null) {
+                    for (v in window) loudest = maxOf(loudest, kotlin.math.abs(v))
+                    if (++windows % LEVEL_WINDOWS == 0) {
+                        onLevel(loudest, speaking || speech)
+                        loudest = 0f
+                    }
+                }
+                if (speech) {
+                    if (!speaking) {
+                        speaking = true
+                        speechFrom = fed - WINDOW * (before.size + 1L)
+                        for (w in before) { stream.acceptWaveform(w, RATE); fedToSpotter += WINDOW }
+                        before.clear()
+                    }
+                    hangover = HANGOVER_WINDOWS
+                } else if (speaking) {
+                    if (--hangover <= 0) {
+                        speaking = false
+                        // The speech has ended: one last look for a taught name, and the whole of it for whoever listens.
+                        if (searching) search(final = true)
+                        onSpeech?.let { h -> Recent.of(ring, fed).cut(speechFrom, fed)?.let(h) }
+                    }
+                }
+                if (speaking && searching && ++sinceSearch >= SEARCH_WINDOWS) {
+                    sinceSearch = 0
+                    search(final = false)
+                }
+                if (!speaking) {
+                    before.addLast(window.copyOf())
+                    while (before.size > BEFORE_WINDOWS) before.removeFirst()
+                    continue
+                }
+                stream.acceptWaveform(window.copyOf(), RATE)
+                fedToSpotter += WINDOW
+                while (kws.isReady(stream)) kws.decode(stream)
+                val result = kws.getResult(stream)
+                if (result.keyword.isEmpty()) continue
+                kws.reset(stream)
+                val tag = WakeKeywords.tag(result.keyword) ?: continue
+                val name = names.getOrNull(tag.name) ?: continue
+                if (muted) continue
+                // The spotter speaks up within a chunk or two of the name's last sound.
+                val end = fed - RATE / 10
+                // Already found the way it was taught a moment ago.
+                if (saidEnd >= 0 && end - saidEnd < RATE) continue
+                val stamps = result.timestamps
+                val length: Long = if (stamps.size >= 2) ((stamps.last() - stamps.first()) * RATE).toLong() + RATE / 5 else (RATE / 2).toLong()
+                lastHit = end
+                spottedEnd = end
+                emit(WakeHit(name, tag.greeting, Recent.of(ring, fed).cut(end - length - RATE * 15 / 100, end + RATE * 15 / 100), end), null)
+            }
+        } finally {
+            lastHeard = Recent.of(ring, fed)
+            canceller?.release()
+            runCatching { record.stop() }
+            record.release()
+            stream.release()
+        }
+    }
+
+    /**
+     * Reads the microphone into [rec] (the dictation model) until [isLive] turns false.
+     */
+    private fun read(rec: Recognizer, gain: Float, isLive: () -> Boolean, emit: (String?, String?) -> Unit) {
+        val (record, canceller) = open(false) ?: run {
             rec.close()
-            emit(null, "The microphone isn't available: ${e.message}", null)
+            emit(null, "The microphone isn't available.")
             return
         }
         try {
-            if (record.state != AudioRecord.STATE_INITIALIZED) {
-                emit(null, "The microphone isn't available.", null)
-                return
-            }
-            // Far-field (-1 is the widest): hear the room, not just someone right in front of the tablet.
-            runCatching { record.setPreferredMicrophoneFieldDimension(-1f) }
-            val canceller = if (echo && android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
-                runCatching { android.media.audiofx.AcousticEchoCanceler.create(record.audioSessionId)?.apply { enabled = true } }.getOrNull()
-            } else {
-                null
-            }
             record.startRecording()
             val buf = ShortArray(RATE / 10)
-            // The last few seconds the recogniser heard, to cut the wake name out of.
-            val ring = ShortArray(RATE * RECENT_SECONDS)
-            var fed = 0L
-            val talk = onTalk?.let { TalkOver(RATE, talkEasy) }
             while (isLive()) {
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) {
-                    if (isLive()) emit(null, "The microphone stopped.", null)
+                    if (isLive()) emit(null, "The microphone stopped.")
                     break
                 }
                 if (n == 0) continue
                 if (gain != 1f) {
                     for (i in 0 until n) buf[i] = (buf[i] * gain).toInt().coerceIn(-32768, 32767).toShort()
                 }
-                for (i in 0 until n) ring[((fed + i) % ring.size).toInt()] = buf[i]
-                fed += n
-                if (talk != null && talk.feed(buf, n)) {
-                    val keep = minOf(fed, RATE * TalkOver.SOUND_MS / 1000L).toInt()
-                    onTalk?.invoke(ShortArray(keep) { ring[((fed - keep + it) % ring.size).toInt()] })
-                }
-                if (rec.acceptWaveForm(buf, n)) emit(rec.result, null, Recent.of(ring, fed))
+                if (rec.acceptWaveForm(buf, n)) emit(rec.result, null)
             }
-            canceller?.release()
         } finally {
+            canceller?.release()
             runCatching { record.stop() }
             record.release()
             rec.close()
@@ -327,11 +502,24 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
     fun stop(token: Int? = null) {
         if (token != null && token != generation) return
         generation++
-        // The reader sees the new generation within a tenth of a second and lets go of the
-        // microphone; wait for it so whoever listens next gets the mic to themselves.
+        // The reader sees the new generation within a window and lets go of the microphone;
+        // wait for it so whoever listens next gets the mic to themselves.
         val r = reader
         reader = null
         if (r != null && r !== Thread.currentThread()) runCatching { r.join(500) }
+    }
+
+    /**
+     * What was said after the last spotted name, up to when listening stopped: the start of
+     * the question, so "Hey Nova, tänd lampan" in one breath keeps "tänd lampan". Null when
+     * nothing worth keeping came after the name.
+     */
+    fun afterName(): ShortArray? {
+        val heard = lastHeard ?: return null
+        val from = lastHit
+        if (from < 0) return null
+        lastHit = -1
+        return heard.cut(from, heard.end)
     }
 
     /** Stops and lets go of the models' memory (when voice activation is turned off). */
@@ -341,6 +529,58 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         model = null
         speakerModel?.close()
         speakerModel = null
+        spotter?.release()
+        spotter = null
+        vad?.release()
+        vad = null
+    }
+
+    /** The spotter and the voice-activity model, from the APK's assets; once. */
+    private fun loadEar() {
+        tokens.size
+        if (spotter == null) {
+            spotter = KeywordSpotter(
+                assetManager = assets,
+                config = KeywordSpotterConfig(
+                    featConfig = FeatureConfig(sampleRate = RATE, featureDim = 80),
+                    modelConfig = OnlineModelConfig(
+                        transducer = OnlineTransducerModelConfig(
+                            encoder = "ear/encoder.int8.onnx",
+                            decoder = "ear/decoder.int8.onnx",
+                            joiner = "ear/joiner.int8.onnx",
+                        ),
+                        tokens = "ear/tokens.txt",
+                        numThreads = 1,
+                        provider = "cpu",
+                    ),
+                    maxActivePaths = 4,
+                    keywordsFile = "ear/keywords.txt",
+                    keywordsScore = WakeKeywords.BOOST,
+                    keywordsThreshold = WakeKeywords.THRESHOLD,
+                    numTrailingBlanks = 1,
+                ),
+            )
+        }
+        if (vad == null) {
+            vad = runCatching {
+                Vad(
+                    assetManager = assets,
+                    config = VadModelConfig(
+                        sileroVadModelConfig = SileroVadModelConfig(
+                            model = "ear/silero_vad.onnx",
+                            threshold = SPEECH,
+                            minSilenceDuration = 0.25f,
+                            minSpeechDuration = 0.1f,
+                            windowSize = WINDOW,
+                            maxSpeechDuration = 20f,
+                        ),
+                        sampleRate = RATE,
+                        numThreads = 1,
+                        provider = "cpu",
+                    ),
+                )
+            }.getOrNull()
+        }
     }
 
     private fun load() {
@@ -350,11 +590,11 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
 
     /** The recent microphone sound, ending [end] samples after listening started. */
     private class Recent(val samples: ShortArray, val end: Long) {
-        /** The sound from [from] to [to] seconds after listening started, as far as it is still kept. */
-        fun cut(from: Double, to: Double): ShortArray? {
+        /** The sound from sample [from] to [to] after listening started, as far as it is still kept; null when under a quarter second. */
+        fun cut(from: Long, to: Long): ShortArray? {
             val start = end - samples.size
-            val a = maxOf((from * RATE).toLong(), start)
-            val b = minOf((to * RATE).toLong(), end)
+            val a = maxOf(from, start)
+            val b = minOf(to, end)
             if (b - a < RATE / 4) return null
             return ShortArray((b - a).toInt()) { samples[(a - start + it).toInt()] }
         }
@@ -369,48 +609,23 @@ class WakeListener(private val models: VoiceModels, private val scope: Coroutine
         }
     }
 
-    private class Heard(val text: String, val voice: FloatArray?, val sound: ShortArray?)
-
-    private fun parse(hypothesis: String?, name: String, minConfidence: Double, recent: Recent?): Heard? {
-        val json = runCatching { Json.parseToJsonElement(hypothesis.orEmpty()).jsonObject }.getOrNull() ?: return null
-        val text = json["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        val results = (json["result"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
-        val words = results.map {
-            WakeName.Word(it["word"]?.jsonPrimitive?.contentOrNull.orEmpty(), it["conf"]?.jsonPrimitive?.doubleOrNull ?: 1.0)
-        }.ifEmpty { text.split(' ').map { WakeName.Word(it, 1.0) } }
-        // Grammar mode guesses the closest phrase for any sound; unsure guesses don't count.
-        if (!WakeName.spot(words, name, minConfidence)) return null
-        val voice = json["spk"]?.jsonArray?.mapNotNull { it.jsonPrimitive.floatOrNull }?.toFloatArray()?.takeIf { it.isNotEmpty() }
-        return Heard(text, voice, recent?.let { soundOfName(results, name, it) })
-    }
-
-    /**
-     * The sound of the wake phrase ("hey nova"), with a little room either side, cut from what
-     * the microphone heard. At least a second, so the voiceprint has enough to go on.
-     */
-    private fun soundOfName(results: List<JsonObject>, name: String, recent: Recent): ShortArray? {
-        val own = WakeName.clean(name).split(' ')
-        val words = results.map {
-            Triple(WakeName.clean(it["word"]?.jsonPrimitive?.contentOrNull.orEmpty()), it["start"]?.jsonPrimitive?.doubleOrNull, it["end"]?.jsonPrimitive?.doubleOrNull)
-        }
-        val at = (0..words.size - own.size).firstOrNull { i -> words.subList(i, i + own.size).map { it.first } == own } ?: return null
-        val greeting = words.getOrNull(at - 1)?.takeIf { it.first in GREETINGS }
-        var from = (greeting ?: words[at]).second ?: return null
-        var to = words[at + own.size - 1].third ?: return null
-        from -= 0.15
-        to += 0.15
-        if (to - from < 1.0) {
-            val grow = (1.0 - (to - from)) / 2
-            from -= grow
-            to += grow
-        }
-        return recent.cut(from, to)
-    }
-
     private companion object {
         const val RATE = 16000
         const val DICTATION_MS = 9_000L
-        const val RECENT_SECONDS = 4
-        val GREETINGS = setOf("hey", "hi", "okay")
+        const val RECENT_SECONDS = 6
+        /** Silero VAD's window: 32 ms. */
+        const val WINDOW = 512
+        /** The voice-activity model's bar for speech. */
+        const val SPEECH = 0.5f
+        /** Windows of sound before speech starts that go to the spotter too (about 0.3 s). */
+        const val BEFORE_WINDOWS = 10
+        /** Windows after speech seems to end that still go to the spotter (about 0.3 s). */
+        const val HANGOVER_WINDOWS = 10
+        /** How often (in windows, about a quarter second) speech is searched for the names as taught. */
+        const val SEARCH_WINDOWS = 8
+        /** How much of the latest speech is searched. */
+        const val SEARCH_SECONDS = 3
+        /** How often the level meter is told (about 0.1 s). */
+        const val LEVEL_WINDOWS = 3
     }
 }

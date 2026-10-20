@@ -32,6 +32,18 @@ class SonosCards(
     @Volatile private var spotifyService: Int? = null
     @Volatile private var spotifyAccount: SpotifyOnSonos.Account? = null
 
+    /**
+     * Favourites and playlists belong to the whole Sonos household, the same on every speaker,
+     * so they are read once and shared by all speakers for a while instead of on every pick.
+     */
+    @Volatile private var saved: Map<String, Pair<Long, List<SonosItem>>> = emptyMap()
+
+    private suspend fun shared(cardId: String, host: String, read: suspend (String) -> List<SonosItem>): List<SonosItem> {
+        val now = System.currentTimeMillis()
+        saved[cardId]?.takeIf { now - it.first < SAVED_FOR_MS }?.let { return it.second }
+        return read(host).also { saved = saved + (cardId to (now to it)) }
+    }
+
     /** What went wrong the last time the cards were made, for [missing]. */
     @Volatile private var trouble: String? = null
 
@@ -70,8 +82,8 @@ class SonosCards(
     override suspend fun autocomplete(card: FlowCardAction, arg: String, query: String): List<AutocompleteItem> {
         val speaker = speakerFor(card)
         val items = when (card.cardId) {
-            FAVOURITE -> client.favourites(speaker.host)
-            PLAYLIST -> client.playlists(speaker.host)
+            FAVOURITE -> shared(FAVOURITE, speaker.host, client::favourites)
+            PLAYLIST -> shared(PLAYLIST, speaker.host, client::playlists)
             SPOTIFY -> return spotifyChoices(query)
             else -> emptyList()
         }
@@ -165,6 +177,8 @@ class SonosCards(
 
     companion object {
         const val OWNER = "homeydash:sonos"
+        /** How long the household's favourites and playlists are kept before they're read again. */
+        private const val SAVED_FOR_MS = 10 * 60 * 1000L
         private const val FAVOURITE = "play_favorite"
         private const val PLAYLIST = "play_playlist"
         const val SPOTIFY = "play_spotify"

@@ -66,9 +66,7 @@ class VacuumToolTest {
         override fun goodnight() {}
         override suspend fun weather(): String? = null
         override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean) = emptyList<AgentEvent>()
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 
@@ -84,7 +82,7 @@ class VacuumToolTest {
         assertTrue(t.specs().any { it.name == "vacuum" })
         assertEquals("Robbie started cleaning.", t.vacuum("action" to "start"))
         assertEquals("clean_full" to JsonPrimitive(true), home.sets.last())
-        assertEquals("Robbie is going back to its dock.", t.vacuum("action" to "dock"))
+        assertTrue(t.vacuum("action" to "dock").startsWith("Sent Robbie home twice"))
         assertEquals("cancel_and_dock" to JsonPrimitive(true), home.sets.last())
         assertEquals("Robbie is cleaning Kitchen.", t.vacuum("action" to "clean_rooms", "rooms" to "kitchen"))
         assertEquals("clean_room" to JsonObject(mapOf("repeat" to JsonPrimitive(1), "rooms" to JsonPrimitive("Kitchen"))), home.ran.last())
@@ -108,5 +106,57 @@ class VacuumToolTest {
     @Test fun `an unknown room lists the robot's rooms`() = runTest {
         val said = tools(Home(cards(textCard), devices.getValue("rr"))).vacuum("action" to "clean_rooms", "rooms" to "Garage")
         assertTrue(said, said.contains("no room \"Garage\"") && said.contains("Kitchen, Hall"))
+    }
+
+    private fun robot(state: String, charging: Boolean = false): Device = HomeyJson.decodeFromString(
+        """
+        {"id": "rr", "name": "Robbie", "zone": "z-home", "class": "vacuumcleaner",
+          "capabilities": ["vacuumcleaner_state", "battery_charging_state", "clean_full", "cancel_and_dock"],
+          "capabilitiesObj": {
+            "vacuumcleaner_state": {"id": "vacuumcleaner_state", "type": "enum", "value": "$state"},
+            "battery_charging_state": {"id": "battery_charging_state", "type": "boolean", "value": $charging},
+            "clean_full": {"id": "clean_full", "type": "boolean", "value": false, "setable": true},
+            "cancel_and_dock": {"id": "cancel_and_dock", "type": "boolean", "value": false, "setable": true}
+          }}
+        """,
+    )
+
+    @Test fun `where says docked, charging, or the room it was last sent to`() = runTest {
+        assertEquals("Robbie is in its dock.", tools(Home(cards(textCard), robot("docked"))).vacuum("action" to "where"))
+        assertEquals("Robbie is in its dock, charging.", tools(Home(cards(textCard), robot("docked", charging = true))).vacuum("action" to "locate"))
+        val goTo = """
+            {"homey:device:rr:go_to_room": {"id": "homey:device:rr:go_to_room", "title": "Go to room",
+              "args": [{"name": "room", "type": "autocomplete", "title": "Room"}]}}
+        """
+        val t = tools(Home(cards(goTo), robot("stopped")))
+        t.vacuum("action" to "go_to", "rooms" to "Kök")
+        val said = t.vacuum("action" to "where")
+        assertTrue(said, said.contains("last sent to Kök") && said.contains("just now"))
+    }
+
+    @Test fun `rooms as a list and the vacuum's alias used as the tool name both work`() = runTest {
+        val home = Home(cards(textCard), devices.getValue("rr"))
+        val t = tools(home)
+        val rooms = JsonObject(mapOf("action" to JsonPrimitive("clean_rooms"), "rooms" to kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("Kitchen"), JsonPrimitive("Hall")))))
+        assertEquals("Robbie is cleaning Kitchen and Hall.", t.run(ToolCall("c1", "vacuum", rooms)).text)
+        val alias = HomeView.build(zones, devices, emptyMap(), emptySet(), AgentSettings(), true).devices.single().alias
+        val said = t.run(ToolCall("c2", alias, JsonObject(mapOf("action" to JsonPrimitive("dock"))))).text
+        assertTrue(said, said.startsWith("Sent Robbie home twice"))
+    }
+
+    @Test fun `start then dock waits between the two, and dock is confirmed from Homey`() = runTest {
+        var robot = robot("cleaning")
+        val home = object : HomeControl by Home(cards(textCard), null) {
+            val times = mutableListOf<Long>()
+            override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) {
+                times += testScheduler.currentTime
+                if (capability == "cancel_and_dock") robot = robot("docked")
+            }
+            override fun device(deviceId: String) = robot
+        }
+        val t = AgentTools(HomeView.build(zones, mapOf("rr" to robot), emptyMap(), emptySet(), AgentSettings(), true), home, Dash())
+        t.vacuum("action" to "start")
+        assertEquals("Robbie is on its way back to its dock.", t.vacuum("action" to "dock"))
+        assertTrue(home.times.toString(), home.times.size == 2 && home.times[1] - home.times[0] >= 3_000)
     }
 }

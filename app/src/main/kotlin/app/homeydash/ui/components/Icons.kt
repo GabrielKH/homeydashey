@@ -161,6 +161,7 @@ object Sym {
     val airplay = Ic(R.drawable.ph_airplay, R.drawable.ph_airplay_fill)
     val lampPendant = Ic(R.drawable.ph_lamp_pendant, R.drawable.ph_lamp_pendant_fill)
     val search = Ic(R.drawable.ph_magnifying_glass, R.drawable.ph_magnifying_glass_fill)
+    val phone = Ic(R.drawable.ph_device_mobile, R.drawable.ph_device_mobile_fill)
     val musicNotes = Ic(R.drawable.ph_music_notes, R.drawable.ph_music_notes_fill)
     val playPause = Ic(R.drawable.ph_play_pause, R.drawable.ph_play_pause_fill)
     val speakerHifi = Ic(R.drawable.ph_speaker_hifi, R.drawable.ph_speaker_hifi_fill)
@@ -222,4 +223,7 @@ object Sym {
     val barcode = Ic(R.drawable.ph_barcode, R.drawable.ph_barcode_fill)
     val pantry = Ic(R.drawable.ph_package, R.drawable.ph_package_fill)
     val hourglass = Ic(R.drawable.ph_hourglass_medium, R.drawable.ph_hourglass_medium_fill)
+    val alarm = Ic(R.drawable.ph_alarm, R.drawable.ph_alarm_fill)
+    val person = Ic(R.drawable.ph_user, R.drawable.ph_user_fill)
+    val moon = Ic(R.drawable.ph_moon, R.drawable.ph_moon_fill)
 }

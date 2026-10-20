@@ -51,8 +51,37 @@ class HomeyClient(
 
     suspend fun moods(): Map<String, Mood> = get("api/manager/moods/mood")
 
+    /** The apps installed on Homey, by id. Needs the key's "View apps" permission (homey.app.readonly). */
+    suspend fun apps(): Map<String, HomeyApp> = get("api/manager/apps/app")
+
     /** Homey users with whether they are home; for the assistant, behind its "Who is home" switch. */
     suspend fun users(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/users/user").get().build()))
+
+    /** Homey's wake-up alarms (needs "View alarms" on the API key). */
+    suspend fun alarms(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/alarms/alarm").get().build()))
+
+    /** Makes an alarm from a [Household.body]; Homey answers with the new alarm. Needs "Alarms". */
+    suspend fun createAlarm(body: JsonObject): JsonElement =
+        HomeyJson.parseToJsonElement(execute(request("api/manager/alarms/alarm").post(body.toString().toRequestBody(JSON_TYPE)).build()).ifBlank { "{}" })
+
+    suspend fun updateAlarm(id: String, body: JsonObject): JsonElement =
+        HomeyJson.parseToJsonElement(execute(request("api/manager/alarms/alarm/$id").put(body.toString().toRequestBody(JSON_TYPE)).build()).ifBlank { "{}" })
+
+    suspend fun deleteAlarm(id: String) {
+        execute(request("api/manager/alarms/alarm/$id").delete().build())
+    }
+
+    /** Marks a user home or away (needs "Presence" on the API key). */
+    suspend fun setPresent(userId: String, present: Boolean) {
+        val body = buildJsonObject { put("value", kotlinx.serialization.json.JsonPrimitive(present)) }.toString()
+        execute(request("api/manager/presence/$userId/present").put(body.toRequestBody(JSON_TYPE)).build())
+    }
+
+    /** Marks a user asleep or awake (needs "Presence" on the API key). */
+    suspend fun setAsleep(userId: String, asleep: Boolean) {
+        val body = buildJsonObject { put("value", kotlinx.serialization.json.JsonPrimitive(asleep)) }.toString()
+        execute(request("api/manager/presence/$userId/asleep").put(body.toRequestBody(JSON_TYPE)).build())
+    }
 
     /** Logic variables; for the assistant, behind its "Homey variables" switch. */
     suspend fun logicVariables(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/logic/variable").get().build()))
@@ -99,6 +128,17 @@ class HomeyClient(
     suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
         val body = buildJsonObject { put("args", args) }.toString()
         execute(flowCardRequest(card, "run").post(body.toRequestBody(JSON_TYPE)).build())
+    }
+
+    /**
+     * Runs an app's Flow "Then" card, such as IcalCalendar's "Get calendar event", and returns
+     * what the card gave back (its tokens).
+     */
+    suspend fun runAppAction(appId: String, cardId: String, args: JsonObject = JsonObject(emptyMap())): JsonElement {
+        val card = FlowCardAction(id = "homey:app:$appId:$cardId")
+        val body = buildJsonObject { put("args", args) }.toString()
+        val text = execute(flowCardRequest(card, "run").post(body.toRequestBody(JSON_TYPE)).build())
+        return if (text.isBlank()) JsonObject(emptyMap()) else HomeyJson.parseToJsonElement(text)
     }
 
     /** The choices an autocomplete argument offers, such as Sonos favourites. */

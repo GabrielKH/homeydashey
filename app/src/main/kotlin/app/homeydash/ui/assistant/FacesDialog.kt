@@ -41,7 +41,9 @@ import app.homeydash.ui.components.Ic
 import app.homeydash.agent.TARS_WAKE_NAME
 import app.homeydash.agent.KnownPerson
 import androidx.compose.runtime.key
+import app.homeydash.agent.Language
 import app.homeydash.agent.Persona
+import app.homeydash.agent.VoiceStyle
 import androidx.activity.compose.BackHandler
 import app.homeydash.ui.components.dialogSize
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -59,6 +61,7 @@ import app.homeydash.ui.components.glass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.dashboard.Toggle
 import app.homeydash.ui.theme.GlassTheme
+import kotlinx.coroutines.launch
 
 private const val SAMPLES = 8
 
@@ -68,17 +71,18 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
     val g = GlassTheme.colors
     val faces = services.faces
     val people by faces.people.collectAsState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var adding by remember { mutableStateOf(false) }
     // Who is being taught, and the name they say ("TARS" or Nova's name).
     var teaching by remember { mutableStateOf<Pair<String, String>?>(null) }
-    AppDialog(onDismiss) {
+    AppDialog(onDismiss) { app.homeydash.ui.components.Compact {
         Column(
             Modifier
                 .dialogSize(560.dp, tall = true)
                 .background(g.wallBase, PanelShape)
                 .glass()
-                .padding(vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             val back: () -> Unit = {
                 when {
@@ -120,11 +124,16 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                 } else {
                     people.forEach { p ->
                         PersonCard(
+                            services = services,
                             person = p,
                             novaName = settings.nameOf(Persona.Nova),
+                            settings = settings,
                             onTeach = { name -> teaching = p.id to name },
                             onRole = { faces.setRole(p.id, it) },
-                            onRemove = { faces.remove(p.id) },
+                            onRemove = {
+                                faces.remove(p.id)
+                                scope.launch { services.memory.forgetPerson(p.id) }
+                            },
                         )
                     }
                     Row(
@@ -144,7 +153,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                 }
             }
         }
-    }
+    } }
 }
 
 /**
@@ -152,7 +161,15 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
  * their voice saying each character's name.
  */
 @Composable
-private fun PersonCard(person: KnownPerson, novaName: String, onTeach: (String) -> Unit, onRole: (Role) -> Unit, onRemove: () -> Unit) {
+private fun PersonCard(
+    services: AssistantServices,
+    person: KnownPerson,
+    novaName: String,
+    settings: AgentSettings,
+    onTeach: (String) -> Unit,
+    onRole: (Role) -> Unit,
+    onRemove: () -> Unit,
+) {
     val g = GlassTheme.colors
     Column(
         Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(22.dp)).padding(18.dp),
@@ -184,6 +201,80 @@ private fun PersonCard(person: KnownPerson, novaName: String, onTeach: (String) 
             }
         }
         RoleChoice(person.role, onRole)
+        PersonCharacter(services, settings, person)
+        AboutPerson(services, person.id, person.name)
+    }
+}
+
+/**
+ * The characters and voices this person talks with: TARS and Nova for one, only Nova for another.
+ * Several can be picked; each wakes by its own name. Picking one shows and says what it is like,
+ * and is remembered about them.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun PersonCharacter(services: AssistantServices, settings: AgentSettings, person: KnownPerson) {
+    val g = GlassTheme.colors
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val picked = settings.charactersOf(person)
+    fun save(characters: List<Persona>, voices: Map<Persona, VoiceStyle>, introducing: Persona) {
+        // Only the house's character is kept as no pick, so it follows the house if that changes.
+        val stored = characters.takeUnless { it == listOf(settings.persona) }.orEmpty()
+        val kept = voices.filterKeys { it in characters }
+        services.faces.setCharacters(person.id, stored, kept)
+        val chosen = person.copy(characters = stored, voices = kept)
+        val talking = settings.talkingAs(introducing, chosen)
+        if (talking.voice == VoiceStyle.Tars) services.tars.download()
+        if (talking.voice == VoiceStyle.Alma) services.alma.download()
+        if (settings.access(Secret.Memory) != Access.Off) scope.launch {
+            services.memory.learn(listOf(app.homeydash.agent.Memory.characterChoice(app.homeydash.agent.Asker(person.id, person.name), characters, kept)))
+        }
+        introduce(services, scope, talking)
+    }
+    fun toggle(p: Persona) {
+        if (p in picked) {
+            // One always stays picked.
+            if (picked.size > 1) save(picked - p, person.voices, (picked - p).first())
+        } else {
+            save(picked + p, person.voices, p)
+        }
+    }
+    Text("Talks with", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Persona.entries.forEach { p ->
+            Chip(if (p == settings.persona) "${p.label} (the house's)" else p.label, p in picked) { toggle(p) }
+        }
+    }
+    Text(
+        if (picked.size > 1) {
+            "Pick as many as you like. ${person.name} wakes each by its own name (" +
+                picked.joinToString(", ") { "\"Hey ${settings.nameOf(it)}\"" } +
+                "); ${picked.first().label}, picked first, answers when no name is said, like battery reminders."
+        } else {
+            picked.first().detail
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    picked.forEach { p ->
+        Text(if (picked.size > 1) "${p.label}'s voice" else "Voice", style = MaterialTheme.typography.labelLarge, color = g.fg)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val usual = settings.talkingAs(p).voice
+            val own = person.voices[p]
+            Chip("Usual (${usual.label})", own == null) { if (own != null) save(picked, person.voices - p, p) }
+            VoiceStyle.entries.filter { it != usual && (it != VoiceStyle.Alma || settings.language == Language.Swedish) }.forEach { v ->
+                Chip(v.label, own == v) { if (own != v) save(picked, person.voices + (p to v), p) }
+            }
+        }
+        val talking = settings.talkingAs(p, person)
+        if (talking.voice.local && talking.voice != VoiceStyle.Tars) {
+            Field("Warm voice recording", person.warmVoices[p].orEmpty()) { name -> services.faces.setWarmVoice(person.id, p, name) }
+            Text(
+                "The name of a recording in the voices folder on the Mac; empty for ${settings.talkingAs(p).serverVoice().ifBlank { "the model's own voice" }}.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = g.muted,
+            )
+        }
     }
 }
 

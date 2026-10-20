@@ -239,7 +239,8 @@ class Spoken(val file: File, val track: VoiceTrack)
 class SpeechOutput(
     context: Context,
     http: okhttp3.OkHttpClient,
-    private val tars: TarsVoice,
+    private val tars: PiperVoice,
+    private val alma: PiperVoice,
     private val scope: kotlinx.coroutines.CoroutineScope,
     private val settings: () -> app.homeydash.agent.AgentSettings,
 ) {
@@ -250,9 +251,11 @@ class SpeechOutput(
     private val appContext = context.applicationContext
     private var ready = false
 
-    /** [text] as it should be heard: dates in words, not "2026 dash 10 dash 18". */
-    private fun spoken(text: String, swedish: Boolean) =
-        app.homeydash.agent.SpokenDates.speakable(text, swedish, java.time.LocalDate.now().year)
+    /** [text] as it should be heard: dates in words, not "2026 dash 10 dash 18", and "taklampan" not "tacklampan". */
+    private fun spoken(text: String, swedish: Boolean) = app.homeydash.agent.Pronounce.sayable(
+        app.homeydash.agent.SpokenDates.speakable(app.homeydash.agent.ThinkingSounds.sayable(text, swedish), swedish, java.time.LocalDate.now().year),
+        swedish,
+    )
 
     /** The owner's speaking speed, as a factor of each voice's own. */
     private fun pace(): Float = settings().pace.coerceIn(app.homeydash.agent.PACE_RANGE) / 100f
@@ -293,9 +296,9 @@ class SpeechOutput(
         val text = spoken(said, swedish(said, language))
         // TARS's voice is made on the tablet sentence by sentence: he starts on the first one
         // while the rest is still being made, instead of after the whole answer.
-        if (voice == VoiceStyle.Tars && tars.isReady) {
+        piper(voice)?.takeIf { it.isReady }?.let { p ->
             val swedish = swedish(text, language)
-            if (stream(channelOf(app.homeydash.agent.Sentences.split(text)), { tars.speak(it, swedish, pace()) }, onFrame, onStart)) return
+            if ((swedish || voice != VoiceStyle.Alma) && stream(channelOf(app.homeydash.agent.Sentences.split(text)), { p.speak(it, swedish, pace()) }, onFrame, onStart)) return
         }
         if (!ready) return
         val spoken = render(text, language, voice, File(appContext.cacheDir, "say.wav"))
@@ -357,9 +360,16 @@ class SpeechOutput(
 
     @Volatile private var track: AudioTrack? = null
 
-    /** Gets TARS's voice ready before he has something to say. */
+    /** The voice made on the tablet itself for [voice]: TARS's or Alma's; null for the others. */
+    private fun piper(voice: VoiceStyle): PiperVoice? = when (voice) {
+        VoiceStyle.Tars -> tars
+        VoiceStyle.Alma -> alma
+        else -> null
+    }
+
+    /** Gets TARS's or Alma's voice ready before there is something to say. */
     fun warm(voice: VoiceStyle) {
-        if (voice == VoiceStyle.Tars) tars.warm()
+        piper(voice)?.warm()
     }
 
     /**
@@ -374,21 +384,26 @@ class SpeechOutput(
         voice: VoiceStyle,
         onStart: () -> Unit,
         onFrame: (FloatArray) -> Unit,
+        onSentence: (String) -> Unit = {},
     ): Boolean = coroutineScope {
         // Long pieces are cut into sentences, so the first one starts sooner.
         val sentences = produce(capacity = kotlinx.coroutines.channels.Channel.UNLIMITED) {
             for (piece in pieces) app.homeydash.agent.Sentences.split(spoken(piece, swedish)).forEach { send(it) }
         }
         val live = File(appContext.cacheDir, "live.wav")
-        stream(sentences, { sentence -> phrase(sentence, swedish, voice) ?: pcmOf(sentence, swedish, voice, live) }, onFrame, onStart)
+        stream(sentences, { sentence -> phrase(sentence, swedish, voice) ?: pcmOf(sentence, swedish, voice, live) }, onFrame, onStart, onSentence)
     }
 
     /** Short sounds made ahead of time, like the "hmm" while it thinks, per voice and language. */
     private val phrases = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
 
-    private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) = "${voice.name}|${settings().pace}|$swedish|$text"
+    private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) =
+        "${voice.name}|${if (voice.local) settings().serverVoice() else ""}|${settings().pace}|$swedish|$text"
 
     private fun phrase(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrases[phraseKey(text, swedish, voice)]
+
+    /** [text] in [voice] as made ahead of time by [prepareSounds]; null until then. */
+    fun prepared(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrase(text, swedish, voice)
 
     /** Whether [text] is made ahead of time in [voice], so it can be said without waiting. */
     fun hasSound(text: String, swedish: Boolean, voice: VoiceStyle): Boolean = phrases.containsKey(phraseKey(text, swedish, voice))
@@ -407,7 +422,7 @@ class SpeechOutput(
 
     /** [text] in [voice] as sound, from whichever voice can make it; null when none can. */
     private suspend fun pcmOf(text: String, swedish: Boolean, voice: VoiceStyle, scratch: File): Pcm? {
-        if (voice == VoiceStyle.Tars && tars.isReady) tars.speak(text, swedish, pace())?.let { return it }
+        piper(voice)?.takeIf { it.isReady }?.speak(text, swedish, pace())?.let { return it }
         if (voice.local) localPcm(text, swedish)?.let { return it }
         return tabletPcm(text, if (swedish) Language.Swedish else Language.English, voice, scratch)
     }
@@ -451,9 +466,12 @@ class SpeechOutput(
         make: suspend (String) -> Pcm?,
         onFrame: (FloatArray) -> Unit,
         onStart: () -> Unit = {},
+        /** Each sentence as it starts to be heard, so the words on screen keep pace with the voice. */
+        onSentence: (String) -> Unit = {},
     ): Boolean = coroutineScope {
-        val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(it) } }
-        val first = made.receiveCatching().getOrNull() ?: return@coroutineScope false
+        val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(s to it) } }
+        val firstMade = made.receiveCatching().getOrNull() ?: return@coroutineScope false
+        val first = firstMade.second
         onStart()
         val rate = first.sampleRate
         val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -477,8 +495,11 @@ class SpeechOutput(
         }
         try {
             t.play()
-            var next: Pcm? = first
-            while (next != null && track === t) {
+            var nextMade: Pair<String, Pcm>? = firstMade
+            while (nextMade != null && track === t) {
+                val next = nextMade.second
+                // Written as the one before it ends (the buffer holds a fifth of a second).
+                onSentence(nextMade.first)
                 // A sentence from another voice (the computer's voice server went quiet) is made to fit.
                 val pcm = VoiceFx.resample(next, rate)
                 parts += written to VoiceFx.analyse(pcm)
@@ -492,7 +513,7 @@ class SpeechOutput(
                     }
                 }
                 written += pcm.samples.size
-                next = made.receiveCatching().getOrNull()
+                nextMade = made.receiveCatching().getOrNull()
             }
             // Let the last of it play out.
             while (track === t && (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) < written && t.playState == AudioTrack.PLAYSTATE_PLAYING) delay(20)
@@ -510,7 +531,8 @@ class SpeechOutput(
     /** Writes the spoken answer in [voice] to [file] as a WAV, for the tablet or a speaker. */
     suspend fun render(text: String, language: Language, voice: VoiceStyle, file: File): Spoken? {
         if (text.isBlank()) return null
-        if (voice == VoiceStyle.Tars) tarsSpeaks(text, language, file)?.let { return it }
+        val p = piper(voice)
+        if (p != null) piperSpeaks(p, text, language, file)?.let { return it }
         else if (voice.local) local(text, language, file)?.let { return it }
         if (!ready) return null
         val raw = File(file.parentFile, file.nameWithoutExtension + "-raw.wav")
@@ -563,7 +585,7 @@ class SpeechOutput(
                 val body = kotlinx.serialization.json.buildJsonObject {
                     put("model", kotlinx.serialization.json.JsonPrimitive(s.voiceServerModel.trim().ifBlank { app.homeydash.agent.DEFAULT_VOICE_MODEL }))
                     put("input", kotlinx.serialization.json.JsonPrimitive(text))
-                    s.voiceServerVoice.trim().takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
+                    s.serverVoice().takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
                     put("lang_code", kotlinx.serialization.json.JsonPrimitive(if (swedish) "sv" else "en"))
                     put("speed", kotlinx.serialization.json.JsonPrimitive(pace()))
                     put("response_format", kotlinx.serialization.json.JsonPrimitive("wav"))
@@ -580,14 +602,14 @@ class SpeechOutput(
         }
     }
 
-    /** The answer in TARS's voice, made on the tablet; null until his voice is downloaded. */
-    private suspend fun tarsSpeaks(text: String, language: Language, file: File): Spoken? {
+    /** The answer in TARS's or Alma's voice, made on the tablet; null until it is downloaded (and for English in Alma's). */
+    private suspend fun piperSpeaks(voice: PiperVoice, text: String, language: Language, file: File): Spoken? {
         val swedish = when (language) {
             Language.Swedish -> true
             Language.English -> false
             Language.Auto -> Confirmation.looksSwedish(text)
         }
-        val pcm = tars.speak(text, swedish, pace()) ?: return null
+        val pcm = voice.speak(text, swedish, pace()) ?: return null
         return withContext(Dispatchers.IO) {
             file.writeBytes(VoiceFx.writeWav(pcm))
             Spoken(file, VoiceFx.analyse(pcm))

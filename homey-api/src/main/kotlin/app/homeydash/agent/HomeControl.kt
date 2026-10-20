@@ -5,6 +5,7 @@ import app.homeydash.homey.Device
 import app.homeydash.homey.FlowCardAction
 import app.homeydash.homey.FlowCardArg
 import app.homeydash.homey.FlowCards
+import app.homeydash.homey.HomeyAlarm
 import app.homeydash.homey.HomeyFlow
 import app.homeydash.homey.HomeyStore
 import app.homeydash.homey.Mood
@@ -16,10 +17,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZonedDateTime
 
-/** A Homey user, for "who is home". */
-data class HomeyPerson(val name: String, val present: Boolean?, val asleep: Boolean?)
+/** A Homey user, for "who is home"; [since] is when the tablet saw their state last change (epoch ms). */
+data class HomeyPerson(val name: String, val present: Boolean?, val asleep: Boolean?, val id: String = "", val since: Long? = null)
 
 /** A Homey Logic variable. */
 data class LogicVariable(val name: String, val type: String, val value: JsonElement)
@@ -56,11 +60,33 @@ interface HomeControl {
      */
     suspend fun readBack(deviceId: String, capability: String): JsonElement? = null
 
+    /** The whole device as Homey now reports it, asked fresh; null when it can't tell. */
+    suspend fun readDevice(deviceId: String): Device? = null
+
     /** Runs a Flow card; throws when Homey refuses. */
     suspend fun runAction(card: FlowCardAction, args: JsonObject) {}
 
     /** The device as Homey last reported it, all capabilities included; null when unknown. */
     fun device(deviceId: String): Device? = null
+
+    /** Marks a Homey user home or away ([present]) and asleep or awake ([asleep]); null leaves it. */
+    suspend fun setPresence(userId: String, present: Boolean?, asleep: Boolean?) {
+        throw UnsupportedOperationException("Presence can't be changed from here.")
+    }
+
+    /** Homey's wake-up alarms. */
+    suspend fun alarms(): List<HomeyAlarm> = emptyList()
+
+    /** Creates ([id] null) or changes a wake-up alarm; returns it as Homey has it. */
+    suspend fun saveAlarm(id: String?, name: String, time: LocalTime, days: Set<DayOfWeek>, enabled: Boolean): HomeyAlarm =
+        throw UnsupportedOperationException("Alarms can't be changed from here.")
+
+    suspend fun deleteAlarm(id: String) {
+        throw UnsupportedOperationException("Alarms can't be changed from here.")
+    }
+
+    /** Skips an alarm's next ring only; returns when it would have rung. */
+    suspend fun skipAlarm(id: String): ZonedDateTime? = throw UnsupportedOperationException("Alarms can't be changed from here.")
 }
 
 /** One calendar event as the assistant sees it. */
@@ -76,9 +102,8 @@ interface DashboardControl {
     fun goodnight()
     suspend fun weather(): String?
     suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent>
-    fun startTimer(seconds: Int, label: String?)
-    fun cancelTimer(label: String?): Boolean
-    fun timers(): List<String>
+    /** The kitchen timers on the tablet. */
+    val timers: TimerBoard
     fun setTheme(mode: String): Boolean
 }
 
@@ -96,6 +121,11 @@ class StoreHomeControl(
         return store.readBack(deviceId, capability)
     }
 
+    override suspend fun readDevice(deviceId: String): Device? {
+        kotlinx.coroutines.delay(READ_BACK_MS)
+        return store.readDevice(deviceId)
+    }
+
     override suspend fun setMood(mood: Mood) = store.setMood(mood)
 
     override fun missingActions(deviceId: String): String? = store.missingCards(deviceId)
@@ -104,7 +134,33 @@ class StoreHomeControl(
 
     override suspend fun triggerFlow(flow: HomeyFlow) = store.triggerFlow(flow)
 
-    override suspend fun people(): List<HomeyPerson> = parsePeople(store.users())
+    override suspend fun people(): List<HomeyPerson> {
+        // The household keeps users current from Homey's events and knows since when.
+        val h = store.household.state.value
+        if (h.loaded && h.usersAllowed && h.users.isNotEmpty()) {
+            return h.people.map { HomeyPerson(it.name, it.present, it.asleep, it.id, h.since[it.id]) }
+        }
+        return parsePeople(store.users())
+    }
+
+    override suspend fun setPresence(userId: String, present: Boolean?, asleep: Boolean?) {
+        present?.let { store.household.setPresent(userId, it) }
+        asleep?.let { store.household.setAsleep(userId, it) }
+    }
+
+    override suspend fun alarms(): List<HomeyAlarm> {
+        val h = store.household.state.value
+        if (!h.loaded) store.household.reload()
+        if (!store.household.state.value.alarmsAllowed) throw java.io.IOException("The Homey API key may not read alarms. Give it the \"View alarms\" permission.")
+        return store.household.state.value.alarms
+    }
+
+    override suspend fun saveAlarm(id: String?, name: String, time: LocalTime, days: Set<DayOfWeek>, enabled: Boolean): HomeyAlarm =
+        store.household.saveAlarm(id, name, time, days, enabled)
+
+    override suspend fun deleteAlarm(id: String) = store.household.deleteAlarm(id)
+
+    override suspend fun skipAlarm(id: String): ZonedDateTime? = store.household.skipNext(id)
 
     override suspend fun variables(): List<LogicVariable> = parseVariables(store.logicVariables())
 
@@ -199,7 +255,11 @@ class StoreHomeControl(
         fun parsePeople(json: JsonElement): List<HomeyPerson> =
             values(json).mapNotNull { u ->
                 val name = (u["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
-                HomeyPerson(name, (u["present"] as? JsonPrimitive)?.booleanOrNull, (u["asleep"] as? JsonPrimitive)?.booleanOrNull)
+                if ((u["enabled"] as? JsonPrimitive)?.booleanOrNull == false) return@mapNotNull null
+                HomeyPerson(
+                    name, (u["present"] as? JsonPrimitive)?.booleanOrNull, (u["asleep"] as? JsonPrimitive)?.booleanOrNull,
+                    (u["id"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                )
             }.sortedBy { it.name.lowercase() }
 
         /** Parses `GET /api/manager/logic/variable`. */

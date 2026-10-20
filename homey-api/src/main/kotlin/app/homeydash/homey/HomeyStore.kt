@@ -38,7 +38,12 @@ class HomeyStore(
     private val scope: CoroutineScope,
     /** Cards the app runs itself, e.g. Sonos favourites played straight on the speakers. */
     private val extraCards: List<CardSource> = emptyList(),
+    /** Where the household keeps what only the tablet knows (skipped alarms); null keeps it in memory. */
+    householdDir: java.io.File? = null,
 ) {
+    /** Homey's users (who is home or asleep) and wake-up alarms. */
+    val household = HouseholdStore(client, scope, householdDir)
+
     private val _snapshot = MutableStateFlow(HomeySnapshot())
     val snapshot: StateFlow<HomeySnapshot> = _snapshot.asStateFlow()
     val connection: StateFlow<ConnectionState> = realtime.state
@@ -88,6 +93,9 @@ class HomeyStore(
         realtime.subscribe(HomeyRealtime.DEVICES_URI)
         realtime.subscribe(HomeyRealtime.ZONES_URI)
         realtime.subscribe(HomeyRealtime.MOODS_URI)
+        realtime.subscribe(HomeyRealtime.USERS_URI)
+        realtime.subscribe(HomeyRealtime.ALARMS_URI)
+        household.start()
         scope.launch { reload() }
         realtime.connect()
     }
@@ -95,6 +103,7 @@ class HomeyStore(
     fun stop() {
         eventsJob?.cancel()
         eventsJob = null
+        household.stop()
         realtime.close()
     }
 
@@ -164,10 +173,11 @@ class HomeyStore(
      * Asks Homey for [deviceId] again and shows what it says, so a change that was accepted
      * but didn't happen (a lamp out of reach) stops showing as done. Returns [capabilityId]'s value.
      */
-    suspend fun readBack(deviceId: String, capabilityId: String): JsonElement? = runCatching {
-        val device = client.device(deviceId)
-        apply(HomeyEvent.DeviceChanged(device))
-        device.capabilitiesObj[capabilityId]?.value
+    suspend fun readBack(deviceId: String, capabilityId: String): JsonElement? = readDevice(deviceId)?.capabilitiesObj?.get(capabilityId)?.value
+
+    /** Asks Homey for [deviceId] again and shows what it says; null when Homey can't be asked. */
+    suspend fun readDevice(deviceId: String): Device? = runCatching {
+        client.device(deviceId).also { apply(HomeyEvent.DeviceChanged(it)) }
     }.getOrNull()
 
     suspend fun setMood(mood: Mood) {
@@ -200,6 +210,16 @@ class HomeyStore(
     }
 
     suspend fun flows(): List<HomeyFlow> = client.flows()
+
+    /** The apps installed on Homey, or null when the API key may not list them. */
+    suspend fun apps(): Map<String, HomeyApp>? = try {
+        client.apps()
+    } catch (e: HomeyHttpException) {
+        if (e.code == 401 || e.code == 403) null else throw e
+    }
+
+    suspend fun runAppAction(appId: String, cardId: String, args: JsonObject = JsonObject(emptyMap())): JsonElement =
+        client.runAppAction(appId, cardId, args)
 
     suspend fun users(): JsonElement = client.users()
 
@@ -240,7 +260,7 @@ class HomeyStore(
                 for (change in run) {
                     val device = (devices ?: snap.devices)[change.deviceId] ?: continue
                     val updated = device.withCapabilityValue(change.capabilityId, change.value)
-                    if (updated != device) (devices ?: snap.devices.toMutableMap().also { devices = it })[device.id] = updated
+                    if (updated !== device) (devices ?: snap.devices.toMutableMap().also { devices = it })[device.id] = updated
                 }
                 devices?.let { snap.copy(devices = it) } ?: snap
             }
@@ -253,7 +273,7 @@ class HomeyStore(
             is HomeyEvent.CapabilityChanged -> _snapshot.update { snap ->
                 val device = snap.devices[event.deviceId] ?: return@update snap
                 val updated = device.withCapabilityValue(event.capabilityId, event.value)
-                if (updated == device) snap else snap.copy(devices = snap.devices + (device.id to updated))
+                if (updated === device) snap else snap.copy(devices = snap.devices + (device.id to updated))
             }
             is HomeyEvent.DeviceChanged -> {
                 realtime.subscribe(HomeyRealtime.deviceUri(event.device.id))
@@ -264,7 +284,11 @@ class HomeyStore(
             is HomeyEvent.ZoneDeleted -> _snapshot.update { it.copy(zones = it.zones - event.zoneId) }
             is HomeyEvent.MoodChanged -> _snapshot.update { it.copy(moods = it.moods + (event.mood.id to event.mood)) }
             is HomeyEvent.MoodDeleted -> _snapshot.update { it.copy(moods = it.moods - event.moodId) }
-            HomeyEvent.Reconnected -> scope.launch { reload() }
+            is HomeyEvent.UserChanged, is HomeyEvent.UserDeleted, is HomeyEvent.AlarmChanged, is HomeyEvent.AlarmDeleted -> household.onEvent(event)
+            HomeyEvent.Reconnected -> scope.launch {
+                reload()
+                household.reload()
+            }
         }
     }
 

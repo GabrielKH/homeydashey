@@ -44,35 +44,124 @@ enum class FollowUp(val label: String, val detail: String, val ms: Long) {
         /** Words that end a conversation on their own: "avsluta", "stopp", "tack". */
         private val ENDING_WORDS = setOf(
             "stop", "stopp", "stoppa", "sluta", "avsluta", "avbryt", "cancel", "quit", "exit", "end", "enough",
-            "tack", "tacka", "tackar", "thanks", "thank", "thx", "bye", "goodbye", "hejda", "adjo", "nevermind",
+            "tack", "tacka", "tackar", "thanks", "thank", "thx", "nevermind", "bye",
         )
 
-        /** Whole phrases that end it: "det var allt", "that's all", "never mind", "hej då". */
-        private val ENDING_PHRASES = listOf(
-            "det var allt", "det ar bra", "det racker", "hej da", "thats all", "that is all", "never mind", "thats it", "that will be all",
+        /** Goodbyes: they end it even after a request ("släck lampan, hej då"). */
+        private val GOODBYE_WORDS = setOf("bye", "goodbye", "byebye", "hejda", "adjo", "farval", "ciao", "adios", "avsluta", "quit", "exit")
+
+        /** Whole phrases that are goodbyes, said alone or after a request. */
+        private val GOODBYE_PHRASES = listOf(
+            "hej da", "hej hej", "god bye", "good bye", "bye bye", "see you", "see ya", "talk to you later", "you can go", "you may go",
+            "go away", "go to sleep", "stop listening", "thats all", "that is all", "that will be all", "thats it", "im done", "were done",
+            "vi ses", "vi hors", "ha det", "du kan ga", "du far ga", "ga och lagg dig", "ga bort", "sluta lyssna", "det var allt",
+            "det ar bra nu", "jag ar klar", "vi ar klara",
         )
+
+        /** Whole phrases that end it when said on their own: "det räcker", "no thanks", "never mind". */
+        private val ENDING_PHRASES = listOf(
+            "det ar bra", "det racker", "det ar lugnt", "jag ar nojd", "inget mer", "ingenting mer", "inte nu", "nej tack", "glom det",
+            "strunt samma", "var tyst", "tyst nu", "never mind", "thats okay", "thats ok", "thats fine", "thats enough", "im good",
+            "nothing else", "nothing more", "no more", "not now", "no thanks", "no thank you", "forget it", "be quiet",
+        )
+
+        /** "No" in its forms: on its own it ends the talk only when the last answer offered more. */
+        private val NO = setOf("no", "nej", "na", "nope", "nah", "nae")
 
         /** Small words around an ending that don't change it: "okej tack då", "stopp nu", "tack så mycket Nova". */
         private val FILLERS = setOf(
-            "ok", "okay", "okej", "oke", "ja", "jaha", "nej", "men", "nu", "da", "sa", "bra", "mycket", "hej", "hey",
+            "ok", "okay", "okej", "oke", "ja", "jaha", "men", "nu", "da", "sa", "bra", "mycket", "hej", "hey",
             "you", "very", "much", "so", "please", "snalla", "for", "hjalpen", "the", "help", "now", "then", "alright", "fint",
             "allt", "det", "var", "ar", "that", "thats", "is", "all", "it", "never", "mind", "will", "be", "racker",
-            "jag", "forstar", "i", "see", "great", "perfekt", "perfect", "toppen", "kanon",
+            "jag", "forstar", "i", "see", "great", "perfekt", "perfect", "toppen", "kanon", "and", "och", "well", "oh",
+            "really", "verkligen", "again", "igen", "sir", "buddy", "later", "senare", "dig", "hopefully",
+        ) + NO
+
+        /** Small words that can open a goodbye after a request: "…, okej tack, hej då", "…, and bye". */
+        private val TAIL_LEAD = setOf("ok", "okay", "okej", "oke", "och", "and", "men", "but", "so", "sa", "well", "oh", "alright", "nu", "now", "then", "da", "hey", "hej") + NO
+
+        /** Words of an answer that offer more help, so a bare "no" then means "that's all". */
+        private val OFFERS = listOf(
+            "anything else", "something else", "anything more", "more i can", "else i can", "else you need", "help with anything",
+            "nagot mer", "nagot annat", "nat mer", "nat annat", "mer jag kan", "annat jag kan", "annars nagot", "mer hjalp",
         )
+
+        /** The marker a phrase is replaced with while judging. */
+        private const val GOODBYE = "\u0000bye"
+        private const val ENDING = "\u0000end"
+
+        /** The words of [text] as normalized tokens, each with the index of the original word it came from. */
+        private fun tokens(text: String): List<Pair<String, Int>> {
+            val out = ArrayList<Pair<String, Int>>()
+            text.trim().split(Regex("\\s+")).forEachIndexed { i, w ->
+                NameMatch.normalize(w.replace("'", "").replace("’", "")).split(' ').filter { it.isNotEmpty() }.forEach { out += it to i }
+            }
+            return out
+        }
+
+        /** [tokens] with each goodbye or ending phrase folded into one marker token. */
+        private fun folded(tokens: List<Pair<String, Int>>): List<Pair<String, Int>> {
+            val phrases = GOODBYE_PHRASES.map { it.split(' ') to GOODBYE } + ENDING_PHRASES.map { it.split(' ') to ENDING }
+            val out = ArrayList<Pair<String, Int>>()
+            var i = 0
+            while (i < tokens.size) {
+                val hit = phrases.filter { (p, _) -> i + p.size <= tokens.size && p.indices.all { tokens[i + it].first == p[it] } }.maxByOrNull { it.first.size }
+                if (hit != null) {
+                    out += hit.second to tokens[i].second
+                    i += hit.first.size
+                } else {
+                    out += tokens[i]
+                    i++
+                }
+            }
+            return out
+        }
+
+        private fun ending(w: String) = w == GOODBYE || w == ENDING || w in ENDING_WORDS || w in GOODBYE_WORDS
 
         /**
          * Whether [text] only ends the conversation and needs no answer: an ending word or
-         * phrase ("avsluta", "stopp", "tack", "det var allt") with nothing else but small words
-         * around it. "Stoppa musiken" or "tack, släck lampan" still go to the assistant.
+         * phrase ("avsluta", "stopp", "tack", "det var allt", "you can go now") with nothing else
+         * but small words around it. "Stoppa musiken" or "tack, släck lampan" still go to the
+         * assistant. A bare "no" ends it when the last answer [offered] more ("anything else?").
          */
-        fun ends(text: String, name: String = ""): Boolean {
-            val t = NameMatch.normalize(text.replace("'", "").replace("’", ""))
-            if (t.isEmpty()) return false
+        fun ends(text: String, name: String = "", offered: Boolean = false): Boolean {
             val n = NameMatch.normalize(name)
-            var rest = " $t "
-            ENDING_PHRASES.forEach { rest = rest.replace(" $it ", " end ") }
-            val words = rest.split(' ').filter { it.isNotEmpty() && it != n }
-            return words.any { it in ENDING_WORDS } && words.all { it in ENDING_WORDS || it in FILLERS }
+            val words = folded(tokens(text)).map { it.first }.filter { it != n }
+            if (words.isEmpty()) return false
+            if (!words.all { ending(it) || it in FILLERS }) return false
+            return words.any { ending(it) } || (offered && words.any { it in NO })
+        }
+
+        /**
+         * A request with a goodbye at its end ("släck i köket, tack, hej då", "turn it off, you
+         * can go now"): the request without the goodbye, to answer before ending the talk. Null
+         * when [text] has no goodbye at its end, or nothing before it. A polite "tack" alone
+         * after a request isn't a goodbye.
+         */
+        fun closing(text: String, name: String = ""): String? {
+            val n = NameMatch.normalize(name)
+            val words = folded(tokens(text))
+            var cut = words.size
+            while (cut > 0) {
+                val w = words[cut - 1].first
+                if (ending(w) || w in FILLERS || w == n) cut-- else break
+            }
+            // Small words that may belong to the request ("släck allt, hej då") stay with it.
+            while (cut < words.size && !ending(words[cut].first) && words[cut].first !in TAIL_LEAD && words[cut].first != n) cut++
+            if (cut == 0 || cut == words.size) return null
+            if (words.subList(cut, words.size).none { it.first == GOODBYE || it.first in GOODBYE_WORDS }) return null
+            val original = text.trim().split(Regex("\\s+"))
+            val first = words[cut].second
+            // A word partly in the request and partly in the goodbye ("lampan,hejdå") stays with the request.
+            val keep = if (cut > 0 && words[cut - 1].second == first) first + 1 else first
+            return original.take(keep).joinToString(" ").trimEnd(',', ' ', '-', '–').ifBlank { null }
+        }
+
+        /** Whether an answer offered more help ("Anything else?", "Något mer jag kan göra?"). */
+        fun offers(answer: String): Boolean {
+            val t = " " + NameMatch.normalize(answer.replace("'", "").replace("’", "")) + " "
+            return OFFERS.any { t.contains(" $it ") }
         }
     }
 }
@@ -89,22 +178,32 @@ object MicSensitivity {
 
     /** How sure the recogniser must be of each word, 0.8 at 0 to 0.55 at 100. */
     fun minConfidence(sensitivity: Int): Double = 0.8 - sensitivity.coerceIn(0, 100) * 0.0025
+
+    /** The false-wake rate per spotted name the [WakeJudge] accepts: strict at 0, easy at 100. */
+    fun alpha(sensitivity: Int): Double = WakeJudge.alpha(sensitivity)
 }
 
 /** How far the assistant may go with something sensitive. */
 enum class Access(val label: String) { Off("Off"), LocalOnly("Local AI only"), On("On") }
 
 /** Things in the home that are secret by default; each one is a switch in Settings → Assistant. */
-enum class Secret(val title: String, val detail: String) {
+enum class Secret(val title: String, val detail: String, val default: Access = Access.Off) {
     Calendar("Calendar", "Read event titles and times."),
     CalendarDetails("Calendar details", "Also read where events are."),
-    Presence("Who is home", "Read whether each Homey user is home or asleep."),
+    Presence("Who is home", "Read whether each Homey user is home or asleep, and mark people home, away or asleep."),
+    WakeAlarms("Wake-up alarms", "Read, set and switch off Homey's wake-up alarms (\"väck mig 6:15\").", Access.On),
     Locks("Locks", "Read whether doors are locked, and lock them."),
     Unlock("Unlock doors", "Unlock doors; always asks you to tap Yes on the tablet first."),
     Alarm("Alarm", "Read the home alarm and arm it. It can never disarm it."),
     Cameras("Cameras and doorbells", "Read motion and rings. Never the pictures."),
     Variables("Homey variables", "Read Homey Logic variables, which often hold codes."),
     Faces("Face and voice recognition", "Know who is at the tablet, by face or by voice (first name only)."),
+    Phones("Find phones", "Ring a phone so it can be found, and say if it's home and its battery, through Homey's Apple Find My app. Never says where outside the home it is."),
+    Memory(
+        "Memory",
+        "Remember habits, what was said and what people tell about themselves under People, and use it when a question needs it. Kept on the tablet.",
+        Access.LocalOnly,
+    ),
 }
 
 /** How readily talking over an answer stops it; the wake name always does. */
@@ -116,7 +215,11 @@ enum class Interrupt(val label: String, val detail: String) {
 
 /** Who the assistant is: how it talks, apart from how it sounds. */
 enum class Persona(val label: String, val detail: String) {
-    Nova("Nova", "Friendly and to the point."),
+    Nova(
+        "Nova",
+        "Warm, curious and quick-witted, after Samantha in \"Her\": does what you ask straight away, then talks like a friend, " +
+            "notices how you sound, teases a little and has her own opinions. Answers in Swedish or English, whichever you speak, in a sentence or three.",
+    ),
     Tars(
         "TARS",
         "TARS from Interstellar: his voice, his name as the wake word, a \"huuh?\" when he hears it, and dry, deadpan humor " +
@@ -125,6 +228,18 @@ enum class Persona(val label: String, val detail: String) {
 }
 
 const val TARS_WAKE_NAME = "TARS"
+
+/** What [p] says about itself when it is picked in Settings, in its own words; [name] is what it answers to. */
+fun Persona.intro(name: String, swedish: Boolean, humor: Int = 75): String = when (this) {
+    Persona.Tars ->
+        "TARS. Former Marine Corps robot, now in charge of your kitchen. Humor setting $humor percent, honesty ninety. " +
+            "I do what you ask first and tell you what I think of it second. In English. Say Hey TARS when you need me."
+    Persona.Nova -> if (swedish) {
+        "Hej, jag är $name! Jag sköter lampor, musik, timers och kylen, och svarar kort på svenska eller engelska. Säg hej $name när du behöver mig."
+    } else {
+        "Hi, I'm $name! I look after the lights, music, timers and the fridge, and keep my answers short. Say Hey $name whenever you need me."
+    }
+}
 
 /** mlx-audio's multilingual Chatterbox: natural Swedish and English on a Mac. */
 const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
@@ -178,17 +293,29 @@ data class AgentSettings(
     val pace: Int = DEFAULT_PACE,
     /** Says every 20 minutes in the day that the tablet needs charging, when its battery is low; see [BatteryNag]. */
     val batteryReminders: Boolean = true,
+    /** After a timer is started without a name, the assistant asks whether to give it one. */
+    val askTimerName: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
-    val wakeSound: WakeSound = WakeSound.Hum,
+    val wakeSound: WakeSound = WakeSound.Voice,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */
     val persona: Persona = Persona.Nova,
     val humor: Int = 75,
+    /** The owner's own words for each character's personality, from Settings; missing or blank keeps [builtInTraits]. */
+    val traits: Map<Persona, String> = emptyMap(),
     /** Nova's wake name, kept while TARS answers to his own. */
     val novaName: String = "Nova",
     /** The scanner in KITT's red instead of the theme's accent. */
     val classicRed: Boolean = false,
     /** Set per question when a guest is asking: no secrets, Flows, Goodnight or settings. */
     val guest: Boolean = false,
+    /** Set per question: who is asking, when the tablet knows them by voice or face. */
+    val asker: Asker? = null,
+    /** Set per question: the people the tablet knows, id to name, to tell whose phone is whose. */
+    val people: Map<String, String> = emptyMap(),
+    /** Whose phones may be rung and found; see [Phones]. */
+    val phoneSharing: PhoneSharing = PhoneSharing.Own,
+    /** Each phone's owner chosen in Settings, device id to person id or [SHARED_PHONE]; others go by the name in the phone's. */
+    val phoneOwners: Map<String, String> = emptyMap(),
     /** Questions are heard by Whisper on your own computer (whisper.cpp's server) instead of Google. */
     val useWhisper: Boolean = false,
     /** Whisper's address; empty means the Ollama computer on port 8080. */
@@ -199,6 +326,11 @@ data class AgentSettings(
     val voiceServerModel: String = DEFAULT_VOICE_MODEL,
     /** The model's voice, when it has several; empty for its own. */
     val voiceServerVoice: String = "",
+    /**
+     * The Warm voice each character speaks in: the name of a short recording on the voice server
+     * ("anna" for voices/anna.wav), which Chatterbox copies. Missing means [voiceServerVoice].
+     */
+    val warmVoices: Map<Persona, String> = emptyMap(),
     /** Questions are heard by OpenAI instead of Google (after Whisper, when both are on). */
     val useOpenAiSpeech: Boolean = false,
     /** OpenAI key for hearing; empty means the internet brain's key when that is OpenAI. */
@@ -214,6 +346,11 @@ data class AgentSettings(
      * lose tool calls on long prompts (vMLX with Qwen 3.5).
      */
     val compactTools: Boolean = true,
+    /**
+     * Only the know-how a question needs is sent with it (music, timers, the vacuum…), found on
+     * the tablet; off sends every rule with every question, as before. See [KnowHow].
+     */
+    val knowHow: Boolean = true,
     /** A Spotify developer app, so any song, album, artist or playlist can be found and played on Sonos. */
     val spotifyClientId: String = "",
     val spotifySecret: String = "",
@@ -222,6 +359,9 @@ data class AgentSettings(
     fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })
 
     fun whisperUrlOrGuess(): String = whisperUrl.trim().ifBlank { Transcriber.guessUrl(local) }
+
+    /** The voice server's voice for the character speaking now. */
+    fun serverVoice(): String = warmVoices[persona]?.trim()?.takeIf { it.isNotEmpty() } ?: voiceServerVoice.trim()
 
     fun voiceServerUrlOrGuess(): String = voiceServerUrl.trim().ifBlank {
         val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
@@ -242,11 +382,26 @@ data class AgentSettings(
         )
         Persona.Nova -> copy(
             persona = p,
-            voice = if (voice == VoiceStyle.Tars) VoiceStyle.Natural else voice,
-            wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Hum else wakeSound,
+            voice = if (voice == VoiceStyle.Tars) novaVoice(language) else voice,
+            wakeSound = if (wakeSound == WakeSound.Huh) WakeSound.Voice else wakeSound,
             wakeName = if (wakeName.trim().equals(TARS_WAKE_NAME, ignoreCase = true)) novaName else wakeName,
         )
     }
+
+    /**
+     * [l] as the language: Svenska gives Nova Alma's Swedish voice, made on the tablet, and
+     * English takes it away again, since Alma only speaks Swedish.
+     */
+    fun withLanguage(l: Language): AgentSettings = copy(
+        language = l,
+        voice = when {
+            l == Language.Swedish && persona == Persona.Nova -> VoiceStyle.Alma
+            l == Language.English && voice == VoiceStyle.Alma -> VoiceStyle.Natural
+            else -> voice
+        },
+    )
+
+    private fun novaVoice(l: Language) = if (l == Language.Swedish) VoiceStyle.Alma else VoiceStyle.Natural
 
     /** The name [p] answers to: TARS's own, or the name given to Nova. */
     fun nameOf(p: Persona): String = when {
@@ -255,13 +410,52 @@ data class AgentSettings(
         else -> novaName
     }
 
+    /** The character [person] talks with: their own pick under People, or the house's. */
+    fun characterOf(person: KnownPerson?): Persona = person?.character ?: persona
+
+    /** Every character [person] talks with: their picks, or the house's when they picked none. */
+    fun charactersOf(person: KnownPerson?): List<Persona> = person?.characters.orEmpty().ifEmpty { listOf(persona) }
+
+    /** Whether [p] answers [person]: the house's answers anyone, another only those who picked it. */
+    fun answers(p: Persona, person: KnownPerson?): Boolean = p == persona || (person != null && p in person.characters)
+
+    /**
+     * The names that wake the assistant: the house character's, and another character's too
+     * once someone picked it under People. Saying either works; only the personality differs.
+     */
+    fun wakeNames(people: List<KnownPerson>): List<String> {
+        val chosen = people.flatMap { it.characters }.toSet()
+        return (listOf(nameOf(persona)) + Persona.entries.filter { it != persona && it in chosen }.map { nameOf(it) })
+            .filter { WakeName.clean(it).isNotEmpty() }
+            .distinctBy { WakeName.key(it) }
+    }
+
+    /** The character a heard wake name belongs to; the house's when it is no character's. */
+    fun characterNamed(name: String): Persona =
+        Persona.entries.firstOrNull { WakeName.key(nameOf(it)) == WakeName.key(name) } ?: persona
+
+    /**
+     * These settings as [p] talking with [person]: [p]'s name, wake sound and way of talking. The
+     * voice is the person's own pick for [p] when [p] is one of theirs, otherwise the house's for
+     * the house's character and [p]'s own usual voice for the other.
+     */
+    fun talkingAs(p: Persona, person: KnownPerson? = null): AgentSettings {
+        val theirs = person?.takeIf { p in charactersOf(it) }
+        val own = theirs?.voices?.get(p)
+        val warm = theirs?.warmVoices?.get(p)?.trim()?.takeIf { it.isNotEmpty() }
+        var s = if (p == persona) this else asCharacter(p)
+        if (own != null) s = s.copy(voice = own)
+        if (warm != null) s = s.copy(warmVoices = s.warmVoices + (p to warm))
+        return s
+    }
+
     /** The language answers are spoken in: TARS answers in English whatever language he hears. */
     val answers: Language get() = if (persona == Persona.Tars) Language.English else language
 
     fun openAiSpeechKeyOrBrain(): String =
         openAiSpeechKey.trim().ifBlank { internet?.takeIf { it.provider == Provider.OpenAI }?.apiKey.orEmpty() }
 
-    fun access(secret: Secret): Access = secrets[secret] ?: Access.Off
+    fun access(secret: Secret): Access = secrets[secret] ?: secret.default
 
     /** Whether [secret] may be used by a brain that is local ([local] = true) or on the internet. */
     fun allows(secret: Secret, local: Boolean): Boolean = when (access(secret)) {
@@ -274,7 +468,7 @@ data class AgentSettings(
     fun forRole(role: Role): AgentSettings = when (role) {
         Role.Owner -> this
         Role.Family -> copy(secrets = secrets.filterKeys { it !in FAMILY_BLOCKED })
-        Role.Guest -> copy(secrets = emptyMap(), guest = true)
+        Role.Guest -> copy(secrets = emptyMap(), guest = true, asker = null)
     }
 
     /** The connections to try for one question, in order. */

@@ -83,7 +83,7 @@ class VoiceTest {
             // Starts and ends quietly, so it doesn't click.
             assertTrue(abs(pcm.first().toInt()) < 2000 && abs(pcm.last().toInt()) < 2000)
         }
-        assertSame(WakeSound.Hum, AgentSettings().wakeSound)
+        assertSame(WakeSound.Voice, AgentSettings().wakeSound)
     }
 
     @Test
@@ -133,5 +133,96 @@ class VoiceTest {
         assertEquals("Kim", tars.asCharacter(Persona.Nova).wakeName)
         assertEquals("TARS", kim.nameOf(Persona.Tars))
         assertTrue(Agent(ChatClient(okhttp3.OkHttpClient())).rules(kim).contains("Your name is Kim."))
+    }
+
+    private fun person(id: String, character: Persona? = null, voice: VoiceStyle? = null) =
+        KnownPerson(id, id, Role.Owner, emptyList(), characters = listOfNotNull(character), voices = if (character != null && voice != null) mapOf(character to voice) else emptyMap())
+
+    @Test
+    fun `one person can talk with several characters`() {
+        val house = AgentSettings(wakeName = "Kim")
+        val gabriel = KnownPerson("g", "Gabriel", Role.Owner, emptyList(), characters = listOf(Persona.Tars, Persona.Nova), voices = mapOf(Persona.Nova to VoiceStyle.Calm))
+        assertEquals(listOf("Kim", "TARS"), house.wakeNames(listOf(gabriel)))
+        assertEquals(Persona.Tars, house.characterOf(gabriel))
+        assertEquals(listOf(Persona.Tars, Persona.Nova), house.charactersOf(gabriel))
+        assertEquals(listOf(Persona.Nova), house.charactersOf(person("a")))
+        assertTrue(house.answers(Persona.Tars, gabriel))
+        // TARS answers only those who picked him; the house's Nova answers anyone.
+        assertTrue(!house.answers(Persona.Tars, person("a")))
+        assertTrue(house.answers(Persona.Nova, person("a")))
+        assertEquals(VoiceStyle.Calm, house.talkingAs(Persona.Nova, gabriel).voice)
+        assertEquals(VoiceStyle.Tars, house.talkingAs(Persona.Tars, gabriel).voice)
+    }
+
+    @Test
+    fun `each character and person can have their own Warm voice recording`() {
+        val house = AgentSettings(voice = VoiceStyle.Warm, voiceServerVoice = "old", warmVoices = mapOf(Persona.Nova to "anna", Persona.Tars to "tars"))
+        assertEquals("anna", house.serverVoice())
+        assertEquals("tars", house.talkingAs(Persona.Tars).serverVoice())
+        assertEquals("old", AgentSettings(voiceServerVoice = "old").serverVoice())
+        val gabriel = KnownPerson("g", "Gabriel", Role.Owner, emptyList(), characters = listOf(Persona.Nova), warmVoices = mapOf(Persona.Nova to "gabriel"))
+        assertEquals("gabriel", house.talkingAs(Persona.Nova, gabriel).serverVoice())
+        // Someone else's pick never leaks to a person who didn't make it.
+        assertEquals("anna", house.talkingAs(Persona.Nova, person("a")).serverVoice())
+    }
+
+    @Test
+    fun `a character someone picked wakes the assistant too`() {
+        val house = AgentSettings(wakeName = "Kim")
+        assertEquals(listOf("Kim"), house.wakeNames(listOf(person("a"), person("b", Persona.Nova))))
+        assertEquals(listOf("Kim", "TARS"), house.wakeNames(listOf(person("a"), person("g", Persona.Tars))))
+        val tarsHouse = house.asCharacter(Persona.Tars)
+        assertEquals(listOf("TARS", "Kim"), tarsHouse.wakeNames(listOf(person("n", Persona.Nova))))
+        assertEquals(Persona.Tars, house.characterNamed("hey tars"))
+        assertEquals(Persona.Nova, house.characterNamed("Kim"))
+        assertEquals(Persona.Nova, tarsHouse.characterNamed("kim"))
+    }
+
+    @Test
+    fun `each person talks with their own character and voice`() {
+        val house = AgentSettings(wakeName = "Kim", voice = VoiceStyle.Warm)
+        val gabriel = person("g", Persona.Tars)
+        val anna = person("a", Persona.Nova, VoiceStyle.Calm)
+        assertEquals(Persona.Tars, house.characterOf(gabriel))
+        assertEquals(Persona.Nova, house.characterOf(null))
+        val tars = house.talkingAs(Persona.Tars, gabriel)
+        assertEquals(VoiceStyle.Tars, tars.voice)
+        assertEquals(WakeSound.Huh, tars.wakeSound)
+        assertEquals("TARS", tars.wakeName)
+        assertEquals(VoiceStyle.Calm, house.talkingAs(Persona.Nova, anna).voice)
+        // Anna's voice pick is for her own character; when she wakes TARS he sounds like himself.
+        assertEquals(VoiceStyle.Tars, house.talkingAs(Persona.Tars, anna).voice)
+        // Gabriel waking Nova gets the house's Nova.
+        val nova = house.talkingAs(Persona.Nova, gabriel)
+        assertEquals(VoiceStyle.Warm, nova.voice)
+        assertEquals("Kim", nova.wakeName)
+    }
+
+    @Test
+    fun `a picked character introduces itself`() {
+        assertTrue(Persona.Nova.intro("Kim", swedish = true).contains("jag är Kim"))
+        assertTrue(Persona.Tars.intro("TARS", swedish = true, humor = 60).contains("60 percent"))
+        assertTrue(Persona.entries.all { it.detail.length > 40 })
+    }
+
+    @Test
+    fun `wake grammar holds every name`() {
+        val g = WakeName.grammar(listOf("Nova", "TARS"))
+        assertTrue(g.contains("\"hey nova\"") && g.contains("\"hey tars\""))
+    }
+
+    @Test
+    fun `Svenska gives Nova Alma's voice`() {
+        val sv = AgentSettings(voice = VoiceStyle.Warm).withLanguage(Language.Swedish)
+        assertEquals(VoiceStyle.Alma, sv.voice)
+        assertEquals(VoiceStyle.Alma, sv.withLanguage(Language.Auto).voice)
+        assertEquals(VoiceStyle.Natural, sv.withLanguage(Language.English).voice)
+        // TARS keeps his own voice whatever the language; back to Nova in Swedish brings Alma back.
+        val tars = sv.asCharacter(Persona.Tars)
+        assertEquals(VoiceStyle.Tars, tars.withLanguage(Language.Swedish).voice)
+        assertEquals(VoiceStyle.Alma, tars.withLanguage(Language.Swedish).asCharacter(Persona.Nova).voice)
+        // Alma is spoken as made, with no filter on top.
+        val pcm = Pcm(16000, ShortArray(4) { 100 })
+        assertSame(pcm, VoiceFx.apply(VoiceStyle.Alma, pcm))
     }
 }

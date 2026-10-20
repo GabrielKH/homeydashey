@@ -81,6 +81,20 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** What the owner chose per module (on or off, and the source), as `AppModules.encode` lines. */
+    val modules: Flow<Set<String>> = context.dataStore.data.map { it[MODULES].orEmpty() }
+
+    suspend fun setModules(lines: Set<String>) {
+        context.dataStore.edit { it[MODULES] = lines }
+    }
+
+    /** The commits the app had last time it started, so an update can show what it brought. */
+    val seenChanges: Flow<Set<String>> = context.dataStore.data.map { it[SEEN_CHANGES].orEmpty() }
+
+    suspend fun setSeenChanges(shas: Set<String>) {
+        context.dataStore.edit { it[SEEN_CHANGES] = shas }
+    }
+
     /** Calendar ids shown on the dashboard; empty means every calendar the phone shows. */
     val calendars: Flow<Set<String>> = context.dataStore.data.map { it[CALENDARS].orEmpty() }
 
@@ -294,12 +308,20 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { if (flow == null) it.remove(GOODNIGHT_FLOW) else it[GOODNIGHT_FLOW] = flow }
     }
 
+    /** Whether Goodnight marks everyone home as asleep in Homey. */
+    val goodnightAsleep: Flow<Boolean> = context.dataStore.data.map { it[GOODNIGHT_ASLEEP] ?: true }
+
+    suspend fun setGoodnightAsleep(on: Boolean) {
+        context.dataStore.edit { it[GOODNIGHT_ASLEEP] = on }
+    }
+
     private companion object {
         val OVERVIEW_DEVICES = stringPreferencesKey("overview_devices")
         val LAST_PLAYER = stringPreferencesKey("last_player")
         val OVERVIEW_ORDER = stringPreferencesKey("overview_order")
         val GOODNIGHT_KEEP = stringSetPreferencesKey("goodnight_keep")
         val GOODNIGHT_FLOW = stringPreferencesKey("goodnight_flow")
+        val GOODNIGHT_ASLEEP = booleanPreferencesKey("goodnight_asleep")
         val WEATHER_DAYS = intPreferencesKey("weather_days")
         val PALETTE = stringPreferencesKey("palette")
         val FLAT = booleanPreferencesKey("flat")
@@ -318,6 +340,8 @@ class SettingsRepository(private val context: Context) {
         val WEATHER_SOURCE = stringPreferencesKey("weather_source")
         val WEATHER_PLACE = stringPreferencesKey("weather_place")
         val CALENDARS = stringSetPreferencesKey("calendars")
+        val MODULES = stringSetPreferencesKey("modules")
+        val SEEN_CHANGES = stringSetPreferencesKey("seen_changes")
         val COMPACT_SIDEBAR = booleanPreferencesKey("compact_sidebar")
         val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
         val ROOM_ORDER = stringPreferencesKey("room_order")

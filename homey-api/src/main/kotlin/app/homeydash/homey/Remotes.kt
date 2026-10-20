@@ -97,6 +97,25 @@ object Remotes {
     }
 
     /**
+     * Every button of a device's remote, as the remote sheet and the assistant press them,
+     * loading a "send key" card's list with [choices] when the app gives it as a search.
+     * Power is the app's own power key when it has one (what the TV's remote sends), else onoff.
+     */
+    suspend fun buttons(
+        capabilities: Collection<String>,
+        cards: List<FlowCardAction>,
+        choices: suspend (FlowCardAction, FlowCardArg) -> List<AutocompleteItem>,
+    ): Map<RemoteKey, RemoteAction> {
+        val keyCard = keyCard(cards)
+        val items = when (keyCard?.arg?.type) {
+            "dropdown" -> FlowCards.dropdownItems(keyCard.arg)
+            "autocomplete" -> choices(keyCard.card, keyCard.arg)
+            else -> emptyList()
+        }
+        return actions(capabilities, cards, keyCard, keyItems(items))
+    }
+
+    /**
      * The TV in the same room that should take the volume keys, like a Siri Remote
      * that turns the TV's volume. Null when the box has no TV beside it with volume.
      */

@@ -13,11 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history, for the change list the app shows as "What's new".
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      - name: List this build's changes
+        run: python3 scripts/changes.py app/src/main/assets/changes.json
       - name: Test and build
         run: ./gradlew :homey-api:test :app:assembleRelease
       - uses: actions/upload-artifact@v4
@@ -34,8 +39,10 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk homey-dashboard.apk
           # The app compares this with its own build number to offer updates.
           echo "${{ github.run_number }}" > version.txt
+          # What the update brings and how big it is, for the app's update screen.
+          python3 scripts/changes.py changes.json homey-dashboard.apk
           git tag -f dev
           git push -f origin refs/tags/dev
           gh release view dev >/dev/null 2>&1 || gh release create dev --prerelease --title "Latest test build" \
             --notes "Newest build of the dashboard. Download homey-dashboard.apk below and open it on the tablet."
-          gh release upload dev homey-dashboard.apk version.txt --clobber
+          gh release upload dev homey-dashboard.apk version.txt changes.json --clobber

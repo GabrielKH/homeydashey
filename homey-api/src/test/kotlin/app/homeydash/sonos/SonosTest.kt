@@ -133,6 +133,8 @@ class SonosTest {
 
         val items = cards.autocomplete(card, "item", "lugna")
         assertEquals(listOf("Lugna favoriter"), items.map { it.name })
+        // Favourites are the household's: asked again (another speaker, another search), they aren't read again.
+        assertEquals(2, cards.autocomplete(card, "item", "").size)
         cards.run(card, JsonObject(mapOf("item" to items.single().raw)))
 
         val sent = (1..9).map { server.takeRequest() }

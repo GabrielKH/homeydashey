@@ -22,6 +22,12 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
     var spokeThisRound = false
         private set
 
+    /** What of this round was said, so the next round isn't told to say it again. */
+    private val heard = StringBuilder()
+
+    @Synchronized
+    fun heardThisRound(): String = heard.toString().trim()
+
     /** Takes the next piece of the answer and says every sentence it completes. */
     @Synchronized
     fun feed(piece: String) {
@@ -54,6 +60,7 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
         said = 0
         quiet = false
         spokeThisRound = false
+        heard.setLength(0)
     }
 
     /** Says the finished sentences of [speakable] not said yet, or everything with [all]. */
@@ -67,6 +74,7 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
         if (sentence.isEmpty() || sentence.none { it.isLetterOrDigit() }) return
         started = true
         spokeThisRound = true
+        heard.append(sentence).append(' ')
         say(polish(sentence))
     }
 
@@ -75,7 +83,7 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
         const val SHORTEST = 20
         private val THINK = Regex("<think>[\\s\\S]*?(</think>|$)")
         /** Where tool-call text starts: a CALL line, Qwen's tags, a bare JSON object or a code fence. */
-        private val NOT_SPOKEN = Regex("""(?m)(^[ \t*`]*(CALL[ \t]|\{|```)|<tool_call|<function=)""")
+        private val NOT_SPOKEN = Regex("""(?m)(^[ \t*`]*(CALL[ \t]|\{|```)|(?<=\s)CALL[ \t]+[a-z_]|<tool_call|<function=)""")
         private val END = Regex("""[.!?…](["')\]]*)\s+|\n+""")
 
         /** The text that may be heard so far, and whether something not to be heard began. */
@@ -99,9 +107,26 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
 
 /** Short sounds a person makes while thinking, said when an answer takes a moment. */
 object ThinkingSounds {
-    private val NOVA_SV = listOf("Hmm…", "Mm, låt se.", "Hmm, ett ögonblick.")
-    private val NOVA_EN = listOf("Hmm…", "Let me see.", "Mm, one moment.")
-    private val TARS = listOf("Hmm.", "Processing.", "Give me a second.", "Thinking. It happens.")
+    // Real words only: a voice reads "Hmm" or "Mm" letter by letter ("h, m, m").
+    private val NOVA_SV = listOf("Mja, låt se.", "Ehm, ett ögonblick.", "Låt mig kolla.")
+    private val NOVA_EN = listOf("Um, let me see.", "One moment.", "Let me check.")
+    private val TARS = listOf("Processing.", "Give me a second.", "Thinking. It happens.")
+
+    private val ANSWER_SV = listOf("Ja?", "Japp?", "Ja, du?")
+    private val ANSWER_EN = listOf("Yes?", "Yeah?", "I'm listening.")
+    private val ANSWER_TARS = listOf("Yes?", "Go ahead.", "Listening.")
+
+    /** What it says in its own voice when it hears its name ([WakeSound.Voice]). */
+    fun answers(persona: Persona, swedish: Boolean): List<String> = when {
+        persona == Persona.Tars -> ANSWER_TARS
+        swedish -> ANSWER_SV
+        else -> ANSWER_EN
+    }
+
+    private val HUMS = Regex("""(?i)(?<![\p{L}])(h+m+|m{2,})(?![\p{L}])""")
+
+    /** A hum the AI wrote ("Hmm, det vet jag inte") as a word a voice can say, not "h, m, m". */
+    fun sayable(text: String, swedish: Boolean): String = HUMS.replace(text) { if (swedish) "ehm" else "um" }
 
     fun all(persona: Persona, swedish: Boolean): List<String> = when {
         persona == Persona.Tars -> TARS
