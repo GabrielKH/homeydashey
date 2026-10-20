@@ -382,7 +382,7 @@ private fun FeatureTile(feature: Feature, modifier: Modifier = Modifier) {
 private val BUILT_IN = listOf(
     BuiltIn(Sym.home, Color(0xFFE9A23B), "Rooms and devices", "Every Homey zone and device, laid out by itself."),
     BuiltIn(Sym.face, Color(0xFF8B7BFF), "Voice assistant", "Nova or TARS for each person, woken by any name they chose."),
-    BuiltIn(Sym.timer, Color(0xFFE08A3C), "Kitchen timers", "Several at once at the top of the screen, by voice too."),
+    BuiltIn(Sym.timer, Color(0xFFE08A3C), "Kitchen timers", "Several at once beside the page's chips, grouped by recipe, by voice too."),
     BuiltIn(Sym.flow, Color(0xFF1A9A52), "Routines", "God morgon and your own flows for the assistant."),
     BuiltIn(Sym.lightbulb, Color(0xFF3A8DDE), "Memory", "Habits and preferences for each person and the house."),
     BuiltIn(Sym.emojiObjects, Color(0xFFD0457A), "Moods and light looks", "Cozy and party looks for each room."),
