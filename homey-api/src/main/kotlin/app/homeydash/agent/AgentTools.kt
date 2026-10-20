@@ -1052,7 +1052,8 @@ class AgentTools(
                     val card = home.deviceActions(p.id).let(Phones::ringCard)
                         ?: return@map "${p.name} can't ring: its Homey app has no \"Play sound\" card."
                     home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
-                    "Ringing ${p.name}" + if (right == Phones.Right.All) " (${Phones.status(fresh(p))})." else "."
+                    // Ringing never asks Apple where the phone is: that is what wakes its GPS and drains it.
+                    "Ringing ${p.name}" + if (right == Phones.Right.All) " (last known: ${Phones.status(p)})." else "."
                 }
             }
         }
