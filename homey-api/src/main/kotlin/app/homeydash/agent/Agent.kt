@@ -236,7 +236,10 @@ class Agent(
                         if (!acted && answer.content.orEmpty().contains(IGNORE)) {
                             // Small models ignore far too much ("Säg något roligt" after an answer): what is
                             // plainly said to the assistant gets answered, once asked again.
-                            if (!reasked && Addressed.matches(text, settings.wakeName)) {
+                            // An answer to a question it just asked ("25", "pasta", "ja") is never someone else talking.
+                            val askedBack = history.lastOrNull()?.messages?.lastOrNull { it.role == "assistant" && !it.content.isNullOrBlank() }
+                                ?.content?.trim()?.endsWith("?") == true
+                            if (!reasked && (askedBack || Addressed.matches(text, settings.wakeName))) {
                                 reasked = true
                                 heard.trace("guard", "It ignored something said to it; asked it to answer.")
                                 turn += ChatMessage.user(NUDGE_ADDRESSED)
@@ -730,7 +733,8 @@ class Agent(
         append("Notes before earlier questions were true then; only the last note is how things are now. ")
         append("Only the part after \"$QUESTION_LABEL\" is what the user said. ")
         append("If the note says it was heard while the microphone stayed open after your last answer and it clearly isn't said to you ")
-        append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else.\n")
+        append("(people talking to each other, a phone call, the TV), reply with exactly $IGNORE and nothing else. ")
+        append("Never ignore an answer to a question you just asked, like a number of minutes, a name, yes or no.\n")
         append("Rules: in tool calls name a device exactly as the list writes it in quotes, adding its room after a comma when several devices share that name (\"Taklampa, Sovrum\"); in answers too call things by their names, never the alias (light_3). ")
         append("Read the name the user said word by word: \"Annas nattlampa\" is \"Nattlampa Anna\", never \"Nattlampa Erik\"; when they name a room, the device must be in that room. ")
         append("Commands: \"tänd\", \"sätt på\", \"slå på\", \"turn on\" mean on; \"släck\", \"stäng av\", \"slå av\", \"turn off\" mean off; a bare \"sätt taklampan\" means on; ")
@@ -979,8 +983,11 @@ internal object Addressed {
         RegexOption.IGNORE_CASE,
     )
 
+    /** Small words people start with before the real request: "Also set…", "Och sätt…", "Okej, spela…". */
+    private val LEAD = Regex("""^\s*((also|and|then|now|ok|okay|please|och|också|sen|så|nu|okej|snälla|men|but)[\s,]+)+""", RegexOption.IGNORE_CASE)
+
     fun matches(text: String, wakeName: String = ""): Boolean {
-        val t = text.trim()
+        val t = text.trim().replace(LEAD, "")
         if (t.isEmpty()) return false
         if (wakeName.isNotBlank() && t.contains(wakeName.trim(), ignoreCase = true)) return true
         if (t.endsWith("?") || YOU.containsMatchIn(t)) return true

@@ -161,6 +161,69 @@ class TimersTest {
         assertEquals(setOf("Ägg", "Pasta"), board.timers.value.map { it.label }.toSet())
     }
 
+    @Test
+    fun aNameThatOnlySaysTimerIsNoName() {
+        assertEquals("", Timers.realName("Timer"))
+        assertEquals("", Timers.realName("en timer"))
+        assertEquals("", Timers.realName("Timer 2"))
+        assertEquals("Pasta", Timers.realName(" Pasta "))
+        assertEquals("Ugnstimer", Timers.realName("Ugnstimer"))
+    }
+
+    @Test
+    fun readsSeveralTimersAtOnce() {
+        assertEquals(
+            listOf("Pasta" to 600, "Ris" to 720, "Ägg" to 450),
+            Timers.parseSeveral("pasta 10, ris 12 och ägg 7.5"),
+        )
+        assertEquals(listOf("Meat" to 1500, "Bröd" to 3600), Timers.parseSeveral("25 min meat; bröd på 1 timme"))
+        assertEquals(listOf<Pair<String?, Int?>>("Kött" to null, null to 300), Timers.parseSeveral("kött, 5 minuter"))
+    }
+
+    @Test
+    fun startsSeveralTimersInOneCall() = runBlocking {
+        val board = TimerBoard(null)
+        val view = HomeView.build(emptyMap(), emptyMap(), emptyMap(), emptySet(), AgentSettings(), true)
+        val tools = AgentTools(view, NoHome, Dash(board))
+        val text = tools.run(ToolCall("1", "timer", args("action" to "start", "several" to "pasta 10, meat 25, kött"))).text
+        assertEquals(listOf("Pasta", "Meat"), board.timers.value.map { it.label })
+        assertTrue(text, text.contains("Kött (no length: ask how many minutes)"))
+        // A model naming it "Timer" gets the name question, not a timer called "Timer".
+        val plain = tools.run(ToolCall("2", "timer", args("action" to "start", "minutes" to "3", "label" to "Timer"))).text
+        assertNull(board.timers.value.last().label)
+        assertTrue(plain, plain.contains("give it a name"))
+    }
+
+    @Test
+    fun sortsTheBuiltInRulesByTopic() {
+        val rules = "Kitchen timers go through the timer tool. For a TV use press_remote. Talk like a person.\nWhen asked what to cook, look in find_recipes."
+        val specs = listOf(
+            ToolSpec("timer", "Kitchen timers", kotlinx.serialization.json.buildJsonObject {
+                put("properties", kotlinx.serialization.json.buildJsonObject {
+                    put("action", kotlinx.serialization.json.buildJsonObject { put("description", kotlinx.serialization.json.JsonPrimitive("start or stop")) })
+                })
+            }),
+            ToolSpec("weather", "Weather", kotlinx.serialization.json.JsonObject(emptyMap())),
+            ToolSpec("web_search", "Search", kotlinx.serialization.json.JsonObject(emptyMap())),
+        )
+        val topics = RuleBook.topics(rules, "Your name is Nova.", specs).associateBy { it.title }
+        assertEquals(listOf("Kitchen timers go through the timer tool."), topics.getValue("Timers").rules)
+        assertEquals(listOf("action" to "start or stop"), topics.getValue("Timers").tools.single().parameters)
+        assertEquals(listOf("For a TV use press_remote."), topics.getValue("TV and remotes").rules)
+        assertEquals(listOf("When asked what to cook, look in find_recipes."), topics.getValue("Recipes and cooking").rules)
+        assertEquals(listOf("Talk like a person."), topics.getValue(RuleBook.TALK).rules)
+        assertEquals("weather", topics.getValue("Calendar and weather").tools.single().name)
+        assertEquals("web_search", topics.getValue("Other tools").tools.single().name)
+        assertEquals(listOf("Your name is Nova."), topics.getValue(RuleBook.CHARACTER).rules)
+    }
+
+    @Test
+    fun aRequestAfterALittleWordIsStillSaidToIt() {
+        assertTrue(Addressed.matches("Also set another timer and call it meat"))
+        assertTrue(Addressed.matches("Och sätt en till på fem minuter"))
+        assertFalse(Addressed.matches("ja men jag ringer dig sen"))
+    }
+
     private fun args(vararg pairs: Pair<String, String>) =
         kotlinx.serialization.json.JsonObject(pairs.associate { (k, v) -> k to kotlinx.serialization.json.JsonPrimitive(v) })
 

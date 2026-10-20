@@ -259,4 +259,35 @@ object Timers {
     }
 
     private val HABIT = Regex("""(.+) for ([\d.,]+) minutes""")
+
+    /** Words a model puts as a name that are no name at all ("Timer", "en timer", "Timer 2"). */
+    private val NO_NAME = Regex("""^\s*(a |en |ett |the |min |my )?(timer|timern|nedräkning|countdown|kitchen timer|äggklocka)( \d+)?\s*$""", RegexOption.IGNORE_CASE)
+
+    /** [label] as a timer's name, or blank when it only says "timer". */
+    fun realName(label: String): String = if (NO_NAME.matches(label)) "" else label.trim()
+
+    private val NUMBER = Regex("""(\d+(?:[.,]\d+)?)\s*((?:min\w*|m|h|tim\w*|hour\w*|s|sek\w*|sec\w*)(?![\p{L}]))?""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Several timers asked for at once, "pasta 10, ris 12 och ägg 7.5" or "10 min pasta, 12 ris",
+     * as names (null for none) and seconds (null when no length was said).
+     */
+    fun parseSeveral(text: String): List<Pair<String?, Int?>> = text
+        .split(',', ';', '\n').flatMap { it.split(Regex("""\s+(och|and|&)\s+""", RegexOption.IGNORE_CASE)) }
+        .map { it.trim() }.filter { it.isNotEmpty() }
+        .map { part ->
+            val m = NUMBER.find(part)
+            val seconds = m?.let {
+                val n = it.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@let null
+                val unit = it.groupValues[2].lowercase()
+                (n * when {
+                    unit.startsWith("h") || unit.startsWith("tim") -> 3600
+                    unit == "s" || unit.startsWith("sek") || unit.startsWith("sec") -> 1
+                    else -> 60
+                }).toInt()
+            }
+            val name = (if (m != null) part.removeRange(m.range) else part)
+                .replace(Regex("""(?<![\p{L}])(på|for|för|i|in|om)(?![\p{L}])""", RegexOption.IGNORE_CASE), " ").trim().replace(Regex("\\s+"), " ")
+            realName(name).ifBlank { null }?.replaceFirstChar(Char::uppercase) to seconds
+        }
 }

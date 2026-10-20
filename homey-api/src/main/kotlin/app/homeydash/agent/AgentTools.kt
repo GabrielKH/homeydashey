@@ -144,6 +144,7 @@ class AgentTools(
             number("minutes", "start: length (leave out for a named timer to use the usual length); add: minutes to add, negative to take away")
             string("label", "The timer's name, e.g. pasta; for rename the timer to rename (leave out for the newest)")
             string("new_label", "rename: the new name")
+            string("several", "start: several timers at once, each a name and minutes, e.g. \"pasta 10, ris 12, ägg 7\"")
             required("action")
         })
         if (recipes != null) add(tool("recipe_timers", "Start a kitchen timer for every step of the open recipe that names a time, all at once.") {})
@@ -246,7 +247,7 @@ class AgentTools(
             "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
             "vacuum" -> vacuum(a.str("device"), a.str("action"), a.list("rooms"))
             "goodnight" -> goodnight()
-            "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"), a.str("new_label"))
+            "timer" -> timer(a.str("action"), a.num("minutes"), Timers.realName(a.str("label")), a.str("new_label"), a.str("several"))
             "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
@@ -768,11 +769,20 @@ class AgentTools(
         memory?.learnTimer(t.label, t.seconds, s.asker, clock())
     }
 
-    private suspend fun timer(action: String, minutes: Double?, label: String, newLabel: String): ToolResult {
+    private suspend fun timer(action: String, minutes: Double?, label: String, newLabel: String, several: String = ""): ToolResult {
         val board = dashboard.timers
         fun named(t: KitchenTimer) = t.label ?: "The timer"
         return when (action.lowercase().replace(' ', '_')) {
             "start", "set" -> {
+                val many = Timers.parseSeveral(several)
+                if (many.isNotEmpty()) {
+                    val started = many.map { (name, secs) ->
+                        val s = secs ?: name?.let { memory?.usualTimerSeconds(it, view.settings.asker?.id) }
+                        if (s == null || s <= 0 || s > 24 * 3600) "${name ?: "a timer"} (no length: ask how many minutes)"
+                        else board.start(s, name).also { learnTimer(it) }.let { "${it.label ?: "a timer"} for ${Timers.minutesText(s)}" }
+                    }
+                    return ok("Started: " + started.joinToString("; ") + ".")
+                }
                 val usual = if (minutes == null && label.isNotBlank()) memory?.usualTimerSeconds(label, view.settings.asker?.id) else null
                 val seconds = usual ?: ((minutes ?: 0.0) * 60).toInt()
                 if (seconds <= 0 || seconds > 24 * 3600) return ok("Ask how many minutes.")

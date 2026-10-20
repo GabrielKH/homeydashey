@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -238,6 +239,9 @@ private fun TimerList(
         Modifier
             .width(460.dp)
             .heightIn(max = 520.dp)
+            // Solid underneath: see-through glass over the cards made the list hard to read.
+            .shadow(28.dp, PanelShape, ambientColor = Color.Black.copy(alpha = 0.35f), spotColor = Color.Black.copy(alpha = 0.35f))
+            .background(g.wallBase, PanelShape)
             .glass(PanelShape)
             .pressable(onTouch)
             .verticalScroll(rememberScrollState())
