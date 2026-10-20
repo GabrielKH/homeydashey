@@ -10,6 +10,8 @@ import app.homeydash.data.DisplaySettings
 import app.homeydash.data.HomeyDiscovery
 import app.homeydash.data.SonosFinder
 import app.homeydash.data.Kitchen
+import app.homeydash.data.Modules
+import app.homeydash.homey.appId
 import app.homeydash.data.SavedHomey
 import app.homeydash.data.SettingsRepository
 import app.homeydash.homey.HomeyConnectException
@@ -57,7 +59,9 @@ class AppContainer(context: Context) {
     private val connector = HomeyConnector(http)
 
     val discovery = HomeyDiscovery(context, http)
-    val updater = AppUpdater(context, http, scope)
+    val updater = AppUpdater(context, http, scope, settings) { version, day, changes ->
+        rememberForHouse(app.homeydash.agent.Memory.appUpdated(version, day, changes))
+    }
     val calendar = CalendarRepository(context, settings, scope)
 
     val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
@@ -90,6 +94,17 @@ class AppContainer(context: Context) {
         }
     }
 
+    /** The dashboard's modules; each choice goes into the assistant's memory, when memory is on. */
+    val modules = Modules(settings, scope) { module, on, source ->
+        rememberForHouse(app.homeydash.agent.Memory.moduleChoice(module, on, source))
+    }
+
+    private suspend fun rememberForHouse(fact: app.homeydash.agent.Fact) {
+        if (assistant.settings.value.access(app.homeydash.agent.Secret.Memory) != app.homeydash.agent.Access.Off) {
+            assistant.memory.learn(listOf(fact))
+        }
+    }
+
     private val _session = MutableStateFlow<SessionState>(SessionState.Starting)
     val session: StateFlow<SessionState> = _session.asStateFlow()
 
@@ -98,6 +113,7 @@ class AppContainer(context: Context) {
     }
 
     init {
+        scope.launch { updater.findWhatsNew() }
         scope.launch {
             while (true) {
                 updater.check()
@@ -137,6 +153,9 @@ class AppContainer(context: Context) {
     fun forget() {
         (_session.value as? SessionState.Ready)?.store?.stop()
         learning?.cancel()
+        following?.cancel()
+        modules.detach()
+        calendar.useHomey(null)
         _session.value = SessionState.NeedsSetup
         scope.launch { settings.clear() }
     }
@@ -152,13 +171,55 @@ class AppContainer(context: Context) {
     /** Teaches the assistant's memory from the current Homey's presence and alarms. */
     private var learning: kotlinx.coroutines.Job? = null
 
+    /** Keeps the modules in step with the current Homey: its apps, the calendar's source, and what the assistant knows. */
+    private var following: kotlinx.coroutines.Job? = null
+
     private fun start(ready: SessionState.Ready) {
         ready.store.start()
         learning?.cancel()
         learning = scope.launch { assistant.learnFrom(ready.store.household) }
+        following?.cancel()
+        modules.attach(ready.store)
+        following = scope.launch { followModules(ready.store) }
         _session.value = ready
         // The weather may use the Homey's location, known only now.
         weather.refresh()
+    }
+
+    private suspend fun followModules(store: HomeyStore): Unit = kotlinx.coroutines.coroutineScope<Unit> {
+        // The Calendar module reads from the tablet, or from the IcalCalendar app on Homey.
+        launch {
+            modules.choices.map { it["calendar"] ?: app.homeydash.modules.ModuleChoice() }
+                .distinctUntilChanged()
+                .collect { choice ->
+                    val fromHomey = choice.on && choice.source == "homey"
+                    calendar.useHomey(
+                        if (!fromHomey) null else {
+                            val reader = app.homeydash.homey.HomeyCalendar(run = { card, args ->
+                                store.runAppAction(app.homeydash.homey.HomeyCalendar.APP_ID, card, args)
+                            })
+                            suspend { reader.events() }
+                        },
+                    )
+                }
+        }
+        // A module that turns on by itself (its Homey app got devices) is told to the assistant once.
+        launch {
+            val told = mutableSetOf<String>()
+            kotlinx.coroutines.flow.combine(store.snapshot, modules.apps, modules.choices) { snapshot, apps, choices ->
+                if (!snapshot.loaded) emptyList() else app.homeydash.modules.AppModules.states(choices, apps, snapshot.devices.values)
+            }.collect { states ->
+                states.filter { it.module.kind == app.homeydash.modules.ModuleKind.Devices && it.status == app.homeydash.modules.ModuleStatus.On }
+                    .forEach { state ->
+                        val apps = state.devices.mapNotNull { d -> d.appId }.distinct()
+                        val key = state.module.id + apps
+                        if (told.add(key)) {
+                            val names = apps.map { id -> modules.apps.value?.get(id)?.name ?: state.module.sources.firstOrNull { it.app?.id == id }?.app?.name ?: id }
+                            runCatching { rememberForHouse(app.homeydash.agent.Memory.moduleChoice(state.module.name, true, "Homey: " + names.joinToString(" and ") + " (" + state.devices.size + " devices)")) }
+                        }
+                    }
+            }
+        }
     }
 
     private fun HomeySession.newStore(saved: SavedHomey) = SessionState.Ready(

@@ -60,9 +60,7 @@ class MemoryTest {
         override fun goodnight() {}
         override suspend fun weather() = "Sunny"
         override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean) = emptyList<AgentEvent>()
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 
@@ -264,5 +262,59 @@ class MemoryTest {
         d = Memory.merge(d, Memory.woke(g, Persona.Tars, at), 3)
         d = Memory.merge(d, Memory.woke(g, Persona.Tars, at), 4)
         assertEquals(2, d.facts.first { it.kind == FactKind.Habit }.count)
+    }
+
+    @Test fun `a module choice replaces the last one`() {
+        var data = MemoryData()
+        data = Memory.merge(data, Memory.moduleChoice("Calendar", on = true, source = "Built in: this tablet's accounts"), 1)
+        data = Memory.merge(data, Memory.moduleChoice("Calendar", on = true, source = "Homey app: IcalCalendar"), 2)
+        assertEquals(1, data.facts.size)
+        assertEquals("Homey app: IcalCalendar", data.facts.single().obj)
+        data = Memory.merge(data, Memory.moduleChoice("Calendar", on = false, source = "x"), 3)
+        assertEquals(1, data.facts.size)
+        assertTrue("turned off" in data.facts.single().obj)
+    }
+
+    @Test fun `using a fact counts it and logs the recall, newest first`() {
+        val radio = fact("Gabriel", "plays", "P1 on Kök", gabriel, FactKind.Habit)
+        var d = data(radio, fact("Elise", "lives in", "Göteborg"))
+        d = Memory.used(d, "spela som vanligt", gabriel, RecallVia.Cue, listOf(radio), now)
+        d = Memory.used(d, "fotboll", null, RecallVia.Tool, emptyList(), now + 1)
+        assertEquals(1, d.facts.first { it.id == radio.id }.used)
+        assertEquals(now, d.facts.first { it.id == radio.id }.lastUsed)
+        assertEquals(0, d.facts.first { it.subject == "Elise" }.used)
+        assertEquals(listOf("fotboll", "spela som vanligt"), d.recalls.map { it.question })
+        assertEquals(listOf("Gabriel plays P1 on Kök"), d.recalls.last().lines)
+        // Doing it again keeps the count of uses.
+        d = Memory.merge(d, radio.copy(id = "other"), now + 2)
+        assertEquals(2, d.facts.first { it.id == radio.id }.count)
+        assertEquals(1, d.facts.first { it.id == radio.id }.used)
+    }
+
+    @Test fun `the graph hangs facts off their person and joins shared things`() {
+        val d = listOf(
+            fact("Gabriel", "plays", "P1", gabriel, FactKind.Habit),
+            fact("Maja", "plays", "P1", maja, FactKind.Habit),
+            fact("Someone in the house", "sets the lights", "cozy in Vardagsrum", kind = FactKind.Habit),
+            fact("P1", "is", "the news radio"),
+        )
+        val g = MemoryGraph.build(d)
+        val labels = g.nodes.map { it.label }
+        assertEquals(listOf("Gabriel", "P1", "Maja", "Whole house", "cozy in Vardagsrum", "the news radio"), labels)
+        val p1 = labels.indexOf("P1")
+        assertEquals(setOf(labels.indexOf("Gabriel"), labels.indexOf("Maja"), labels.indexOf("the news radio"), labels.indexOf("Whole house")), g.neighbours(p1))
+        val pos = MemoryGraph.layout(g)
+        assertEquals(g.nodes.size * 2, pos.size)
+        assertTrue(pos.all { it in -1.001f..1.001f })
+        // The same memory draws the same way every time.
+        assertTrue(pos.contentEquals(MemoryGraph.layout(g)))
+    }
+
+    @Test fun `editing a fact changes what it says`() = runTest {
+        val book = MemoryBook(Files.createTempDirectory("mem").toFile()) { now }
+        book.learn(listOf(fact("Maja", "likes", "cold light", maja)))
+        val f = book.data.value.facts.single()
+        book.edit(f.id, "blue light")
+        assertEquals("blue light", book.data.value.facts.single().obj)
     }
 }

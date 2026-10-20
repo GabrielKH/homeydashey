@@ -8,3 +8,4 @@ captures/
 .kotlin/
 *.apk
 *.aab
+app/src/main/assets/changes.json

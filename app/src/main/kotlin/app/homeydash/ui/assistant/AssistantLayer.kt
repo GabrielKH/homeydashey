@@ -63,7 +63,6 @@ import androidx.core.content.ContextCompat
 import app.homeydash.agent.AgentSettings
 import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.AssistantState
-import app.homeydash.assistant.KitchenTimer
 import app.homeydash.assistant.Line
 import app.homeydash.ui.components.PanelShape
 import app.homeydash.ui.components.PillShape
@@ -77,8 +76,8 @@ import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
 
 /**
- * The assistant over the dashboard: a glass orb in the corner (tap to talk), running
- * kitchen timers above it, and the conversation panel when it is open.
+ * The assistant over the dashboard: a glass orb in the corner (tap to talk) and the
+ * conversation panel when it is open. The kitchen timers are in [TimerIsland] at the top.
  */
 @Composable
 fun BoxScope.AssistantLayer(
@@ -112,7 +111,6 @@ fun BoxScope.AssistantLayer(
         ) {
             Panel(assistant, settings, talk, onChooseSpeaker, onOpenSettings)
         }
-        assistant.timers.forEach { TimerChip(it) { assistant.cancelTimer(it.label) } }
         Orb(
             state = assistant.state,
             // Read while drawing, so the voice level doesn't redraw the whole panel 60 times a second.
@@ -403,39 +401,3 @@ private fun InputRow(assistant: Assistant, talk: () -> Unit) {
     }
 }
 
-@Composable
-private fun TimerChip(timer: KitchenTimer, onCancel: () -> Unit) {
-    val g = GlassTheme.colors
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(timer.id) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(500)
-        }
-    }
-    val left = ((timer.endsAt - now) / 1000).coerceAtLeast(0)
-    val progress = (left.toFloat() / timer.seconds).coerceIn(0f, 1f)
-    Row(
-        Modifier
-            .clip(PillShape)
-            .glass(PillShape)
-            .drawBehind {
-                drawRect(
-                    Brush.horizontalGradient(listOf(g.on.copy(alpha = 0.35f), g.on.copy(alpha = 0.15f))),
-                    size = size.copy(width = size.width * progress),
-                )
-            }
-            .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            "${timer.label ?: "Timer"}  %d:%02d".format(left / 60, left % 60),
-            style = MaterialTheme.typography.titleMedium,
-            color = g.fg,
-        )
-        Box(Modifier.size(34.dp).alpha(0.8f).pressable(onCancel).glass(CircleShape), contentAlignment = Alignment.Center) {
-            SymIcon(Sym.close, size = 16.dp, tint = g.fg)
-        }
-    }
-}

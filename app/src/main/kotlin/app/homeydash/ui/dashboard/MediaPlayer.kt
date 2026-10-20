@@ -158,7 +158,7 @@ fun MediaPlayerCard(device: Device, actions: DashboardActions, modifier: Modifie
                         Box(
                             Modifier
                                 .size(40.dp)
-                                .pressable({ actions.set(device.id, it.id, JsonPrimitive(poweredOff)) })
+                                .pressable({ actions.power(device) })
                                 .background(if (poweredOff) InkFaint else Ink.copy(alpha = 0.9f), PillShape),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -460,7 +460,7 @@ fun MediaHero(device: Device, actions: DashboardActions, modifier: Modifier = Mo
                             Box(
                                 Modifier
                                     .size(44.dp)
-                                    .pressable({ actions.set(device.id, it.id, JsonPrimitive(poweredOff)) })
+                                    .pressable({ actions.power(device) })
                                     .background(if (poweredOff) InkFaint else Ink.copy(alpha = 0.9f), PillShape),
                                 contentAlignment = Alignment.Center,
                             ) {

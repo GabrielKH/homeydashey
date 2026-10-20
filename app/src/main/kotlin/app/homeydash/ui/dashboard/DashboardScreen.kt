@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -54,6 +55,7 @@ import app.homeydash.homey.FlowCards
 import app.homeydash.homey.MusicSource
 import app.homeydash.homey.Device
 import app.homeydash.homey.RemoteAction
+import app.homeydash.homey.RemoteKey
 import app.homeydash.homey.Remotes
 import app.homeydash.homey.SpeakerGrouping
 import app.homeydash.homey.DashboardLayout
@@ -81,6 +83,8 @@ import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.AssistantServices
 import app.homeydash.data.AppUpdater
 import app.homeydash.ui.assistant.AssistantLayer
+import app.homeydash.ui.assistant.LocalTimerChip
+import app.homeydash.ui.assistant.TimerIsland
 import app.homeydash.ui.assistant.AssistantSettingsDialog
 import app.homeydash.ui.assistant.FaceWatch
 import app.homeydash.ui.assistant.FacesDialog
@@ -176,6 +180,25 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
             is RemoteAction.Capability -> {
                 val value = if (action.toggle) device.capability(action.capability)?.value?.let { (it as? JsonPrimitive)?.booleanOrNull } != true else true
                 set(device.id, action.capability, JsonPrimitive(value))
+            }
+        }
+    }
+
+    /**
+     * The media player's power button: the same power key the device's remote sends (a TV app's
+     * own key card when it has one, which works where switching onoff fails), else onoff.
+     */
+    fun power(device: Device) {
+        scope.launch {
+            val power = Remotes.buttons(device.capabilities, cards(device.id)) { c, a ->
+                if (a.type == "dropdown") FlowCards.dropdownItems(a) else autocomplete(c, a.name, "")
+            }[RemoteKey.Power]
+            when (power) {
+                is RemoteAction.Card -> store.runAction(power.card, power.args)
+                else -> {
+                    val on = device.capability("onoff")?.value?.let { (it as? JsonPrimitive)?.booleanOrNull } == true
+                    store.setCapability(device.id, "onoff", JsonPrimitive(!on))
+                }
             }
         }
     }
@@ -289,6 +312,7 @@ fun DashboardScreen(
     calendar: CalendarRepository,
     assistantServices: AssistantServices,
     kitchen: app.homeydash.data.Kitchen,
+    modules: app.homeydash.data.Modules,
     onForget: () -> Unit,
 ) {
     val update by updater.state.collectAsStateWithLifecycle()
@@ -302,7 +326,12 @@ fun DashboardScreen(
     val weatherState by weather.state.collectAsStateWithLifecycle()
     val weatherSource by weather.source.collectAsStateWithLifecycle()
     val weatherPlace by weather.place.collectAsStateWithLifecycle()
-    val hasCalendar by calendar.hasPermission.collectAsStateWithLifecycle()
+    // Parts of the dashboard the owner turned off under Modules stay out of the menu and the overview.
+    val moduleChoices by modules.choices.collectAsStateWithLifecycle()
+    fun moduleOn(id: String) = app.homeydash.modules.AppModules.isOn(moduleChoices, id)
+    val calendarAllowed by calendar.hasPermission.collectAsStateWithLifecycle()
+    val hasCalendar = calendarAllowed && moduleOn("calendar")
+    val homeyCalendarError by calendar.homeyError.collectAsStateWithLifecycle()
     val events by calendar.events.collectAsStateWithLifecycle()
     val calendars by calendar.calendars.collectAsStateWithLifecycle()
     val chosenCalendars by calendar.selected.collectAsStateWithLifecycle()
@@ -369,7 +398,11 @@ fun DashboardScreen(
     }
 
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
+    // A page whose module was just turned off goes back to the overview.
+    val pageOff = (destination == RECIPES && !moduleOn("recipes")) || (destination == FRIDGE && !moduleOn("fridge")) || (destination == CALENDAR && !moduleOn("calendar"))
+    LaunchedEffect(pageOff) { if (pageOff) destination = OVERVIEW }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showUpdateSheet by rememberSaveable { mutableStateOf(false) }
     var showDevices by rememberSaveable { mutableStateOf(false) }
 
     // The voice assistant: an orb in the corner, and Settings → Assistant.
@@ -418,6 +451,8 @@ fun DashboardScreen(
             hasMoods = moods.isNotEmpty(),
             hasMedia = players.isNotEmpty(),
             hasCalendar = hasCalendar,
+            hasRecipes = moduleOn("recipes"),
+            hasFridge = moduleOn("fridge"),
             destination = destination,
             onNavigate = { destination = it },
             onSettings = { showSettings = true },
@@ -430,74 +465,89 @@ fun DashboardScreen(
                     CircularProgressIndicator(Modifier.align(Alignment.Center), color = GlassTheme.colors.fg)
                 }
             } else {
-                AnimatedContent(
-                    targetState = destination,
-                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
-                    label = "page",
-                ) { target ->
-                    when {
-                        target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
-                        target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
-                        target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label) })
-                        target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
-                        target == CALENDAR -> CalendarScreen(
-                            hasPermission = hasCalendar,
-                            events = events,
-                            load = { from, until -> calendar.events(from, until) },
-                            onPermissionResult = calendar::permissionChanged,
-                            onChooseCalendars = { actions.open(Sheet.Calendars) },
-                        )
-                        target.startsWith(ROOM) -> {
-                            val id = target.removePrefix(ROOM)
-                            val room = rooms.firstOrNull { it.zone.id == id }
-                            if (room == null) {
-                                // The room was deleted or emptied; go back home.
-                                LaunchedEffect(id) { destination = OVERVIEW }
-                            } else {
-                                RoomScreen(
-                                    room, sections, snapshot.zones, snapshot.moods, actions,
-                                    hasMusic = speakers.isNotEmpty(),
-                                    arrangement = arrangement,
-                                    onCardOrder = display::setCardOrder,
-                                )
+                // Every page's header shows the running kitchen timers first among its chips.
+                CompositionLocalProvider(LocalTimerChip provides { TimerIsland(assistant) }) {
+                    AnimatedContent(
+                        targetState = destination,
+                        transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                        label = "page",
+                    ) { target ->
+                        when {
+                            target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
+                            target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
+                            target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label, kitchen.cooking.current()?.first?.title ?: "Recept") })
+                            target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
+                            target == CALENDAR -> CalendarScreen(
+                                hasPermission = calendarAllowed,
+                                events = events,
+                                load = { from, until -> calendar.events(from, until) },
+                                onPermissionResult = calendar::permissionChanged,
+                                onChooseCalendars = { actions.open(Sheet.Calendars) },
+                            )
+                            target.startsWith(ROOM) -> {
+                                val id = target.removePrefix(ROOM)
+                                val room = rooms.firstOrNull { it.zone.id == id }
+                                if (room == null) {
+                                    // The room was deleted or emptied; go back home.
+                                    LaunchedEffect(id) { destination = OVERVIEW }
+                                } else {
+                                    RoomScreen(
+                                        room, sections, snapshot.zones, snapshot.moods, actions,
+                                        hasMusic = speakers.isNotEmpty(),
+                                        arrangement = arrangement,
+                                        onCardOrder = display::setCardOrder,
+                                    )
+                                }
                             }
+                            else -> OverviewScreen(
+                                rooms = rooms,
+                                moods = moods,
+                                player = DashboardLayout.featuredPlayer(players, chosen = null, last = lastPlayer),
+                                zones = snapshot.zones,
+                                connection = connection,
+                                actions = actions,
+                                hasMusic = speakers.isNotEmpty(),
+                                onRoom = { destination = ROOM + it },
+                                favourites = favourites,
+                                order = overviewOrder,
+                                onOrder = display::setOverviewOrder,
+                                hasHousehold = moduleOn("home") && (household.people.isNotEmpty() || !household.usersAllowed),
+                                    widgetsOff = buildSet {
+                                    if (!moduleOn("weather")) add("weather")
+                                    if (!moduleOn("calendar")) add("calendar")
+                                    if (!moduleOn("fridge")) add("fridge")
+                                },
+                                widget = { key ->
+                                    if (key == "fridge") FridgeCard(
+                                        kitchen,
+                                        onOpen = { destination = FRIDGE },
+                                        onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
+                                    )
+                                    if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
+                                    if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
+                                    if (key == "calendar") CalendarCard(
+                                        hasPermission = calendarAllowed,
+                                        events = events,
+                                        view = calendarView,
+                                        onView = display::setCalendarView,
+                                        onPermissionResult = calendar::permissionChanged,
+                                        onChooseCalendars = { actions.open(Sheet.Calendars) },
+                                        onOpen = { destination = CALENDAR },
+                                    )
+                                },
+                            )
                         }
-                        else -> OverviewScreen(
-                            rooms = rooms,
-                            moods = moods,
-                            player = DashboardLayout.featuredPlayer(players, chosen = null, last = lastPlayer),
-                            zones = snapshot.zones,
-                            connection = connection,
-                            actions = actions,
-                            hasMusic = speakers.isNotEmpty(),
-                            onRoom = { destination = ROOM + it },
-                            favourites = favourites,
-                            order = overviewOrder,
-                            onOrder = display::setOverviewOrder,
-                            hasHousehold = household.people.isNotEmpty() || !household.usersAllowed,
-                            widget = { key ->
-                                if (key == "fridge") FridgeCard(
-                                    kitchen,
-                                    onOpen = { destination = FRIDGE },
-                                    onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
-                                )
-                                if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
-                                if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
-                                if (key == "calendar") CalendarCard(
-                                    hasPermission = hasCalendar,
-                                    events = events,
-                                    view = calendarView,
-                                    onView = display::setCalendarView,
-                                    onPermissionResult = calendar::permissionChanged,
-                                    onChooseCalendars = { actions.open(Sheet.Calendars) },
-                                    onOpen = { destination = CALENDAR },
-                                )
-                            },
-                        )
                     }
                 }
             }
-            UpdateBanner(update, onInstall = { updater.install(screenContext) }, modifier = Modifier.align(Alignment.TopEnd))
+            UpdateBanner(
+                update,
+                onTap = {
+                    showUpdateSheet = true
+                    if (update is AppUpdater.State.Available || update is AppUpdater.State.Failed) updater.install(screenContext)
+                },
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
             AssistantLayer(
                 assistant,
                 assistantSettings,
@@ -519,6 +569,23 @@ fun DashboardScreen(
     val onCalendars: () -> Unit = { showSettings = false; backToSettings = true; actions.open(Sheet.Calendars) }
     val onCheckUpdate: () -> Unit = { scope.launch { updater.check() } }
     val onInstallUpdate: () -> Unit = { updater.install(screenContext) }
+    if (showUpdateSheet && update !is AppUpdater.State.UpToDate) {
+        UpdateSheet(updater, update, onInstall = onInstallUpdate, onHide = { showUpdateSheet = false })
+    }
+    // Once after an update, what it brought; not over settings or the update sheet.
+    val whatsNew by updater.whatsNew.collectAsStateWithLifecycle()
+    if (whatsNew.isNotEmpty() && !showSettings && !showUpdateSheet) {
+        WhatsNewSheet(
+            version = updater.currentVersion,
+            changes = whatsNew,
+            onAllFeatures = {
+                updater.dismissWhatsNew()
+                settingsSection = "app"
+                showSettings = true
+            },
+            onDismiss = updater::dismissWhatsNew,
+        )
+    }
     val onForgetHomey: () -> Unit = { showSettings = false; onForget() }
     if (wideSettings) {
         // One page for both: the assistant's settings open on it too, on the page asked for.
@@ -549,7 +616,8 @@ fun DashboardScreen(
                             HomeySettings(info, onChooseDevices, onChooseRooms, onWeather, onCalendars)
                             ForgetButton(onForgetHomey)
                         }
-                        else -> AppSettings(updater.currentVersion, update, onCheckUpdate, onInstallUpdate)
+                        "modules" -> ModulesSettings(modules, snapshot.devices, homeyCalendarError)
+                        else -> AppSettings(updater, update, onCheckUpdate, onInstallUpdate, modules, snapshot.devices)
                     }
                 },
                 services = assistantServices,
@@ -593,7 +661,7 @@ fun DashboardScreen(
                 onKiosk = display::setKiosk,
                 onCalendars = onCalendars,
                 onAssistant = { showSettings = false; backToSettings = true; assistantPage = "main"; showAssistantSettings = true },
-                version = updater.currentVersion,
+                updater = updater,
                 update = update,
                 onCheckUpdate = onCheckUpdate,
                 onInstallUpdate = onInstallUpdate,
@@ -750,6 +818,8 @@ private fun Sidebar(
     hasMoods: Boolean,
     hasMedia: Boolean,
     hasCalendar: Boolean,
+    hasRecipes: Boolean,
+    hasFridge: Boolean,
     destination: String,
     onNavigate: (String) -> Unit,
     onSettings: () -> Unit,
@@ -801,8 +871,8 @@ private fun Sidebar(
         if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS, compact = compact) { onNavigate(MOODS) }
         if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA, compact = compact) { onNavigate(MEDIA) }
         if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
-        NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
-        NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
+        if (hasRecipes) NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
+        if (hasFridge) NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {
@@ -884,29 +954,40 @@ private fun NavItem(
     }
 }
 
-/** A small pill offering a newer build; it shows download progress once tapped. */
+/** A small pill offering a newer build; while it downloads it carries a small bar, and a tap opens the update sheet. */
 @Composable
-private fun UpdateBanner(state: AppUpdater.State, onInstall: () -> Unit, modifier: Modifier = Modifier) {
+private fun UpdateBanner(state: AppUpdater.State, onTap: () -> Unit, modifier: Modifier = Modifier) {
     val g = GlassTheme.colors
     val text = when (state) {
         AppUpdater.State.UpToDate -> return
         is AppUpdater.State.Available -> "New version ready · Install"
-        is AppUpdater.State.Downloading -> "Downloading update… ${(state.progress * 100).toInt()}%"
+        is AppUpdater.State.Downloading -> "Downloading update · ${(state.progress * 100).toInt()}%"
         is AppUpdater.State.ReadyToInstall -> "Opening the installer…"
         is AppUpdater.State.Failed -> "Update failed · Try again"
     }
-    Row(
+    Column(
         modifier
             .padding(4.dp)
-            .pressable(onInstall.takeIf { state is AppUpdater.State.Available || state is AppUpdater.State.Failed })
-            .background(g.wallBase, PillShape)
-            .glass(PillShape)
+            .pressable(onTap)
+            .background(g.wallBase, RoundedCornerShape(22.dp))
+            .glass(RoundedCornerShape(22.dp))
             .padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        SymIcon(Sym.check, filled = true, size = 18.dp, tint = if (state is AppUpdater.State.Failed) g.danger else g.ok)
-        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SymIcon(
+                if (state is AppUpdater.State.Downloading) Sym.download else Sym.check,
+                filled = true,
+                size = 18.dp,
+                tint = when (state) {
+                    is AppUpdater.State.Failed -> g.danger
+                    is AppUpdater.State.Downloading -> g.onDeep
+                    else -> g.ok
+                },
+            )
+            Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg)
+        }
+        if (state is AppUpdater.State.Downloading) ProgressBar(state.progress, height = 6.dp, modifier = Modifier.width(220.dp))
     }
 }
 

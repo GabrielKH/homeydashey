@@ -173,10 +173,11 @@ class HomeyStore(
      * Asks Homey for [deviceId] again and shows what it says, so a change that was accepted
      * but didn't happen (a lamp out of reach) stops showing as done. Returns [capabilityId]'s value.
      */
-    suspend fun readBack(deviceId: String, capabilityId: String): JsonElement? = runCatching {
-        val device = client.device(deviceId)
-        apply(HomeyEvent.DeviceChanged(device))
-        device.capabilitiesObj[capabilityId]?.value
+    suspend fun readBack(deviceId: String, capabilityId: String): JsonElement? = readDevice(deviceId)?.capabilitiesObj?.get(capabilityId)?.value
+
+    /** Asks Homey for [deviceId] again and shows what it says; null when Homey can't be asked. */
+    suspend fun readDevice(deviceId: String): Device? = runCatching {
+        client.device(deviceId).also { apply(HomeyEvent.DeviceChanged(it)) }
     }.getOrNull()
 
     suspend fun setMood(mood: Mood) {
@@ -209,6 +210,16 @@ class HomeyStore(
     }
 
     suspend fun flows(): List<HomeyFlow> = client.flows()
+
+    /** The apps installed on Homey, or null when the API key may not list them. */
+    suspend fun apps(): Map<String, HomeyApp>? = try {
+        client.apps()
+    } catch (e: HomeyHttpException) {
+        if (e.code == 401 || e.code == 403) null else throw e
+    }
+
+    suspend fun runAppAction(appId: String, cardId: String, args: JsonObject = JsonObject(emptyMap())): JsonElement =
+        client.runAppAction(appId, cardId, args)
 
     suspend fun users(): JsonElement = client.users()
 

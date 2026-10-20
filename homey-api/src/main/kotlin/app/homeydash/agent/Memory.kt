@@ -1,9 +1,12 @@
 package app.homeydash.agent
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -49,10 +52,39 @@ data class Fact(
     val parts: Map<String, Int> = emptyMap(),
     /** Learned from something only a local AI may see; never recalled for an internet AI. */
     val localOnly: Boolean = false,
+    /** How many times it was handed to the AI, and when last; [count] is how often it was said or done. */
+    val used: Int = 0,
+    val lastUsed: Long = 0,
+    /** Machine-readable payload some facts carry, like the bits of a false wake's [SoundPrint]. */
+    val data: String = "",
+)
+
+/**
+ * One time the memory was looked in, for Settings → Memory → Recently used: what was asked,
+ * by whom, whether a cue word in the question or the AI's own recall tool looked, and the
+ * facts that came back, kept as lines too so a fact forgotten since still reads.
+ */
+@Serializable
+data class Recall(
+    val at: Long,
+    val who: String = Memory.HOUSE,
+    val whoName: String = "",
+    val question: String,
+    val via: RecallVia,
+    val facts: List<String> = emptyList(),
+    val lines: List<String> = emptyList(),
 )
 
 @Serializable
-data class MemoryData(val version: Int = 1, val facts: List<Fact> = emptyList())
+enum class RecallVia {
+    Cue,
+    Tool,
+    /** The question named something a person told it or wrote about themselves, without a cue word. */
+    Auto,
+}
+
+@Serializable
+data class MemoryData(val version: Int = 1, val facts: List<Fact> = emptyList(), val recalls: List<Recall> = emptyList())
 
 /**
  * The assistant's long memory, kept on the tablet and out of the prompt, after Graphify's idea:
@@ -64,6 +96,7 @@ object Memory {
     const val HOUSE = ""
     const val MAX_FACTS = 400
     const val RECALL_LIMIT = 4
+    const val MAX_RECALLS = 60
 
     /** Words that say the answer needs something from before: habits, favourites, earlier talks. */
     val CUES = Regex(
@@ -133,6 +166,19 @@ object Memory {
         return score.entries.sortedByDescending { it.value }.take(limit).map { byId.getValue(it.key) }
     }
 
+    /**
+     * What someone told it, wrote about themselves or it learned, that [query] names directly
+     * ("Elise", "pizzafredag"): no habits and no neighbours, only facts sharing a real word with
+     * the question, so most questions get nothing and the note stays as short as before.
+     */
+    fun matching(data: MemoryData, query: String, asker: String?, local: Boolean, now: Long, limit: Int = 2): List<Fact> {
+        val q = tokens(query).filter { it.length >= 4 }.toSet()
+        if (q.isEmpty()) return emptyList()
+        return visible(data, asker, local).filter { it.kind != FactKind.Habit }
+            .mapNotNull { f -> overlap(q, tokens("${f.subject} ${f.relation} ${f.obj}").filter { it.length >= 4 }.toSet()).takeIf { it > 0 }?.let { f to it * 2.0 + strength(f, now) } }
+            .sortedByDescending { it.second }.take(limit).map { it.first }
+    }
+
     private val EVERYTHING = setOf("allt", "everything", "all", "alla")
 
     /** One fact as a short line for the AI: "Gabriel plays P1 on Kök (12 times, mostly mornings)". */
@@ -161,7 +207,12 @@ object Memory {
     fun merge(data: MemoryData, fact: Fact, now: Long): MemoryData {
         // A person may like many things, and do many things often: those keep one fact per object.
         fun many(f: Fact) = f.kind == FactKind.Habit || f.kind == FactKind.About
-        fun key(f: Fact) = listOf(f.who, node(f.subject), node(f.relation)) + if (many(f)) listOf(node(f.obj)) else emptyList()
+        fun key(f: Fact) = listOf(f.who, node(f.subject), node(f.relation)) + when {
+            // Each false wake is its own sound; a pause habit is one fact whose number moves.
+            f.relation == FALSE_WAKE -> listOf(f.data)
+            many(f) && f.relation != PAUSES -> listOf(node(f.obj))
+            else -> emptyList()
+        }
         val k = key(fact)
         // Told and learned facts are one kind of fact; habits and what people wrote are kept apart.
         fun group(f: Fact) = if (f.kind == FactKind.Said) FactKind.Learned else f.kind
@@ -171,8 +222,13 @@ object Memory {
             facts += fact.copy(first = fact.first.takeIf { it > 0 } ?: now, last = now)
         } else {
             val old = facts[i]
+            // A pause habit keeps a running mean of the pauses measured, in its data.
+            val data = if (fact.relation == PAUSES && old.data.toLongOrNull() != null && fact.data.toLongOrNull() != null) {
+                ((old.data.toLong() * 3 + fact.data.toLong()) / 4).toString()
+            } else fact.data.ifBlank { old.data }
             facts[i] = old.copy(
-                obj = fact.obj,
+                obj = if (fact.relation == PAUSES) "%.1f s between thoughts".format(data.toLong() / 1000.0) else fact.obj,
+                data = data,
                 count = old.count + 1,
                 last = now,
                 parts = (old.parts.keys + fact.parts.keys).associateWith { (old.parts[it] ?: 0) + (fact.parts[it] ?: 0) },
@@ -185,6 +241,24 @@ object Memory {
         val (about, rest) = facts.partition { it.kind == FactKind.About }
         val kept = if (facts.size <= MAX_FACTS) facts else about + rest.sortedByDescending { strength(it, now) }.take((MAX_FACTS - about.size).coerceAtLeast(0))
         return data.copy(facts = kept)
+    }
+
+    /** Counts [found] as used for [question], newest recall first, keeping the last [MAX_RECALLS]. */
+    fun used(data: MemoryData, question: String, asker: Asker?, via: RecallVia, found: List<Fact>, now: Long): MemoryData {
+        val ids = found.map { it.id }.toSet()
+        val recall = Recall(
+            at = now,
+            who = asker?.id ?: HOUSE,
+            whoName = asker?.name.orEmpty(),
+            question = question.trim().take(200),
+            via = via,
+            facts = found.map { it.id },
+            lines = found.map { line(it) },
+        )
+        return data.copy(
+            facts = data.facts.map { if (it.id in ids) it.copy(used = it.used + 1, lastUsed = now) else it },
+            recalls = (listOf(recall) + data.recalls).take(MAX_RECALLS),
+        )
     }
 
     /** Removes the facts [what] names (by words); how many went. */
@@ -262,6 +336,35 @@ object Memory {
         kind = FactKind.Said,
     )
 
+    /**
+     * How the house gets one part of the dashboard, from the modules page ("The house's
+     * calendar comes from the IcalCalendar Homey app"), as one fact a new choice replaces, so
+     * the assistant knows where its calendar, music or phones come from and what is turned off.
+     */
+    fun moduleChoice(module: String, on: Boolean, source: String): Fact = Fact(
+        who = HOUSE,
+        subject = "The house's ${module.lowercase()}",
+        relation = "comes from",
+        obj = if (on) source else "nowhere, it is turned off on the dashboard",
+        kind = FactKind.Said,
+    )
+
+    /**
+     * The dashboard's newest update and what it brought, as one fact the next update replaces,
+     * so "what's new in the app?" gets a real answer.
+     */
+    fun appUpdated(version: String, day: String, changes: List<String>): Fact = Fact(
+        who = HOUSE,
+        subject = "The dashboard app",
+        relation = "was last updated",
+        obj = buildString {
+            append("to version $version")
+            if (day.isNotEmpty()) append(" on $day")
+            if (changes.isNotEmpty()) append(", bringing: ").append(changes.take(6).joinToString("; "))
+        },
+        kind = FactKind.Said,
+    )
+
     /** That [asker] woke [character] by its name, counted like a habit with the part of the day. */
     fun woke(asker: Asker, character: Persona, at: ZonedDateTime): Fact = Fact(
         who = asker.id,
@@ -272,6 +375,96 @@ object Memory {
         kind = FactKind.Habit,
         parts = mapOf(partOfDay(at) to 1),
     )
+
+    /** Subject of the house facts the listening writes, so they can be found again. */
+    const val LISTENING = "Listening"
+    private const val FALSE_WAKE = "woke falsely to"
+    private const val PAUSES = "pauses about"
+    private const val MAX_FALSE_WAKES = 60
+
+    /**
+     * A wake that turned out to be nothing (no one said anything after it, no known voice): the
+     * sound's fingerprint, kept for the house so the same advert or jingle never wakes it twice.
+     * [where] is the room, when known.
+     */
+    fun falseWake(print: SoundPrint, where: String?, at: ZonedDateTime): Fact? {
+        if (print.size < SoundPrint.MIN_FRAMES) return null
+        return Fact(
+            who = HOUSE,
+            subject = LISTENING,
+            relation = FALSE_WAKE,
+            obj = "a sound" + (if (where.isNullOrBlank()) "" else " in $where") + " at %02d:%02d".format(at.hour, at.minute),
+            kind = FactKind.Learned,
+            data = print.encode(),
+        )
+    }
+
+    /** The fingerprints of the false wakes remembered so far. */
+    fun falseWakes(facts: List<Fact>): List<SoundPrint> =
+        facts.filter { it.subject == LISTENING && it.relation == FALSE_WAKE }.mapNotNull { SoundPrint.decode(it.data) }
+
+    /** Whether [print] is a remembered false wake already (within [SoundPrint.CLOSE]), so it isn't kept twice. */
+    fun knownFalseWake(facts: List<Fact>, print: SoundPrint): Boolean =
+        falseWakes(facts).any { print.bitErrorRate(it) < SoundPrint.CLOSE }
+
+    /** The oldest false wakes go when more than [MAX_FALSE_WAKES] are kept. */
+    fun trimFalseWakes(data: MemoryData): MemoryData {
+        val mine = data.facts.filter { it.subject == LISTENING && it.relation == FALSE_WAKE }
+        if (mine.size <= MAX_FALSE_WAKES) return data
+        val drop = mine.sortedBy { it.last }.take(mine.size - MAX_FALSE_WAKES).map { it.id }.toSet()
+        return data.copy(facts = data.facts.filterNot { it.id in drop })
+    }
+
+    /**
+     * How long [asker] usually pauses between thoughts: the median within-turn pause of a turn
+     * with a few pauses, as a habit that is averaged into the ones before (a running mean of
+     * the last ones, kept in [Fact.data]).
+     */
+    fun pauseHabit(medianPauseMs: Long, asker: Asker, at: ZonedDateTime): Fact = Fact(
+        who = asker.id,
+        whoName = asker.name,
+        subject = asker.name,
+        relation = PAUSES,
+        obj = "%.1f s between thoughts".format(medianPauseMs / 1000.0),
+        kind = FactKind.Habit,
+        parts = mapOf(partOfDay(at) to 1),
+        data = medianPauseMs.toString(),
+    )
+
+    /**
+     * The pause habit of [who] (person id) against the house's usual: 1.0 when unknown or like
+     * everyone else, bigger for someone who thinks longer between words, within 0.6–1.6.
+     */
+    fun pauseHabitOf(facts: List<Fact>, who: String?): Double {
+        val all = facts.filter { it.relation == PAUSES }.mapNotNull { f -> f.data.toLongOrNull()?.let { f.who to it } }
+        if (all.isEmpty()) return 1.0
+        val house = all.map { it.second }.sorted().let { it[it.size / 2] }.toDouble()
+        val mine = all.filter { it.first == who }.map { it.second }
+        if (mine.isEmpty() || house <= 0) return 1.0
+        return (mine.average() / house).coerceIn(0.6, 1.6)
+    }
+
+    /**
+     * How usual a wake at this hour is for the house, against an even spread: 1.0 with too few
+     * wakes counted, up to 3 at the busiest hours, down to 0.2 at hours it was never called.
+     */
+    fun wakeHourShare(facts: List<Fact>, hour: Int): Double {
+        val wakes = facts.filter { it.relation == "wakes" }
+        val total = wakes.sumOf { it.count }
+        if (total < 20) return 1.0
+        val part = partOfDayAt(hour)
+        val here = wakes.sumOf { it.parts[part] ?: 0 }
+        val hoursInPart = when (part) { "mornings" -> 5; "daytime" -> 7; "evenings" -> 5; else -> 7 }
+        val share = (here.toDouble() / total) / (hoursInPart / 24.0)
+        return share.coerceIn(0.2, 3.0)
+    }
+
+    private fun partOfDayAt(hour: Int): String = when (hour) {
+        in 5..9 -> "mornings"
+        in 10..16 -> "daytime"
+        in 17..21 -> "evenings"
+        else -> "nights"
+    }
 
     /**
      * A finished conversation as plain lines for [digestPrompt]: what the user said (after
@@ -353,9 +546,24 @@ class MemoryBook(private val dir: File, private val clock: () -> Long = System::
         }
     }
 
+    /** Saves on its own, so a question being put together needn't wait for the disk. */
+    private val saver = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** That [found] was handed to the AI for [question]; counted and logged in the background. */
+    fun used(question: String, asker: Asker?, via: RecallVia, found: List<Fact>) {
+        val now = clock()
+        saver.launch { runCatching { change { d -> Memory.used(d, question, asker, via, found, now) } } }
+    }
+
+    /** Puts [obj] in place of what fact [id] says, from Settings → Memory. */
+    suspend fun edit(id: String, obj: String) {
+        val text = obj.trim().takeIf { it.isNotEmpty() } ?: return
+        change { d -> d.copy(facts = d.facts.map { if (it.id == id) it.copy(obj = text) else it }) }
+    }
+
     suspend fun learn(facts: List<Fact>) {
         if (facts.isEmpty()) return
-        change { d -> facts.fold(d) { acc, f -> Memory.merge(acc, f, clock()) } }
+        change { d -> Memory.trimFalseWakes(facts.fold(d) { acc, f -> Memory.merge(acc, f, clock()) }) }
     }
 
     suspend fun delete(id: String) = change { d -> d.copy(facts = d.facts.filterNot { it.id == id }) }
@@ -369,7 +577,9 @@ class MemoryBook(private val dir: File, private val clock: () -> Long = System::
     suspend fun clear() = change { MemoryData() }
 
     /** Everything that is only [personId]'s, when they are removed from People. */
-    suspend fun forgetPerson(personId: String) = change { d -> d.copy(facts = d.facts.filterNot { it.who == personId }) }
+    suspend fun forgetPerson(personId: String) = change { d ->
+        d.copy(facts = d.facts.filterNot { it.who == personId }, recalls = d.recalls.filterNot { it.who == personId })
+    }
 
     private suspend fun change(edit: (MemoryData) -> MemoryData) = lock.withLock {
         val next = edit(_data.value)
@@ -408,11 +618,19 @@ class MemoryTools(private val book: MemoryBook, private val clock: () -> Long = 
         },
     )
 
+    /** How long [asker] usually sets the timer called [label]; see [Timers.usualSeconds]. */
+    fun usualTimerSeconds(label: String, asker: String?): Int? = Timers.usualSeconds(book.data.value.facts, label, asker)
+
+    suspend fun learnTimer(label: String, seconds: Int, asker: Asker?, at: ZonedDateTime) {
+        runCatching { book.learn(listOf(Timers.habit(label, seconds, asker, at))) }
+    }
+
     suspend fun run(call: ToolCall, asker: Asker?, local: Boolean): ToolResult? {
         fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
         return when (call.name) {
             "recall" -> {
                 val found = Memory.recall(book.data.value, str("about"), asker?.id, local, clock())
+                book.used(str("about"), asker, RecallVia.Tool, found)
                 ToolResult(
                     if (found.isEmpty()) "No memory of that." else found.joinToString("\n") { Memory.line(it) },
                     localOnly = found.any { it.localOnly },

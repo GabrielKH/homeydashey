@@ -890,6 +890,12 @@ private fun Preview(services: AssistantServices, settings: AgentSettings, previe
     var local by remember { mutableStateOf(false) }
     Segmented(listOf(false, true), local, { if (it) "Sent to the local AI" else "Sent to the internet AI" }) { local = it }
     val (view, tools) = remember(local, settings) { preview(local) }
+    var raw by remember { mutableStateOf(false) }
+    Segmented(listOf(false, true), raw, { if (it) "Everything, as it reads it" else "Know-how by topic" }) { raw = it }
+    if (!raw) {
+        KnowHowTopics(services, settings, view, tools)
+        return
+    }
     val prompt = remember(view) { services.agent.systemPrompt(settings, view, AskContext()) }
     Text(
         "This is everything the AI gets before your question, plus the answers of the tools it uses: " +
@@ -961,7 +967,7 @@ internal fun Field(label: String, value: String, secret: Boolean = false, keyboa
 }
 
 @Composable
-private fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Boolean) -> Unit) {
     val g = GlassTheme.colors
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
@@ -1052,6 +1058,16 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
         }
         Text(
             "Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, ${batteryVoice(services, settings)} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
+    }
+    SettingsBox("Kitchen timers") {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Ask for a name", settings.askTimerName) { update { it.copy(askTimerName = !it.askTimerName) } }
+        }
+        Text(
+            "After a timer is started without a name, the assistant asks if you want to give it one. Named timers are remembered, so \"sätt en pastatimer\" uses your usual length.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )

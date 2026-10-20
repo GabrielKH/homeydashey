@@ -61,6 +61,7 @@ import app.homeydash.homey.Mood
 import app.homeydash.homey.RoomSummary
 import app.homeydash.homey.Zone
 import app.homeydash.homey.ZoneSection
+import app.homeydash.ui.assistant.LocalTimerChip
 import app.homeydash.ui.components.Bubble
 import app.homeydash.ui.components.GlassChip
 import app.homeydash.ui.components.HOME_BACKGROUND
@@ -105,6 +106,8 @@ fun OverviewScreen(
     widget: @Composable (String) -> Unit,
     /** Whether Homey has users to show in a who's home card. */
     hasHousehold: Boolean = false,
+    /** Cards whose module is turned off under Modules: weather, calendar, fridge. */
+    widgetsOff: Set<String> = emptySet(),
 ) {
     val g = GlassTheme.colors
     val lightsOn = remember(rooms) { rooms.sumOf { it.lightsOn } }
@@ -117,10 +120,10 @@ fun OverviewScreen(
     val roomsById = remember(rooms) { rooms.associateBy { ROOM_KEY + it.zone.id } }
     val favouritesById = remember(favourites) { favourites.associateBy { FAV + it.id } }
     val hasPlayer = player != null
-    val laneCards = remember(hasPlayer, hasHousehold, favouritesById, roomsById) { buildList {
-        add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
-        add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
-        add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
+    val laneCards = remember(hasPlayer, hasHousehold, favouritesById, roomsById, widgetsOff) { buildList {
+        if ("weather" !in widgetsOff) add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
+        if ("calendar" !in widgetsOff) add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
+        if ("fridge" !in widgetsOff) add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
         if (hasHousehold) add(LaneCard("home", LaneCard.Kind.Info, wide = true, height = 200))
         if (hasPlayer) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
         favouritesById.forEach { (key, device) ->
@@ -141,7 +144,8 @@ fun OverviewScreen(
             OverviewClock(Modifier.weight(1f))
             if (actions.rearrange.editing) {
                 DoneChip(actions, Modifier.padding(bottom = 4.dp), onAutoArrange = autoArrange)
-            } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+            } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+                LocalTimerChip.current()
                 if (connection != ConnectionState.Connected) {
                     GlassChip(Sym.wifiOff, "Reconnecting", g.danger)
                 }
@@ -517,7 +521,10 @@ internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () ->
             Text(eyebrow, style = MaterialTheme.typography.bodyLarge, color = g.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(title, style = MaterialTheme.typography.headlineLarge, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) { chips() }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+            LocalTimerChip.current()
+            chips()
+        }
     }
 }
 

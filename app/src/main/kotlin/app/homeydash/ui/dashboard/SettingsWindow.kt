@@ -60,6 +60,7 @@ private val GROUPS = listOf(
         Category("appearance", Sym.palette, "Appearance"),
         Category("screen", Sym.brightness, "Screen"),
         Category("homey", Sym.home, "Homey and rooms"),
+        Category("modules", Sym.apps, "Modules"),
     ),
     "Assistant" to listOf(
         Category("main", Sym.face, "Assistant"),
@@ -78,7 +79,7 @@ private val GROUPS = listOf(
 )
 
 /** The dashboard's own pages; every other section is an assistant page. */
-val DASHBOARD_SECTIONS = setOf("appearance", "screen", "homey", "app")
+val DASHBOARD_SECTIONS = setOf("appearance", "screen", "homey", "modules", "app")
 
 /** How big the wide settings page draws everything compared with the dashboard. */
 private const val WindowScale = 0.8f
