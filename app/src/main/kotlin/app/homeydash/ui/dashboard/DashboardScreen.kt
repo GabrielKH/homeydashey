@@ -382,6 +382,7 @@ fun DashboardScreen(
     val pageOff = (destination == RECIPES && !moduleOn("recipes")) || (destination == FRIDGE && !moduleOn("fridge")) || (destination == CALENDAR && !moduleOn("calendar"))
     LaunchedEffect(pageOff) { if (pageOff) destination = OVERVIEW }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showUpdateSheet by rememberSaveable { mutableStateOf(false) }
     var showDevices by rememberSaveable { mutableStateOf(false) }
 
     // The voice assistant: an orb in the corner, and Settings → Assistant.
@@ -519,7 +520,14 @@ fun DashboardScreen(
                     }
                 }
             }
-            UpdateBanner(update, onInstall = { updater.install(screenContext) }, modifier = Modifier.align(Alignment.TopEnd))
+            UpdateBanner(
+                update,
+                onTap = {
+                    showUpdateSheet = true
+                    if (update is AppUpdater.State.Available || update is AppUpdater.State.Failed) updater.install(screenContext)
+                },
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
             AssistantLayer(
                 assistant,
                 assistantSettings,
@@ -541,6 +549,23 @@ fun DashboardScreen(
     val onCalendars: () -> Unit = { showSettings = false; backToSettings = true; actions.open(Sheet.Calendars) }
     val onCheckUpdate: () -> Unit = { scope.launch { updater.check() } }
     val onInstallUpdate: () -> Unit = { updater.install(screenContext) }
+    if (showUpdateSheet && update !is AppUpdater.State.UpToDate) {
+        UpdateSheet(updater, update, onInstall = onInstallUpdate, onHide = { showUpdateSheet = false })
+    }
+    // Once after an update, what it brought; not over settings or the update sheet.
+    val whatsNew by updater.whatsNew.collectAsStateWithLifecycle()
+    if (whatsNew.isNotEmpty() && !showSettings && !showUpdateSheet) {
+        WhatsNewSheet(
+            version = updater.currentVersion,
+            changes = whatsNew,
+            onAllFeatures = {
+                updater.dismissWhatsNew()
+                settingsSection = "app"
+                showSettings = true
+            },
+            onDismiss = updater::dismissWhatsNew,
+        )
+    }
     val onForgetHomey: () -> Unit = { showSettings = false; onForget() }
     if (wideSettings) {
         // One page for both: the assistant's settings open on it too, on the page asked for.
@@ -572,7 +597,7 @@ fun DashboardScreen(
                             ForgetButton(onForgetHomey)
                         }
                         "modules" -> ModulesSettings(modules, snapshot.devices, homeyCalendarError)
-                        else -> AppSettings(updater.currentVersion, update, onCheckUpdate, onInstallUpdate)
+                        else -> AppSettings(updater, update, onCheckUpdate, onInstallUpdate, modules, snapshot.devices)
                     }
                 },
                 services = assistantServices,
@@ -616,7 +641,7 @@ fun DashboardScreen(
                 onKiosk = display::setKiosk,
                 onCalendars = onCalendars,
                 onAssistant = { showSettings = false; backToSettings = true; assistantPage = "main"; showAssistantSettings = true },
-                version = updater.currentVersion,
+                updater = updater,
                 update = update,
                 onCheckUpdate = onCheckUpdate,
                 onInstallUpdate = onInstallUpdate,
@@ -909,29 +934,40 @@ private fun NavItem(
     }
 }
 
-/** A small pill offering a newer build; it shows download progress once tapped. */
+/** A small pill offering a newer build; while it downloads it carries a small bar, and a tap opens the update sheet. */
 @Composable
-private fun UpdateBanner(state: AppUpdater.State, onInstall: () -> Unit, modifier: Modifier = Modifier) {
+private fun UpdateBanner(state: AppUpdater.State, onTap: () -> Unit, modifier: Modifier = Modifier) {
     val g = GlassTheme.colors
     val text = when (state) {
         AppUpdater.State.UpToDate -> return
         is AppUpdater.State.Available -> "New version ready · Install"
-        is AppUpdater.State.Downloading -> "Downloading update… ${(state.progress * 100).toInt()}%"
+        is AppUpdater.State.Downloading -> "Downloading update · ${(state.progress * 100).toInt()}%"
         is AppUpdater.State.ReadyToInstall -> "Opening the installer…"
         is AppUpdater.State.Failed -> "Update failed · Try again"
     }
-    Row(
+    Column(
         modifier
             .padding(4.dp)
-            .pressable(onInstall.takeIf { state is AppUpdater.State.Available || state is AppUpdater.State.Failed })
-            .background(g.wallBase, PillShape)
-            .glass(PillShape)
+            .pressable(onTap)
+            .background(g.wallBase, RoundedCornerShape(22.dp))
+            .glass(RoundedCornerShape(22.dp))
             .padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        SymIcon(Sym.check, filled = true, size = 18.dp, tint = if (state is AppUpdater.State.Failed) g.danger else g.ok)
-        Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SymIcon(
+                if (state is AppUpdater.State.Downloading) Sym.download else Sym.check,
+                filled = true,
+                size = 18.dp,
+                tint = when (state) {
+                    is AppUpdater.State.Failed -> g.danger
+                    is AppUpdater.State.Downloading -> g.onDeep
+                    else -> g.ok
+                },
+            )
+            Text(text, style = MaterialTheme.typography.labelLarge, color = g.fg)
+        }
+        if (state is AppUpdater.State.Downloading) ProgressBar(state.progress, height = 6.dp, modifier = Modifier.width(220.dp))
     }
 }
 

@@ -77,7 +77,7 @@ fun SettingsDialog(
     onWakeOnProximity: (Boolean) -> Unit,
     kiosk: Boolean,
     onKiosk: (Boolean) -> Unit,
-    version: String,
+    updater: AppUpdater,
     update: AppUpdater.State,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
@@ -116,7 +116,7 @@ fun SettingsDialog(
                 Text("Voice assistant and security", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
                 SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
             }
-            AppSettings(version, update, onCheckUpdate, onInstallUpdate)
+            AppSettings(updater, update, onCheckUpdate, onInstallUpdate)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ForgetButton(onForget)
                 Row(
@@ -325,38 +325,6 @@ internal fun HomeySettings(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             NavPill(Sym.mapPin, "Weather location", onWeather, Modifier.weight(1f))
             NavPill(Sym.calendar, "Calendars", onCalendars, Modifier.weight(1f))
-        }
-    }
-}
-
-/** The app's version, with a way to check for and install a newer one. */
-@Composable
-internal fun AppSettings(version: String, update: AppUpdater.State, onCheckUpdate: () -> Unit, onInstallUpdate: () -> Unit) {
-    val g = GlassTheme.colors
-    SettingsBox("App") {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                when (update) {
-                    is AppUpdater.State.Available -> "Version $version · a newer one is ready"
-                    is AppUpdater.State.Downloading -> "Downloading the update…"
-                    is AppUpdater.State.ReadyToInstall -> "Opening the installer…"
-                    is AppUpdater.State.Failed -> "Update failed: ${update.message}"
-                    AppUpdater.State.UpToDate -> "Version $version"
-                },
-                style = MaterialTheme.typography.bodyLarge,
-                color = g.fg,
-                modifier = Modifier.weight(1f),
-            )
-            val canInstall = update is AppUpdater.State.Available || update is AppUpdater.State.Failed
-            Text(
-                if (canInstall) "Install" else "Check for updates",
-                style = MaterialTheme.typography.labelLarge,
-                color = g.fg,
-                modifier = Modifier
-                    .pressable(if (canInstall) onInstallUpdate else onCheckUpdate)
-                    .glass(PillShape)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            )
         }
     }
 }

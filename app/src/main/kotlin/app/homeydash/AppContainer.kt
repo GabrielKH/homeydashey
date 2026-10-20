@@ -59,7 +59,9 @@ class AppContainer(context: Context) {
     private val connector = HomeyConnector(http)
 
     val discovery = HomeyDiscovery(context, http)
-    val updater = AppUpdater(context, http, scope)
+    val updater = AppUpdater(context, http, scope, settings) { version, day, changes ->
+        rememberForHouse(app.homeydash.agent.Memory.appUpdated(version, day, changes))
+    }
     val calendar = CalendarRepository(context, settings, scope)
 
     val display = DisplaySettings(settings, BackgroundPhotos(context), scope)
@@ -111,6 +113,7 @@ class AppContainer(context: Context) {
     }
 
     init {
+        scope.launch { updater.findWhatsNew() }
         scope.launch {
             while (true) {
                 updater.check()
