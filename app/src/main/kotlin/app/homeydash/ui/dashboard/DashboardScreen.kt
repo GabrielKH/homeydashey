@@ -357,7 +357,6 @@ fun DashboardScreen(
     val visibleById = remember(snapshot.devices, hidden) { DashboardLayout.visible(snapshot.devices, hidden) }
     val visibleDevices = remember(visibleById) { visibleById.values }
     val speakers = remember(visibleDevices, actions.deviceCards) { musicSpeakers(visibleDevices, actions) }
-    val groupable = remember(visibleDevices, actions.deviceCards) { visibleDevices.filter { actions.grouping(it.id) != null }.sortedBy { it.name.lowercase() } }
 
     val favourites = remember(overviewDevices, visibleById) { overviewDevices.mapNotNull { visibleById[it] } }
 
@@ -378,6 +377,10 @@ fun DashboardScreen(
     var showAssistantSettings by rememberSaveable { mutableStateOf(false) }
     var showFaces by rememberSaveable { mutableStateOf(false) }
     var assistantPage by rememberSaveable { mutableStateOf("main") }
+    // On a wide screen, settings are one page with a side menu; this is the page it shows.
+    var settingsSection by rememberSaveable { mutableStateOf("appearance") }
+    var settingsMenuCompact by rememberSaveable { mutableStateOf(false) }
+    val wideSettings = app.homeydash.ui.components.screenSizeDp().width >= WIDE_SETTINGS
     // Something opened from Settings goes back to Settings when it closes.
     var backToSettings by rememberSaveable { mutableStateOf(false) }
     val assistant = remember(store) { Assistant(assistantServices, store, scope) }
@@ -509,58 +512,113 @@ fun DashboardScreen(
     // While talking to the assistant, its face fills the whole screen.
     if (assistantSettings.enabled) VoiceOverlay(assistant, assistantSettings)
 
-    if (showSettings) {
-        SettingsDialog(
-            info = info,
-            themeMode = themeMode,
-            onThemeMode = display::setThemeMode,
-            accent = accent,
-            onAccent = display::setAccent,
-            accentOpacity = accentOpacity,
-            onAccentOpacity = display::setAccentOpacity,
-            onHomeBackground = { showSettings = false; backToSettings = true; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) },
-            onChooseDevices = { showSettings = false; backToSettings = true; showDevices = true },
-            onChooseRooms = { showSettings = false; backToSettings = true; actions.open(Sheet.Rooms) },
-            onWeather = { showSettings = false; backToSettings = true; actions.open(Sheet.Weather) },
-            uiScale = uiScale,
-            onUiScale = display::setUiScale,
-            palette = Palette.of(palette),
-            onPalette = { display.setPalette(it.key) },
-            flat = flat,
-            onFlat = display::setFlat,
-            dimAfter = dimAfter,
-            onDimAfter = display::setDimAfter,
-            wakeOnProximity = wakeOnProximity,
-            onWakeOnProximity = display::setWakeOnProximity,
-            kiosk = kiosk,
-            onKiosk = display::setKiosk,
-            onCalendars = { showSettings = false; backToSettings = true; actions.open(Sheet.Calendars) },
-            onAssistant = { showSettings = false; backToSettings = true; assistantPage = "main"; showAssistantSettings = true },
-            version = updater.currentVersion,
-            update = update,
-            onCheckUpdate = { scope.launch { updater.check() } },
-            onInstallUpdate = { updater.install(screenContext) },
-            onForget = { showSettings = false; onForget() },
-            onDismiss = { showSettings = false; backToSettings = false },
-        )
-    }
-    if (showAssistantSettings) {
-        AssistantSettingsDialog(
-            services = assistantServices,
-            settings = assistantSettings,
-            zones = snapshot.zones,
-            devices = snapshot.devices,
-            hidden = hidden,
-            preview = assistant::preview,
-            initialPage = assistantPage,
-            onPage = { assistantPage = it },
-            onBack = { showAssistantSettings = false },
-            onFaces = { showAssistantSettings = false; showFaces = true },
-            onDismiss = { showAssistantSettings = false; backToSettings = false },
-            moods = snapshot.moods,
-            flows = { actions.flows().map { it.name } },
-            onRunRoutine = { showAssistantSettings = false; backToSettings = false; assistant.runRoutine(it) },
-        )
+    val onHomeBackground: () -> Unit = { showSettings = false; backToSettings = true; actions.open(Sheet.Background(HOME_BACKGROUND, homeName)) }
+    val onChooseDevices: () -> Unit = { showSettings = false; backToSettings = true; showDevices = true }
+    val onChooseRooms: () -> Unit = { showSettings = false; backToSettings = true; actions.open(Sheet.Rooms) }
+    val onWeather: () -> Unit = { showSettings = false; backToSettings = true; actions.open(Sheet.Weather) }
+    val onCalendars: () -> Unit = { showSettings = false; backToSettings = true; actions.open(Sheet.Calendars) }
+    val onCheckUpdate: () -> Unit = { scope.launch { updater.check() } }
+    val onInstallUpdate: () -> Unit = { updater.install(screenContext) }
+    val onForgetHomey: () -> Unit = { showSettings = false; onForget() }
+    if (wideSettings) {
+        // One page for both: the assistant's settings open on it too, on the page asked for.
+        if (showAssistantSettings) {
+            LaunchedEffect(Unit) {
+                settingsSection = assistantPage
+                showAssistantSettings = false
+                showSettings = true
+            }
+        }
+        if (showSettings) {
+            SettingsWindow(
+                section = settingsSection,
+                onSection = { id ->
+                    settingsSection = id
+                    if (id !in DASHBOARD_SECTIONS) assistantPage = id
+                },
+                compact = settingsMenuCompact,
+                onCompact = { settingsMenuCompact = it },
+                dashboard = { id ->
+                    when (id) {
+                        "appearance" -> AppearanceSettings(
+                            themeMode, display::setThemeMode, Palette.of(palette), { display.setPalette(it.key) }, flat, display::setFlat,
+                            uiScale, display::setUiScale, accent, display::setAccent, accentOpacity, display::setAccentOpacity, onHomeBackground,
+                        )
+                        "screen" -> ScreenSettings(dimAfter, display::setDimAfter, wakeOnProximity, display::setWakeOnProximity, kiosk, display::setKiosk)
+                        "homey" -> {
+                            HomeySettings(info, onChooseDevices, onChooseRooms, onWeather, onCalendars)
+                            ForgetButton(onForgetHomey)
+                        }
+                        else -> AppSettings(updater.currentVersion, update, onCheckUpdate, onInstallUpdate)
+                    }
+                },
+                services = assistantServices,
+                settings = assistantSettings,
+                zones = snapshot.zones,
+                devices = snapshot.devices,
+                hidden = hidden,
+                preview = assistant::preview,
+                onFaces = { showSettings = false; showFaces = true },
+                moods = snapshot.moods,
+                flows = { actions.flows().map { it.name } },
+                onRunRoutine = { showSettings = false; backToSettings = false; assistant.runRoutine(it) },
+                onDismiss = { showSettings = false; backToSettings = false },
+            )
+        }
+    } else {
+        if (showSettings) {
+            SettingsDialog(
+                info = info,
+                themeMode = themeMode,
+                onThemeMode = display::setThemeMode,
+                accent = accent,
+                onAccent = display::setAccent,
+                accentOpacity = accentOpacity,
+                onAccentOpacity = display::setAccentOpacity,
+                onHomeBackground = onHomeBackground,
+                onChooseDevices = onChooseDevices,
+                onChooseRooms = onChooseRooms,
+                onWeather = onWeather,
+                uiScale = uiScale,
+                onUiScale = display::setUiScale,
+                palette = Palette.of(palette),
+                onPalette = { display.setPalette(it.key) },
+                flat = flat,
+                onFlat = display::setFlat,
+                dimAfter = dimAfter,
+                onDimAfter = display::setDimAfter,
+                wakeOnProximity = wakeOnProximity,
+                onWakeOnProximity = display::setWakeOnProximity,
+                kiosk = kiosk,
+                onKiosk = display::setKiosk,
+                onCalendars = onCalendars,
+                onAssistant = { showSettings = false; backToSettings = true; assistantPage = "main"; showAssistantSettings = true },
+                version = updater.currentVersion,
+                update = update,
+                onCheckUpdate = onCheckUpdate,
+                onInstallUpdate = onInstallUpdate,
+                onForget = onForgetHomey,
+                onDismiss = { showSettings = false; backToSettings = false },
+            )
+        }
+        if (showAssistantSettings) {
+            AssistantSettingsDialog(
+                services = assistantServices,
+                settings = assistantSettings,
+                zones = snapshot.zones,
+                devices = snapshot.devices,
+                hidden = hidden,
+                preview = assistant::preview,
+                initialPage = assistantPage,
+                onPage = { assistantPage = it },
+                onBack = { showAssistantSettings = false },
+                onFaces = { showAssistantSettings = false; showFaces = true },
+                onDismiss = { showAssistantSettings = false; backToSettings = false },
+                moods = snapshot.moods,
+                flows = { actions.flows().map { it.name } },
+                onRunRoutine = { showAssistantSettings = false; backToSettings = false; assistant.runRoutine(it) },
+            )
+        }
     }
     if (showFaces) {
         FacesDialog(
@@ -594,7 +652,7 @@ fun DashboardScreen(
             RemoteSheet(
                 device = device,
                 actions = actions,
-                others = snapshot.devices.values.toList(),
+                others = remember(snapshot.devices) { snapshot.devices.values.toList() },
                 chosenApps = remoteApps[device.id],
                 onChooseApps = { display.setRemoteApps(device.id, it) },
                 onDismiss = actions::close,
@@ -602,7 +660,11 @@ fun DashboardScreen(
         } ?: SideEffect { actions.close() }
         is Sheet.Vacuum -> snapshot.devices[sheet.deviceId]?.let { VacuumSheet(it, actions, actions::close) } ?: SideEffect { actions.close() }
         is Sheet.Music -> MusicSheet(sheet.zoneId, sheet.deviceId, speakers, snapshot.zones, actions, actions::close)
-        is Sheet.Group -> snapshot.devices[sheet.deviceId]?.let { GroupSheet(it, groupable, snapshot.zones, actions, actions::close) } ?: SideEffect { actions.close() }
+        is Sheet.Group -> snapshot.devices[sheet.deviceId]?.let { device ->
+            // Worked out only while the sheet is open, not on every Homey update.
+            val groupable = remember(visibleDevices, actions.deviceCards) { visibleDevices.filter { actions.grouping(it.id) != null }.sortedBy { it.name.lowercase() } }
+            GroupSheet(device, groupable, snapshot.zones, actions, actions::close)
+        } ?: SideEffect { actions.close() }
         Sheet.Rooms -> RoomsDialog(
             zones = snapshot.zones,
             hiddenRooms = hiddenRooms,

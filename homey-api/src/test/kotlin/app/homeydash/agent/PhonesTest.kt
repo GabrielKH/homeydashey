@@ -44,6 +44,8 @@ class PhonesTest {
             HomeyJson.parseToJsonElement(
                 """
                 {"homey:device:p1:play_sound": {"id": "homey:device:p1:play_sound", "title": "Play sound on device"},
+                 "homey:device:p1:update_device_data": {"id": "homey:device:p1:update_device_data", "title": "Update device data"},
+                 "homey:device:p1:set_interval_update": {"id": "homey:device:p1:set_interval_update", "title": "Set server request interval", "args": [{"name": "interval", "type": "number"}]},
                  "homey:device:p1:send_message": {"id": "homey:device:p1:send_message", "title": "Send message", "args": [{"name": "subject", "type": "text"}]},
                  "homey:device:p2:play_sound": {"id": "homey:device:p2:play_sound", "title": "Play sound on device"}}
                 """,
@@ -62,6 +64,8 @@ class PhonesTest {
         override suspend fun playMusic(deviceId: String, query: String): String? = null
         override fun deviceActions(deviceId: String) = cards[deviceId].orEmpty()
         override suspend fun runAction(card: FlowCardAction, args: JsonObject) { rang += card.id }
+        override suspend fun readBack(deviceId: String, capability: String): JsonElement? =
+            if (capability == "measure_battery" && "homey:device:p1:update_device_data" in rang) JsonPrimitive(31) else null
     }
 
     private class Dash : DashboardControl {
@@ -92,8 +96,9 @@ class PhonesTest {
     fun ringsTheAskersOwnPhoneAndSaysItIsHome() = runTest {
         val home = Home()
         val r = find(AgentTools(view(settings()), home, Dash()), "my phone")
-        assertEquals(listOf("homey:device:p1:play_sound"), home.rang)
-        assertTrue(r.text, r.text.contains("Ringing Gabriels iPhone") && r.text.contains("home") && r.text.contains("54 %"))
+        assertEquals(listOf("homey:device:p1:play_sound", "homey:device:p1:update_device_data"), home.rang)
+        // The battery is read fresh after asking Find My once, not from the last poll.
+        assertTrue(r.text, r.text.contains("Ringing Gabriels iPhone") && r.text.contains("home") && r.text.contains("31 %"))
     }
 
     @Test

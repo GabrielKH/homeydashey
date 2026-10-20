@@ -79,11 +79,14 @@ data class RoutineData(
 }
 
 object Routines {
+    private val NOT_WORD = Regex("[^\\p{L}\\d\\s]")
+    private val SPACES = Regex("\\s+")
+
     /** Spoken trigger words around the phrase that still count: "God morgon Nova", "godmorgon allihop". */
     private const val SLACK_CHARS = 12
 
     fun normalize(text: String): String =
-        text.lowercase().replace(Regex("[^\\p{L}\\d\\s]"), " ").replace(Regex("\\s+"), " ").trim()
+        text.lowercase().replace(NOT_WORD, " ").replace(SPACES, " ").trim()
 
     /**
      * The enabled routine whose phrase [text] is, give or take a few words like the wake name,

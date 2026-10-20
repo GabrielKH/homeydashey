@@ -109,13 +109,19 @@ object FlowCards {
      * Other devices that are the same thing from another app, of the same kind: the same name anywhere (a hidden
      * copy often stays in the home's top zone), or a name containing the other one in the same room.
      */
+    /** `uri.substringBeforeLast(':') == app`, without making a new string for every pair of devices. */
+    private fun sameApp(uri: String, app: String): Boolean {
+        val i = uri.lastIndexOf(':')
+        return (if (i < 0) uri.length else i) == app.length && uri.startsWith(app)
+    }
+
     fun twinsOf(devices: Map<String, Device>, deviceId: String): List<String> {
         val d = devices[deviceId] ?: return emptyList()
         val app = d.driverUri?.substringBeforeLast(':') ?: return emptyList()
         val name = normalized(d.name)
         return devices.values.filter { o ->
             // A copy Homey can't reach right now only fails; the speaker itself still works.
-            if (o.id == d.id || !o.available || o.homeyClass != d.homeyClass || o.driverUri?.substringBeforeLast(':') == app) return@filter false
+            if (o.id == d.id || !o.available || o.homeyClass != d.homeyClass || o.driverUri?.let { sameApp(it, app) } == true) return@filter false
             val other = normalized(o.name)
             other == name || (o.zone == d.zone && other.length >= 3 && name.length >= 3 && (other.contains(name) || name.contains(other)))
         }.map { it.id }

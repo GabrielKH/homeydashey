@@ -9,6 +9,10 @@ import java.text.Normalizer
  * isn't enough.
  */
 object NameMatch {
+    private val MARKS = Regex("\\p{M}+")
+    private val NOT_ALNUM = Regex("[^a-z0-9 ]")
+    private val SPACES = Regex("\\s+")
+
     private val STOP = setOf(
         "the", "a", "an", "in", "on", "at", "of", "my", "please", "turn", "switch", "set",
         "i", "på", "pa", "och", "and", "min", "mitt", "mina", "den", "det", "de", "till", "från", "fran", "rummet",
@@ -17,10 +21,10 @@ object NameMatch {
     /** Lowercase, without accents (å→a, ö→o), punctuation or extra spaces. */
     fun normalize(text: String): String =
         Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD)
-            .replace(Regex("\\p{M}+"), "")
+            .replace(MARKS, "")
             .replace('ø', 'o').replace('æ', 'a')
-            .replace(Regex("[^a-z0-9 ]"), " ")
-            .replace(Regex("\\s+"), " ")
+            .replace(NOT_ALNUM, " ")
+            .replace(SPACES, " ")
             .trim()
 
     fun tokens(text: String): List<String> = normalize(text).split(' ').filter { it.isNotEmpty() && it !in STOP }

@@ -936,16 +936,29 @@ class AgentTools(
                 right == Phones.Right.None ->
                     "${p.name} is ${ownerName ?: "someone else"}'s phone; only ${ownerName ?: "its owner"} can find it."
                 onlyWhere && right != Phones.Right.All -> "${p.name}: only ${ownerName ?: "its owner"} may hear where it is."
-                onlyWhere -> "${p.name}: ${Phones.status(p)}."
+                onlyWhere -> "${p.name}: ${Phones.status(fresh(p))}."
                 else -> {
                     val card = home.deviceActions(p.id).let(Phones::ringCard)
                         ?: return@map "${p.name} can't ring: its Homey app has no \"Play sound\" card."
                     home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
-                    "Ringing ${p.name}" + if (right == Phones.Right.All) " (${Phones.status(p)})." else "."
+                    "Ringing ${p.name}" + if (right == Phones.Right.All) " (${Phones.status(fresh(p))})." else "."
                 }
             }
         }
         return ToolResult(lines.joinToString("\n"), localOnly(Secret.Phones))
+    }
+
+    /**
+     * [phone] as Find My sees it right now: one "Update device data" asked only when someone
+     * wants to know, so the app's own polling (which wakes the phone's GPS) can be turned off.
+     */
+    private suspend fun fresh(phone: AgentDevice): AgentDevice {
+        val card = Phones.refreshCard(home.deviceActions(phone.id)) ?: return phone
+        runCatching { home.runAction(card, JsonObject(emptyMap())) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+        val caps = kotlinx.coroutines.coroutineScope {
+            phone.capabilities.map { c -> async { home.readBack(phone.id, c.id)?.let { c.copy(value = it) } ?: c } }.awaitAll()
+        }
+        return phone.copy(capabilities = caps)
     }
 
     private suspend fun variables(): ToolResult {
