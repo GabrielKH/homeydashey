@@ -60,4 +60,23 @@ class AppModulesTest {
         val choices = mapOf("calendar" to ModuleChoice(true, "homey"), "fridge" to ModuleChoice(false, null))
         assertEquals(choices, AppModules.decode(AppModules.encode(choices)))
     }
+
+    @Test fun `music is served by the local Sonos app too`() {
+        val speakers = listOf(device("s1", "speaker", "nl.xiut.sonoslocal"))
+        val withList = AppModules.states(emptyMap(), apps = mapOf("nl.xiut.sonoslocal" to HomeyApp("nl.xiut.sonoslocal", "Sonos (LocalAPI)")), devices = speakers)
+        val music = withList.first { it.module.id == "music" }
+        assertEquals(ModuleStatus.On, music.status)
+        assertEquals(listOf("Sonos (LocalAPI)" to true), music.apps.map { it.first.name to it.second })
+        assertTrue(music.installed(music.source))
+        // Without the apps list, the speakers' app counts as installed.
+        val guessed = AppModules.states(emptyMap(), apps = null, devices = speakers).first { it.module.id == "music" }
+        assertEquals(listOf("nl.xiut.sonoslocal" to true), guessed.apps.map { it.first.id to it.second })
+    }
+
+    @Test fun `a device module names the app its devices come from`() {
+        val vacuum = AppModules.states(emptyMap(), apps = mapOf("com.xiaomi" to HomeyApp("com.xiaomi", "Xiaomi Home")), devices = listOf(device("v1", "vacuumcleaner", "com.xiaomi")))
+            .first { it.module.id == "vacuum" }
+        assertEquals(listOf("Xiaomi Home" to true), vacuum.apps.map { it.first.name to it.second })
+        assertTrue(vacuum.installed(vacuum.source))
+    }
 }
