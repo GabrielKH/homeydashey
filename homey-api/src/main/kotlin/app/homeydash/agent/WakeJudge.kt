@@ -105,15 +105,15 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
         /**
          * How close what was heard came to the name as the people here taught it ([SaidName]):
          * well inside their bar is strong evidence, near it some, far outside it against. With a
-         * known voice that wakes it; near the bar, Whisper has the last word. Null when nobody
-         * taught the name.
+         * known voice that wakes it; alone (the TV, a guest) Whisper has the last word. Null when
+         * nobody taught the name.
          */
         fun said(distance: Float?, bar: Float?): Evidence? {
             if (distance == null || bar == null) return null
             val share = distance / bar
             val lambda = when {
-                share <= 0.8f -> 3.5
-                share <= 1.0f -> 2.5
+                share <= 0.8f -> 3.0
+                share <= 1.0f -> 2.0
                 share <= 1.15f -> 0.5
                 else -> -1.5
             }
@@ -138,10 +138,18 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
             else -> Evidence("fingerprint", 0.3, "no match")
         }
 
+        /** Nothing caught a name in what was heard (the listening test judges everything said): strong evidence against. */
+        fun noName(): Evidence = Evidence("name", -4.0, "not caught")
+
         /** Whisper's word on the clip: the name is there, absent, or another word stood in its place. */
         fun whisper(text: String, names: List<String>): Evidence {
-            val plain = NameMatch.normalize(text)
-            val said = names.any { n -> NameMatch.normalize(n).let { it.isNotEmpty() && (" $plain ").contains(" $it ") } }
+            val plain = NameMatch.normalize(Transcriber.cleanUp(text))
+            // "Hej Nova" often comes back run together ("Enova", "Renova"): a word ending in the
+            // name with a sound or two before it counts too.
+            val words = plain.split(' ').filter { it.isNotEmpty() }
+            val said = names.any { n ->
+                NameMatch.normalize(n).let { name -> name.isNotEmpty() && words.any { it == name || (it.endsWith(name) && it.length <= name.length + 2) } }
+            }
             return when {
                 said -> Evidence("whisper", 3.0, "\"$text\"")
                 plain.isBlank() -> Evidence("whisper", -3.0, "heard nothing")

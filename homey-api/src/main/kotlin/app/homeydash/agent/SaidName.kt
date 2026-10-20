@@ -23,8 +23,8 @@ object SaidName {
     private const val MAX_FRAMES = 150
     /** Learned bars are kept within these, so a person who said it the same way every time isn't held to an impossible bar. */
     const val MIN_BAR = 0.12f
-    const val MAX_BAR = 0.28f
-    /** The bar is the furthest of their own repeats from the others, with this much room. */
+    const val MAX_BAR = 0.22f
+    /** The bar is how far most of their own repeats are from the others, with this much room. */
     private const val ROOM = 1.25f
 
     /** A spoken name as frames of [BANDS] unit vectors. */
@@ -69,20 +69,22 @@ object SaidName {
         return best
     }
 
+    /** How far each taught repeat is from the closest of the others: how evenly the person says it. */
+    fun spread(names: List<Shape>): List<Float> = names.indices.mapNotNull { i ->
+        find(names.filterIndexed { j, _ -> j != i }, names[i])?.distance
+    }
+
     /**
-     * How close a match must be for this person: the furthest any of their own taught repeats
-     * is from the closest of the others, with room, kept within [MIN_BAR]..[MAX_BAR]. Null with
-     * fewer than two repeats.
+     * How close a match must be for this person: most of their own taught repeats (three in
+     * four) are this close to another, with room, kept within [MIN_BAR]..[MAX_BAR]. One odd
+     * repeat (said from across the room, or a cough) doesn't loosen it. Null with fewer than
+     * two repeats.
      */
     fun bar(names: List<Shape>): Float? {
         if (names.size < 2) return null
-        var worst = 0f
-        for (i in names.indices) {
-            val others = names.filterIndexed { j, _ -> j != i }
-            val d = find(others, names[i])?.distance ?: continue
-            worst = max(worst, d)
-        }
-        return (worst * ROOM).coerceIn(MIN_BAR, MAX_BAR)
+        val d = spread(names).sorted()
+        if (d.isEmpty()) return null
+        return (d[(d.size * 3 / 4).coerceAtMost(d.size - 1)] * ROOM).coerceIn(MIN_BAR, MAX_BAR)
     }
 
     /** One template against what was heard; null when either is empty. */

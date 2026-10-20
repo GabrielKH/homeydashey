@@ -249,6 +249,8 @@ private suspend fun judgeHit(
             when {
                 hit.said != null -> WakeJudge.said(hit.said, hit.bar)
                 t != null && hit.sound != null -> app.homeydash.agent.SaidName.find(t.shapes, app.homeydash.agent.SaidName.heard(hit.sound))?.let { WakeJudge.said(it.distance, t.bar) }
+                // Neither the spotter nor the name as taught: only the listening test asks about such speech.
+                !hit.spotted -> WakeJudge.noName()
                 else -> null
             }
         },
@@ -470,7 +472,8 @@ private fun ListenTest(services: AssistantServices, settings: AgentSettings) {
     val lines = remember { mutableStateListOf<TestLine>() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val names = settings.wakeNames(people)
-    DisposableEffect(names, people, settings.micSensitivity) {
+    // Restarted when a name is taught again, not each time a wake teaches a voiceprint.
+    DisposableEffect(names, people.map { it.saidNames }, settings.micSensitivity) {
         val wake = services.wake
         // The dashboard's listener lets go of the microphone while this runs.
         wake.enrolling = true
@@ -512,12 +515,13 @@ private fun ListenTest(services: AssistantServices, settings: AgentSettings) {
                         }
                     }
                     val saidText = share?.let { "%.0f %% of the bar".format(it * 100) }
+                    val bar = taught.getOrNull(names.indexOf(hit.name))?.bar
                     val line = TestLine(words, caught.lastOrNull()?.let { (if (it.spotted) "spotted " else "found as taught ") + it.name }, saidText, judged.share, judged.verdict.line(), judged.verdict.wake)
                     lines.add(0, line)
                     while (lines.size > 8) lines.removeAt(lines.lastIndex)
                     services.trace(
                         "wake-test",
-                        "Heard \"$words\" (${"%.1f".format(sound.size / 16000f)} s): ${line.spotted ?: "no name caught"}${saidText?.let { ", said like taught $it" } ?: ""}, judge ${line.share} % (${judged.verdict.line()}). ${judged.who.log}",
+                        "Heard \"$words\" (${"%.1f".format(sound.size / 16000f)} s): ${line.spotted ?: "no name caught"}${saidText?.let { ", said like taught $it" + (bar?.let { b -> " (bar ${"%.3f".format(b)})" } ?: "") } ?: ""}, judge ${line.share} % (${judged.verdict.line()}). ${judged.who.log}",
                         localOnly = false,
                     )
                 }
@@ -670,7 +674,9 @@ fun VoiceEnrol(services: AssistantServices, settings: AgentSettings, person: Kno
                 services.trace(
                     "wake",
                     "Taught \"Hey $wakeName\": ${samples.size} phrases, ${prints.size} voiceprints, ${shapes.size} ways of saying it" +
-                        (app.homeydash.agent.SaidName.bar(shapes.toList())?.let { " (bar %.3f)".format(it) } ?: "") + if (prints.isEmpty()) " (none made: $why)." else ".",
+                        (app.homeydash.agent.SaidName.bar(shapes.toList())?.let { bar ->
+                            " (bar %.3f; each from the closest other: %s)".format(bar, app.homeydash.agent.SaidName.spread(shapes.toList()).joinToString(" ") { "%.3f".format(it) })
+                        } ?: "") + if (prints.isEmpty()) " (none made: $why)." else ".",
                     localOnly = false,
                 )
                 if (prints.isEmpty()) {

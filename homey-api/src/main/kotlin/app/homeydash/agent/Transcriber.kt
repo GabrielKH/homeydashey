@@ -120,14 +120,15 @@ class Transcriber(http: OkHttpClient, private val openAiUrl: String = "https://a
          * "[BLANK_AUDIO]") and sometimes brackets. Those mean nothing was said.
          */
         fun cleanUp(text: String): String {
-            val t = text.replace(Regex("""\[[^]]*]|\([^)]*\)"""), " ").replace(Regex("\\s+"), " ").trim()
+            // Whisper's own markers ("<|nospeech|>") and sound notes ("[music]") aren't words.
+            val t = text.replace(Regex("""<\|[^|]*\|>|\[[^]]*]|\([^)]*\)"""), " ").replace(Regex("\\s+"), " ").trim()
             val plain = NameMatch.normalize(t)
             return if (plain.isEmpty() || HALLUCINATIONS.any { plain == it }) "" else t
         }
 
         private val HALLUCINATIONS = setOf(
             "tack for att du tittade", "tack for att ni tittade", "tack for tittandet", "textning",
-            "thank you", "thanks for watching", "thank you for watching", "you", "bye",
+            "thanks for watching", "thank you for watching", "you",
         )
 
         /** Where Whisper probably runs: the Ollama computer's address on [WHISPER_PORT]. */
