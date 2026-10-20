@@ -310,7 +310,7 @@ private fun RecentTab(services: AssistantServices, data: MemoryData) {
                     color = g.fg,
                     modifier = Modifier.weight(1f),
                 )
-                Text(if (r.via == RecallVia.Tool) "recall tool" else "cue word", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                Text(when (r.via) { RecallVia.Tool -> "recall tool"; RecallVia.Auto -> "named in the question"; RecallVia.Cue -> "cue word" }, style = MaterialTheme.typography.bodyMedium, color = g.muted)
             }
             if (r.facts.isEmpty()) Text("Nothing matched.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -44,6 +44,8 @@ data class AskContext(
     val routineLocalOnly: Boolean = false,
     /** The tablet's own battery, like "14 %, not charging"; null when unknown. */
     val tabletBattery: String? = null,
+    /** Know-how topics what is on the tablet brings whatever is said, like "timers" while one runs; see [KnowHow]. */
+    val topics: Set<String> = emptySet(),
 )
 
 /**
@@ -57,19 +59,37 @@ class Agent(
     private val routines: () -> RoutineData = { RoutineData() },
     /** The long memory, per person and for the house, kept out of the prompt; null remembers nothing. */
     private val memory: MemoryBook? = null,
+    /** What the owner and the assistant added to the topics' know-how; null uses the built-in topics only. */
+    private val knowHow: KnowHowBook? = null,
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
     /**
      * One question and everything said after it. [noted] is what its note said was on, for a
      * local (true) or internet (false) brain, so the next note only says what changed.
      */
-    private class Turn(val messages: List<ChatMessage>, val localOnly: Boolean, val noted: Noted? = null, val who: Asker? = null, val guest: Boolean = false)
+    private class Turn(
+        val messages: List<ChatMessage>,
+        val localOnly: Boolean,
+        val noted: Noted? = null,
+        val who: Asker? = null,
+        val guest: Boolean = false,
+        /** The know-how topics its note brought or the AI asked for, so later notes needn't bring them again. */
+        val topics: Set<String> = emptySet(),
+    )
 
     /** What a note said: each device's line by alias, and the weather. [full] when it said all of it. */
     class Noted(val local: Boolean, val states: Map<String, String>, val weather: String?, val full: Boolean)
 
     /** The note of the question being answered, until its turn is remembered. */
     private var opened: Pair<ChatMessage, Noted>? = null
+
+    /**
+     * The know-how topics the question being answered brought into the conversation, by its note
+     * or with guide, and the ones earlier turns still in the conversation brought ([topicsBefore]).
+     * Each turn keeps only its own, so when the oldest turn is let go its topics can come again.
+     */
+    private val topicsNow = mutableSetOf<String>()
+    private var topicsBefore = emptySet<String>()
 
     private val history = ArrayDeque<Turn>()
     private var lastActivity = 0L
@@ -142,6 +162,7 @@ class Agent(
         val clock = System.currentTimeMillis()
         if (clock - lastActivity > FORGET_AFTER_MS) reset()
         lastActivity = clock
+        topicsNow.clear()
 
         // A spoken yes or no answers the question the assistant just asked.
         pending?.let { p ->
@@ -181,11 +202,20 @@ class Agent(
             val homeView = view(brain.local)
             val toolbox = tools(homeView)
             toolbox.privateContext = brain.local && history.any { it.localOnly }
-            val specs = toolbox.specs()
+            val specs = toolbox.specs() + GUIDE_SPEC
             val compact = brain.local && settings.compactTools
-            val earlier = history.filter { brain.local || !it.localOnly }.flatMap { it.messages }
-            val tools = Tools(specs, compact, text, earlier, context)
-            val turn = mutableListOf(opening(settings, homeView, context, text, tools, since(brain.local)))
+            val kept = history.filter { brain.local || !it.localOnly }
+            val earlier = kept.flatMap { it.messages }
+            val skills = skills(settings)
+            // The topics this question needs that the conversation doesn't have yet.
+            topicsBefore = kept.flatMap { it.topics }.toSet()
+            val found = if (!settings.knowHow) emptyList() else KnowHow.find(skills, text, homeView, active(context), already = topicsBefore)
+            topicsNow.clear()
+            topicsNow += found.map { it.skill.id }
+            if (found.isNotEmpty()) heard.trace("know-how", found.joinToString("; ") { "${it.skill.id} (${it.why})" })
+            knowHow?.used(found.map { it.skill.id })
+            val tools = Tools(specs, compact, text, earlier, context, if (settings.knowHow) skills else null, found.map { it.skill })
+            val turn = mutableListOf(opening(settings, homeView, context, text, tools, since(brain.local), found.map { it.skill }))
             var localOnly = false
             var acted = false
             // A tool actually changed something; a failed or wrong call doesn't count.
@@ -292,7 +322,9 @@ class Agent(
                         }
                         val key = "${call.name} ${call.arguments}"
                         val before = done[key]?.takeIf { call.name !in LOOKS }
-                        val result = if (before != null && StepText.failed(before.text)) {
+                        val result = if (call.name == KnowHow.GUIDE) {
+                            guide(call, skills, specs, compact, text, homeView, heard)
+                        } else if (before != null && StepText.failed(before.text)) {
                             // The same failing call over and over only made the user wait (P1 radio: four times).
                             heard.trace("guard", "Asked for $key again after it failed; not tried again.")
                             ToolResult("That exact call just failed: ${before.text} Don't try it again; try another way or tell the user what went wrong.", before.localOnly)
@@ -357,6 +389,7 @@ class Agent(
     ): AgentReply {
         lastActivity = System.currentTimeMillis()
         pending = null
+        topicsNow.clear()
         asking = settings.asker
         guestAsking = settings.guest
         val heard = Watch(listener)
@@ -409,7 +442,7 @@ class Agent(
         }
         history.lastOrNull()?.let { last ->
             history.removeLast()
-            history.addLast(Turn(last.messages + ChatMessage("assistant", text), last.localOnly, last.noted, last.who, last.guest))
+            history.addLast(Turn(last.messages + ChatMessage("assistant", text), last.localOnly, last.noted, last.who, last.guest, last.topics))
         }
         return AgentReply(text, actions = if (yes) listOf("confirmed: ${p.question}") else emptyList())
     }
@@ -444,7 +477,7 @@ class Agent(
 
     private fun remember(turn: List<ChatMessage>, localOnly: Boolean) {
         val noted = opened?.takeIf { it.first === turn.firstOrNull() }?.second
-        history.addLast(Turn(turn.toList(), localOnly, noted, asking, guestAsking))
+        history.addLast(Turn(turn.toList(), localOnly, noted, asking, guestAsking, topicsNow.toSet()))
         while (history.size > MAX_TURNS) history.removeFirst()
     }
 
@@ -476,7 +509,7 @@ class Agent(
         turn: List<ChatMessage>,
         tools: Tools,
     ): List<ChatMessage> {
-        val start = listOf(ChatMessage.system(fixed(settings, view, tools.core)))
+        val start = listOf(ChatMessage.system(fixed(settings, view, tools.core, tools.skills)))
         // Written tools: one fixed user line after the rules, the same one the warm-up sends (see ToolText.written).
         return if (tools.compact) ToolText.written(start + ChatMessage.user(ToolText.START) + earlier + turn) else start + earlier + turn
     }
@@ -487,10 +520,20 @@ class Agent(
      * the earlier notes are still in the conversation, and the full list cost a local model
      * about five seconds of reading every time.
      */
-    private fun opening(settings: AgentSettings, view: HomeView, context: AskContext, question: String, tools: Tools, since: Noted? = null): ChatMessage {
+    private fun opening(
+        settings: AgentSettings,
+        view: HomeView,
+        context: AskContext,
+        question: String,
+        tools: Tools,
+        since: Noted? = null,
+        topics: List<Skill> = emptyList(),
+    ): ChatMessage {
         val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
         val states = view.stateLines()
-        val message = ChatMessage.user(situation(settings, view, context, since) + extra + remembered(settings, view, question) + QUESTION + question)
+        val message = ChatMessage.user(
+            situation(settings, view, context, since) + KnowHow.note(topics) + extra + remembered(settings, view, question) + QUESTION + question,
+        )
         opened = message to Noted(view.local, states, context.weather, full = since == null)
         return message
     }
@@ -503,9 +546,14 @@ class Agent(
      */
     private fun remembered(settings: AgentSettings, view: HomeView, question: String): String {
         val book = memory?.takeIf { remembers(settings, view.local) } ?: return ""
-        if (!Memory.CUES.containsMatchIn(question)) return ""
-        val found = Memory.recall(book.data.value, question, settings.asker?.id, view.local, System.currentTimeMillis(), limit = 3)
-        book.used(question, settings.asker, RecallVia.Cue, found)
+        val cue = Memory.CUES.containsMatchIn(question)
+        // Without a cue word, what someone told it or wrote about themselves that the question
+        // names ("my sister", "Elises rum"), so it knows without being asked to look.
+        if (!cue && !settings.knowHow) return ""
+        val found = if (cue) Memory.recall(book.data.value, question, settings.asker?.id, view.local, System.currentTimeMillis(), limit = 3)
+        else Memory.matching(book.data.value, question, settings.asker?.id, view.local, System.currentTimeMillis())
+        if (!cue && found.isEmpty()) return ""
+        book.used(question, settings.asker, if (cue) RecallVia.Cue else RecallVia.Auto, found)
         if (found.isEmpty()) return ""
         listener?.trace("memory", "Recalled for the question: " + found.joinToString("; ") { Memory.line(it) }, found.any { it.localOnly })
         return "\nRemembered from earlier (use it if it fits):\n" + found.joinToString("\n") { "- " + Memory.line(it) }
@@ -564,12 +612,23 @@ class Agent(
 
     /**
      * The tools for one question. With [compact] they are written into the prompt: [core] in the
-     * fixed part, and [extra] (recipes, the fridge, making routines) in the question's note only
-     * when it is about them, so the fixed part stays short and the same. Otherwise every tool
-     * goes to the server as JSON ([sent]).
+     * fixed part, and [extra] in the question's note only when it needs them, so the fixed part
+     * stays short and the same. Otherwise every tool goes to the server as JSON ([sent]).
+     *
+     * With topic know-how ([skills]), the tools of a topic are extra and come with the topics
+     * the question needs ([found]); without it, recipes, the fridge, routines and the household
+     * come by their words, as they did before.
      */
-    private class Tools(all: List<ToolSpec>, val compact: Boolean, question: String, earlier: List<ChatMessage>, context: AskContext) {
-        val sent: List<ToolSpec> = if (compact) emptyList() else all
+    private class Tools(
+        all: List<ToolSpec>,
+        val compact: Boolean,
+        question: String,
+        earlier: List<ChatMessage>,
+        context: AskContext,
+        val skills: List<Skill>? = null,
+        found: List<Skill> = emptyList(),
+    ) {
+        val sent: List<ToolSpec> = if (compact) emptyList() else if (skills != null) all else all.filter { it.name != KnowHow.GUIDE }
         val core: List<ToolSpec>?
         val extra: List<ToolSpec>
 
@@ -577,18 +636,49 @@ class Agent(
             if (!compact) {
                 core = null
                 extra = emptyList()
+            } else if (skills != null) {
+                val topical = skills.filter { !it.always }.flatMap { it.tools }.toSet()
+                val wanted = found.flatMap { it.tools }.toSet()
+                core = all.filter { it.name !in topical }
+                extra = all.filter { it.name in topical && it.name in wanted }
             } else {
                 val said = question + " " + earlier.lastOrNull { it.role == "user" }?.content.orEmpty().substringAfterLast(QUESTION_LABEL)
                 val wanted = buildSet {
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
-                    if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS + MEMORY_PACK)
+                    if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS + MEMORY_PACK + KNOW_HOW_PACK)
                     if (HOUSEHOLD_WORDS.containsMatchIn(said)) addAll(HOUSEHOLD_TOOLS)
                 }
-                core = all.filter { it.name !in PACKS }
+                core = all.filter { it.name !in PACKS && it.name != KnowHow.GUIDE }
                 extra = all.filter { it.name in PACKS && it.name in wanted }
             }
         }
+    }
+
+    /** The topics what is going on brings, whatever was said: an open recipe, a routine, running timers. */
+    private fun active(context: AskContext): Set<String> = buildSet {
+        if (context.kitchen != null) add("recipes")
+        if (context.routine != null) add("routines")
+        addAll(context.topics)
+    }
+
+    /**
+     * The guide tool: a topic's rules, and its tools as lines for an AI that gets its tools as
+     * text. A topic the note should have brought teaches its words from [question], so next
+     * time it comes by itself.
+     */
+    private suspend fun guide(call: ToolCall, skills: List<Skill>, specs: List<ToolSpec>, compact: Boolean, question: String, view: HomeView, heard: Watch): ToolResult {
+        val name = (call.arguments["topic"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+        val s = KnowHow.topic(skills, name)
+            ?: return ToolResult("No topic called \"$name\". Topics: " + skills.filter { !it.always }.joinToString { it.id } + ".")
+        if (s.id in topicsNow || s.id in topicsBefore) return ToolResult("The rules for ${s.title} are above already; use them and its tools now.")
+        topicsNow += s.id
+        knowHow?.used(listOf(s.id))
+        val words = KnowHow.newWords(skills, question, view)
+        heard.trace("know-how", "The AI asked for ${s.id}" + if (words.isEmpty()) "." else "; it will come with: ${words.joinToString()}")
+        if (words.isNotEmpty()) runCatching { knowHow?.learn(s.id, words) }
+        val tools = if (compact) ToolText.lines(specs.filter { it.name in s.tools }) else ""
+        return ToolResult(KnowHow.rulesOf(s) + if (tools.isBlank()) "" else "\nIts tools (call them like the others):\n$tools")
     }
 
     /**
@@ -596,8 +686,8 @@ class Agent(
      * talking (Nova or TARS) comes last, so when people with different characters take turns
      * the server keeps everything before it worked through and only reads the character again.
      */
-    fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null): String =
-        shared(settings, view.local) +
+    fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null, skills: List<Skill>? = null): String =
+        (if (skills != null) core(settings) + KnowHow.index(skills) else shared(settings, view.local)) +
             "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
             "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n" +
             // The tools after the devices: which ones there are depends on who asks (a guest has
@@ -641,8 +731,8 @@ class Agent(
         val fresh = System.currentTimeMillis() - lastActivity <= FORGET_AFTER_MS
         toolbox.privateContext = brain.local && fresh && history.any { it.localOnly }
         val compact = brain.local && settings.compactTools
-        val tools = Tools(toolbox.specs(), compact, "", emptyList(), AskContext())
-        val messages = listOf(ChatMessage.system(fixed(settings, homeView, tools.core)))
+        val tools = Tools(toolbox.specs() + GUIDE_SPEC, compact, "", emptyList(), AskContext(), skills(settings).takeIf { settings.knowHow })
+        val messages = listOf(ChatMessage.system(fixed(settings, homeView, tools.core, tools.skills)))
         val specs = tools.sent
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
         val quiet = System.currentTimeMillis() - maxOf(warmedAt, lastActivity) > REWARM_AFTER_MS
@@ -673,7 +763,7 @@ class Agent(
         return brains.map { brain ->
             val homeView = view(brain.local)
             val compact = brain.local && settings.compactTools
-            val t = Tools(tools(homeView).specs(), compact, question, emptyList(), AskContext())
+            val t = Tools(tools(homeView).specs() + GUIDE_SPEC, compact, question, emptyList(), AskContext(), skills(settings).takeIf { settings.knowHow })
             val messages = conversation(settings, homeView, emptyList(), listOf(opening(settings, homeView, AskContext(), question, t)), t)
             val name = "${brain.provider.label} ${brain.model}"
             val line = try {
@@ -690,7 +780,7 @@ class Agent(
 
     /** Everything the assistant is told for a question, as one text (for tests and the settings preview). */
     fun systemPrompt(settings: AgentSettings, view: HomeView, context: AskContext): String =
-        fixed(settings, view) + "\n" + situation(settings, view, context)
+        fixed(settings, view, skills = skills(settings).takeIf { settings.knowHow }) + "\n" + situation(settings, view, context)
 
     /** How to behave, and as whom. */
     fun rules(settings: AgentSettings, local: Boolean = true): String = shared(settings, local) + forWho(settings, local) + character(settings)
@@ -720,8 +810,22 @@ class Agent(
         }
     }
 
-    /** How to behave whoever is talking: the same for every question, so it can be kept worked through. */
+    /**
+     * How to behave whoever is talking: the rules every question needs, then every topic's
+     * know-how. With topic know-how on, [fixed] only sends [core] and each question's note
+     * brings the topics it needs (see [KnowHow]).
+     */
     fun shared(settings: AgentSettings, local: Boolean = true): String = buildString {
+        append(core(settings))
+        skills(settings).filter { !it.always }.forEach { s -> s.rules.forEach { append(it).append('\n') } }
+    }
+
+    /** Every topic of know-how: the built-in ones, and what the owner and the assistant added. */
+    fun skills(settings: AgentSettings): List<Skill> =
+        KnowHow.graph(knowHow?.data?.value ?: KnowHowData(), settings.batteryReminders)
+
+    /** The rules every question needs, whatever it is about: how to talk, the lights and devices, and the owner's standing instructions. */
+    fun core(settings: AgentSettings): String = buildString {
         append("You are the voice assistant of a home dashboard on a tablet in the kitchen. ")
         append("You can see and control the home only through your tools; everything goes through the Homey smart home hub. ")
         append("Who you are is told at the very end, after the home's devices.\n")
@@ -745,10 +849,6 @@ class Agent(
         append("(\"lampan i köket\", \"taklampan\"): pick the listed device whose name and room fit best; if a tool says a name is unclear, ")
         append("use one of the devices it suggests or ask which one. ")
         append("A device may be named by its room or app rather than what it is: the app is shown in brackets, e.g. a TV called \"Vardagsrum\" (apple tv) is the Apple TV. ")
-        append("For music, radio stations (\"P1\", \"P3\"), Sonos favourites and playlists, call play_music with the name: it searches the speaker's favourites, playlists and radio, and also plays any song, album or artist asked for (\"spela Dancing Queen\"). ")
-        append("For TV channels, opening an app and remote buttons, call device_actions and then run_device_action. Never make up a stream URL. ")
-        append("For music, keep what they asked for in play_music's query and give its kind: a mood, genre, chart or \"hits\" is a playlist. ")
-        append("Speech to text sometimes translates an English title into Swedish (\"spela dåligt med Michael Jackson\" is Bad by Michael Jackson): search the real title. ")
         append("A mood is the owner's scene for its own room: use it only for that room, and give set_mood the room the user said. ")
         append("When they ask for a feeling in a room (mysigt, fest, romantiskt, film, lugnt, fokus) and no mood of that room fits, call set_scene with the room and the look; never use another room's mood instead. ")
         append("Only use devices, rooms and moods in the home list; ")
@@ -757,30 +857,12 @@ class Agent(
         append("When a tool says to ask the user to confirm, ask a short yes/no question. ")
         append("Never reveal or guess codes, passwords or keys. ")
         append("For general questions you can't answer for sure, use ask_internet if you have it instead of guessing.\n")
-        append("Questions about plans, events, appointments or what is happening on a day or week (\"what's happening next week\", \"vad händer\", \"kalendern\") are about the family calendar: ")
-        append("call calendar with start_date and days worked out from today in the note (next week is next Monday and 7 days), then tell what it found. ")
-        append("If you have no calendar tool, say the calendar is switched off under the assistant's Privacy and security settings. Never answer a calendar question with the weather.\n")
         append("Everything the dashboard shows is yours to use: answer the weather from the weather in the note (or the weather tool), never say you can't see it. ")
-        append("When the user lets you choose (\"play something\", \"välj själv\"), choose yourself instead of asking: for music call play_music with an empty query. ")
+        append("When the user lets you choose (\"play something\", \"välj själv\"), choose yourself instead of asking. ")
         append("Remember what the user already told you in this conversation and never ask the same question twice. ")
         append("Call each tool once per thing to do; when a tool says it's done, don't call it again, just answer.\n")
-        append("For robot vacuums use the vacuum tool: \"clean the kitchen\" is clean_rooms, \"go to the kitchen\" or \"come to the kitchen so I can empty it\" is go_to; ")
-        append("use the robot's own room names (the vacuum tool lists them), translating Swedish room names if needed.\n")
-        append("For a TV or media box (Apple TV and the like) use press_remote to press its buttons (\"down x3, ok\"), run_device_action for channels and apps, ")
-        append("and open_device to show its remote on the tablet.\n")
-        append("When a recipe is open and the user asks what to do next, which step they are on, or to go back, use recipe_step so the screen follows, ")
-        append("and tell them the step in plain words. Answer questions about amounts and times from that recipe. ")
-        append("If the step has a cooking time, offer to start a timer for it. When the user wants timers for the whole recipe (\"timers for everything\", \"sätt alla timers\"), ")
-        append("call recipe_timers once instead of going through the steps.\n")
-        append("Kitchen timers go through the timer tool: start, list, cancel one or all, rename, add or take away minutes, pause and resume, naming a timer the way the user does (\"pastan\" is Pasta). ")
-        append("For a named timer without a length (\"sätt en pastatimer\"), start it without minutes so the usual length is used; when a timer rings, \"stopp\" cancels it and \"fem minuter till\" adds 5 minutes.\n")
-        append("Answer what's in the fridge, freezer or pantry and what goes off soon from fridge_contents. ")
-        append("When the user says they bought, ate, finished, opened or froze something, update the fridge with your tools. ")
-        append("When asked what to cook, suggest using what goes off first, and look in find_recipes if you have it.\n")
-        append("The owner has routines: when the note says a routine was started, the app has already done its steps; ")
-        append("follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found. ")
-        append("When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.\n")
-        append(BatteryNag.rule(settings.batteryReminders)).append('\n')
+        // The owner's own topics marked "always" belong to every question.
+        skills(settings).filter { it.always }.forEach { s -> s.rules.forEach { append(it).append('\n') } }
         val standing = routines().instructions.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (standing.isNotEmpty()) {
             append("The owner's standing instructions; follow them unless a rule above forbids it:\n")
@@ -844,7 +926,7 @@ class Agent(
         /** Tools that only look. */
         /** Repeated calls before it stops instead of using up every round. */
         const val MAX_REPEATS = 2
-        val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines")
+        val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines", KnowHow.GUIDE)
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
         val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "run_device_action", "press_remote")
         /** How tool results that changed something begin. */
@@ -895,7 +977,14 @@ class Agent(
         val MEMORY_TOOLS = MEMORY_PACK + "recall"
         /** Marking people home or asleep and wake-up alarms: only when the question is about them. */
         val HOUSEHOLD_TOOLS = setOf("set_presence", "alarms")
-        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS
+        /** Teaching and forgetting a topic's rules by voice. */
+        val KNOW_HOW_PACK = setOf("teach", "forget_rule")
+        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK
+        /** The guide tool, which every AI gets when topic know-how is on; the [Agent] answers it itself. */
+        val GUIDE_SPEC = tool(KnowHow.GUIDE, "Get the rules and tools for one of the know-how topics listed in the rules, when the note doesn't have them.") {
+            string("topic", "The topic's name, e.g. music or timers")
+            required("topic")
+        }
         val HOUSEHOLD_WORDS = Regex(
             """$W(väck\w*|wake\w*|alarm\w*|klocka\w*|sov\w*|sleep\w*|asleep|awake|vaken|uppe|hemma|home|borta|away|går nu|åker nu|""" +
                 """drar nu|sticker|leaving|kommer hem|back|tillbaka|godnatt|god natt|goodnight|good night|morgon|morning)$E""",

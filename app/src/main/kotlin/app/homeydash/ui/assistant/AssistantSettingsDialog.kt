@@ -891,46 +891,9 @@ private fun Preview(services: AssistantServices, settings: AgentSettings, previe
     Segmented(listOf(false, true), local, { if (it) "Sent to the local AI" else "Sent to the internet AI" }) { local = it }
     val (view, tools) = remember(local, settings) { preview(local) }
     var raw by remember { mutableStateOf(false) }
-    Segmented(listOf(false, true), raw, { if (it) "Everything, as it reads it" else "Built-in rules by topic" }) { raw = it }
+    Segmented(listOf(false, true), raw, { if (it) "Everything, as it reads it" else "Know-how by topic" }) { raw = it }
     if (!raw) {
-        val topics = remember(view, tools) {
-            val who = services.agent.character(settings)
-            val rules = services.agent.rules(settings, local).removeSuffix(who)
-            app.homeydash.agent.RuleBook.topics(rules, who, tools.specs())
-        }
-        Text(
-            "What the app has told the assistant, sorted by topic, and the tools it can use for each. " +
-                "Your own routines and instructions come on top of these.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
-        topics.forEach { topic ->
-            SettingsBox(topic.title) {
-                topic.rules.forEach { rule ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("•", style = MaterialTheme.typography.bodyMedium, color = g.muted)
-                        Text(rule, style = MaterialTheme.typography.bodyMedium, color = g.fg)
-                    }
-                }
-                topic.tools.forEach { tool ->
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            "Tool: " + tool.name,
-                            style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
-                            color = g.fg,
-                        )
-                        Text(tool.description, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-                        tool.parameters.forEach { (name, about) ->
-                            Text(
-                                "  $name" + if (about.isNotBlank()) ": $about" else "",
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                color = g.muted,
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        KnowHowTopics(services, settings, tools)
         return
     }
     val prompt = remember(view) { services.agent.systemPrompt(settings, view, AskContext()) }
@@ -1004,7 +967,7 @@ internal fun Field(label: String, value: String, secret: Boolean = false, keyboa
 }
 
 @Composable
-private fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Boolean) -> Unit) {
     val g = GlassTheme.colors
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {

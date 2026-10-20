@@ -74,7 +74,12 @@ data class Recall(
 )
 
 @Serializable
-enum class RecallVia { Cue, Tool }
+enum class RecallVia {
+    Cue,
+    Tool,
+    /** The question named something a person told it or wrote about themselves, without a cue word. */
+    Auto,
+}
 
 @Serializable
 data class MemoryData(val version: Int = 1, val facts: List<Fact> = emptyList(), val recalls: List<Recall> = emptyList())
@@ -157,6 +162,19 @@ object Memory {
         }
         val byId = facts.associateBy { it.id }
         return score.entries.sortedByDescending { it.value }.take(limit).map { byId.getValue(it.key) }
+    }
+
+    /**
+     * What someone told it, wrote about themselves or it learned, that [query] names directly
+     * ("Elise", "pizzafredag"): no habits and no neighbours, only facts sharing a real word with
+     * the question, so most questions get nothing and the note stays as short as before.
+     */
+    fun matching(data: MemoryData, query: String, asker: String?, local: Boolean, now: Long, limit: Int = 2): List<Fact> {
+        val q = tokens(query).filter { it.length >= 4 }.toSet()
+        if (q.isEmpty()) return emptyList()
+        return visible(data, asker, local).filter { it.kind != FactKind.Habit }
+            .mapNotNull { f -> overlap(q, tokens("${f.subject} ${f.relation} ${f.obj}").filter { it.length >= 4 }.toSet()).takeIf { it > 0 }?.let { f to it * 2.0 + strength(f, now) } }
+            .sortedByDescending { it.second }.take(limit).map { it.first }
     }
 
     private val EVERYTHING = setOf("allt", "everything", "all", "alla")

@@ -61,7 +61,9 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val routines = app.homeydash.agent.RoutineBook(File(appContext.filesDir, "assistant"))
     /** What the assistant remembers from earlier conversations, per person and for the house; kept out of the prompt. */
     val memory = app.homeydash.agent.MemoryBook(File(appContext.filesDir, "assistant"))
-    val agent = Agent(chat, routines = { routines.data.value }, memory = memory)
+    /** The know-how topics the owner and the assistant added to (music, timers, own topics), and the words they come with. */
+    val knowHow = app.homeydash.agent.KnowHowBook(File(appContext.filesDir, "assistant"))
+    val agent = Agent(chat, routines = { routines.data.value }, memory = memory, knowHow = knowHow)
     val input = SpeechInput(appContext)
     /** TARS's voice, downloaded to the tablet when TARS is chosen. */
     val tars = PiperVoice(appContext, http, scope, PiperVoice.TARS)
@@ -97,6 +99,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     init {
         scope.launch { routines.load() }
         scope.launch { memory.load() }
+        scope.launch { knowHow.load() }
     }
 
     /**
@@ -988,6 +991,7 @@ class Assistant(
         fridge = services.kitchen?.let { k -> app.homeydash.agent.FridgeTools(k.fridge) { bridge.openPage("fridge") } },
         routines = app.homeydash.agent.RoutineTools(services.routines),
         memory = app.homeydash.agent.MemoryTools(services.memory),
+        knowHow = app.homeydash.agent.KnowHowTools(services.knowHow) { v.settings.batteryReminders },
     )
 
     private fun view(s: AgentSettings, local: Boolean): HomeView {
@@ -1000,6 +1004,8 @@ class Assistant(
         kitchen = services.kitchen?.cooking?.describe(), fridge = services.kitchen?.fridge?.describe(),
         weather = bridge.weatherNow(),
         tabletBattery = tabletBattery(),
+        // A running or ringing timer makes "stopp" and "två minuter till" about it.
+        topics = if (timers.timers.value.isNotEmpty()) setOf("timers") else emptySet(),
     )
 
     /** The tablet's battery, like "14 %, not charging". */

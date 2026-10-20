@@ -54,6 +54,8 @@ class AgentTools(
     private val routines: RoutineTools? = null,
     /** What the assistant remembers from earlier conversations; null when it remembers nothing. */
     private val memory: MemoryTools? = null,
+    /** Teaching the topics' know-how by voice; null when the dashboard keeps none. */
+    private val knowHow: KnowHowTools? = null,
     private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
     /**
@@ -203,6 +205,7 @@ class AgentTools(
             if (!guest) addAll(r.specs())
         }
         memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) }?.let { addAll(it.specs()) }
+        knowHow?.takeIf { !guest }?.let { addAll(it.specs()) }
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
@@ -264,6 +267,7 @@ class AgentTools(
                 ?: recipes?.run(call) ?: fridge?.run(call)
                 ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
                 ?: memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) && call.name in it.names }?.run(call, view.settings.asker, view.local)
+                ?: knowHow?.takeIf { !guest && call.name in it.names }?.run(call)
                 ?: ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {

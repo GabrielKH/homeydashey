@@ -86,6 +86,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
         sendLogs = p[SEND_LOGS] == "true",
         compactTools = p[COMPACT_TOOLS] != "false",
+        knowHow = p[KNOW_HOW] != "false",
         logToken = p[LOG_TOKEN]?.let(KeystoreCipher::decrypt).orEmpty(),
         logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
         spotifyClientId = p[SPOTIFY_ID].orEmpty(),
@@ -142,6 +143,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
         p[SEND_LOGS] = s.sendLogs.toString()
         p[COMPACT_TOOLS] = s.compactTools.toString()
+        p[KNOW_HOW] = s.knowHow.toString()
         p[LOG_TOKEN] = KeystoreCipher.encrypt(s.logToken.trim())
         p[LOG_REPO] = s.logRepo.trim()
         p[SPOTIFY_ID] = s.spotifyClientId.trim()
@@ -213,6 +215,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val SPOTIFY_SECRET = stringPreferencesKey("spotify_secret")
         val SEND_LOGS = stringPreferencesKey("send_logs")
         val COMPACT_TOOLS = stringPreferencesKey("compact_tools")
+        val KNOW_HOW = stringPreferencesKey("know_how")
         val LOG_TOKEN = stringPreferencesKey("log_token")
         val LOG_REPO = stringPreferencesKey("log_repo")
 

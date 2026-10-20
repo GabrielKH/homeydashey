@@ -385,6 +385,7 @@ private val BUILT_IN = listOf(
     BuiltIn(Sym.timer, Color(0xFFE08A3C), "Kitchen timers", "Several at once beside the page's chips, grouped by recipe, by voice too."),
     BuiltIn(Sym.flow, Color(0xFF1A9A52), "Routines", "God morgon and your own flows for the assistant."),
     BuiltIn(Sym.lightbulb, Color(0xFF3A8DDE), "Memory", "Habits and preferences for each person and the house."),
+    BuiltIn(Sym.search, Color(0xFF8B7BFF), "Know-how", "Each question gets only the rules and tools it needs; teach it new topics."),
     BuiltIn(Sym.emojiObjects, Color(0xFFD0457A), "Moods and light looks", "Cozy and party looks for each room."),
 )
 
