@@ -319,6 +319,22 @@ object Memory {
         kind = FactKind.Said,
     )
 
+    /**
+     * The dashboard's newest update and what it brought, as one fact the next update replaces,
+     * so "what's new in the app?" gets a real answer.
+     */
+    fun appUpdated(version: String, day: String, changes: List<String>): Fact = Fact(
+        who = HOUSE,
+        subject = "The dashboard app",
+        relation = "was last updated",
+        obj = buildString {
+            append("to version $version")
+            if (day.isNotEmpty()) append(" on $day")
+            if (changes.isNotEmpty()) append(", bringing: ").append(changes.take(6).joinToString("; "))
+        },
+        kind = FactKind.Said,
+    )
+
     /** That [asker] woke [character] by its name, counted like a habit with the part of the day. */
     fun woke(asker: Asker, character: Persona, at: ZonedDateTime): Fact = Fact(
         who = asker.id,

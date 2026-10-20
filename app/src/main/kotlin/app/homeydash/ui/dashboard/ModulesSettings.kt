@@ -70,13 +70,13 @@ private val LOOKS: Map<String, Pair<Ic, Color>> = mapOf(
     "doorbell" to (Sym.doorbell to Color(0xFF5A6B80)),
 )
 
-private fun look(id: String) = LOOKS[id] ?: (Sym.apps to Color(0xFF55657A))
+internal fun moduleLook(id: String) = LOOKS[id] ?: (Sym.apps to Color(0xFF55657A))
 
 /** Amber for "needs something from you"; the theme has green and red only. */
 private val Attention = Color(0xFFE9A23B)
 
 @Composable
-private fun statusColor(status: ModuleStatus): Color {
+internal fun statusColor(status: ModuleStatus): Color {
     val g = GlassTheme.colors
     return when (status) {
         ModuleStatus.On -> g.ok
@@ -145,7 +145,7 @@ private fun ModuleList(states: List<ModuleState>, appsAllowed: Boolean, onOpen: 
 @Composable
 private fun ModuleTile(state: ModuleState, modifier: Modifier, onClick: () -> Unit) {
     val g = GlassTheme.colors
-    val (icon, tint) = look(state.module.id)
+    val (icon, tint) = moduleLook(state.module.id)
     Row(
         modifier.pressable(onClick).glass(TileShape).padding(18.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -187,7 +187,7 @@ private fun ModulePage(
 ) {
     val g = GlassTheme.colors
     val module = state.module
-    val (icon, tint) = look(module.id)
+    val (icon, tint) = moduleLook(module.id)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         RoundButton(Sym.arrowBack, onBack, size = 44.dp, filledIcon = false, contentDescription = "All modules")
         Bubble(icon, on = true, onColor = tint, size = 56.dp)
