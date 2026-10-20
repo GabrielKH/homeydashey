@@ -99,9 +99,8 @@ interface DashboardControl {
     fun goodnight()
     suspend fun weather(): String?
     suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent>
-    fun startTimer(seconds: Int, label: String?)
-    fun cancelTimer(label: String?): Boolean
-    fun timers(): List<String>
+    /** The kitchen timers on the tablet. */
+    val timers: TimerBoard
     fun setTheme(mode: String): Boolean
 }
 

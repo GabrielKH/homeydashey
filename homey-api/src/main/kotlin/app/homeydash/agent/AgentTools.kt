@@ -139,10 +139,11 @@ class AgentTools(
             required("device", "keys")
         })
         if (!guest) add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})
-        add(tool("timer", "Kitchen timers on the tablet: start, cancel or list.") {
-            string("action", "start, cancel or list")
-            number("minutes", "Length for start; may have decimals")
-            string("label", "Optional name, e.g. pasta")
+        add(tool("timer", "Kitchen timers on the tablet: start, list, cancel one or all, rename, add or take away time, pause or resume.") {
+            string("action", "start, list, cancel, cancel_all, rename, add, pause or resume")
+            number("minutes", "start: length (leave out for a named timer to use the usual length); add: minutes to add, negative to take away")
+            string("label", "The timer's name, e.g. pasta; for rename the timer to rename (leave out for the newest)")
+            string("new_label", "rename: the new name")
             required("action")
         })
         if (recipes != null) add(tool("recipe_timers", "Start a kitchen timer for every step of the open recipe that names a time, all at once.") {})
@@ -245,7 +246,7 @@ class AgentTools(
             "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
             "vacuum" -> vacuum(a.str("device"), a.str("action"), a.list("rooms"))
             "goodnight" -> goodnight()
-            "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"))
+            "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"), a.str("new_label"))
             "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
@@ -760,23 +761,59 @@ class AgentTools(
         )
     }
 
-    private fun timer(action: String, minutes: Double?, label: String): ToolResult = when (action.lowercase()) {
-        "start" -> {
-            val seconds = ((minutes ?: 0.0) * 60).toInt()
-            if (seconds <= 0 || seconds > 24 * 3600) ok("Say how many minutes.")
-            else {
-                dashboard.startTimer(seconds, label.ifBlank { null })
-                ok("Timer started.")
+    /** A named timer counted for whoever asked, so "the usual" pasta timer is known next time. */
+    private suspend fun learnTimer(t: KitchenTimer) {
+        val s = view.settings
+        if (t.label == null || t.group != null || s.guest || s.access(Secret.Memory) == Access.Off) return
+        memory?.learnTimer(t.label, t.seconds, s.asker, clock())
+    }
+
+    private suspend fun timer(action: String, minutes: Double?, label: String, newLabel: String): ToolResult {
+        val board = dashboard.timers
+        fun named(t: KitchenTimer) = t.label ?: "The timer"
+        return when (action.lowercase().replace(' ', '_')) {
+            "start", "set" -> {
+                val usual = if (minutes == null && label.isNotBlank()) memory?.usualTimerSeconds(label, view.settings.asker?.id) else null
+                val seconds = usual ?: ((minutes ?: 0.0) * 60).toInt()
+                if (seconds <= 0 || seconds > 24 * 3600) return ok("Ask how many minutes.")
+                learnTimer(board.start(seconds, label.ifBlank { null }))
+                val length = Timers.minutesText(seconds)
+                when {
+                    usual != null -> ok("Timer ${label.trim()} started for $length, the usual length. Say that it's the usual.")
+                    label.isNotBlank() -> ok("Timer ${label.trim()} started for $length.")
+                    view.settings.askTimerName -> ok(
+                        "Timer started for $length. In the same short answer, ask whether they want to give it a name. " +
+                            "If they answer with a name, call timer with action rename and new_label; if they say no, leave it.",
+                    )
+                    else -> ok("Timer started for $length.")
+                }
             }
+            "cancel", "stop", "remove", "delete" -> board.cancel(label)?.let { ok("${named(it)} is stopped.") }
+                ?: ok(if (board.timers.value.isEmpty()) "No timers are running." else "No timer like that. Running: " + board.describe().joinToString("; "))
+            "cancel_all", "stop_all" -> {
+                val n = board.cancelAll(label.ifBlank { null })
+                ok(if (n == 0) "No timers were running." else "Stopped $n timer${if (n == 1) "" else "s"}.")
+            }
+            "rename", "name" -> {
+                if (newLabel.isBlank()) return ok("Ask what to call it.")
+                board.rename(label, newLabel)?.let { learnTimer(it); ok("The timer is now called ${it.label}.") } ?: ok("No timers are running.")
+            }
+            "add", "extend", "snooze" -> {
+                val seconds = ((minutes ?: 1.0) * 60).toInt()
+                if (seconds == 0) return ok("Ask how many minutes.")
+                board.add(label, seconds)?.let { ok("${named(it)} now has ${Timers.clock(it.leftMs(System.currentTimeMillis()))} left.") }
+                    ?: ok("No timer like that is running.")
+            }
+            "pause" -> board.pause(label, true)?.let { ok("${named(it)} is paused.") } ?: ok("No timer like that is running.")
+            "resume", "continue" -> board.pause(label, false)?.let { ok("${named(it)} is running again.") } ?: ok("No timer like that is running.")
+            else -> ok(board.describe().joinToString("\n").ifBlank { "No timers are running." })
         }
-        "cancel", "stop" -> ok(if (dashboard.cancelTimer(label.ifBlank { null })) "Timer cancelled." else "No timer like that is running.")
-        else -> ok(dashboard.timers().joinToString("\n").ifBlank { "No timers are running." })
     }
 
     private fun recipeTimers(): ToolResult {
         val timers = recipes?.stepTimers().orEmpty()
         if (timers.isEmpty()) return ok("No recipe is open, or its steps name no times.")
-        timers.forEach { (step, t) -> dashboard.startTimer(t.seconds, "Steg $step · ${t.label}") }
+        timers.forEach { (step, t) -> dashboard.timers.start(t.seconds, "Steg $step · ${t.label}", recipes?.openName()) }
         return ok("Started: " + timers.joinToString { (step, t) -> "step $step ${t.label}" } + ".")
     }
 

@@ -227,9 +227,6 @@ enum class SceneKind { Sun, Night, Clouds, Rain, Snow, Storm, Fog }
 
 data class Scene(val kind: SceneKind)
 
-/** A kitchen timer started by voice or by hand. */
-data class KitchenTimer(val id: Long, val label: String?, val endsAt: Long, val seconds: Int)
-
 enum class AssistantState { Idle, Listening, Thinking, Speaking }
 
 /** What the assistant needs from the dashboard on screen; built by the dashboard. */
@@ -296,7 +293,8 @@ class Assistant(
     val activity = mutableStateListOf<AgentStep>()
     var pending by mutableStateOf<PendingAction?>(null)
         private set
-    val timers = mutableStateListOf<KitchenTimer>()
+    /** The kitchen timers, kept on the tablet through restarts; the island at the top shows them. */
+    val timers = app.homeydash.agent.TimerBoard(java.io.File(services.appContext.filesDir, "assistant/timers.json"))
 
     private var job: Job? = null
     /** Who said the wake name last, and when; a known voice outranks the camera for a minute. */
@@ -372,6 +370,15 @@ class Assistant(
                     runCatching { services.agent.digest(settings) }.onFailure { if (it is CancellationException) throw it }
                     warmBrain(followUp = false)
                 }
+            }
+        }
+        // Timers are checked twice a second: one that ran out rings, and keeps beeping until stopped.
+        scope.launch {
+            timers.load()
+            while (true) {
+                timers.due().forEach { t -> scope.launch { ring(t) } }
+                timers.expired()
+                delay(TIMER_TICK_MS)
             }
         }
         // A low tablet complains every 20 minutes in the day, in the character's own voice.
@@ -1141,28 +1148,30 @@ class Assistant(
 
     // Kitchen timers
 
-    fun startTimer(seconds: Int, label: String?) {
-        val timer = KitchenTimer(System.nanoTime(), label, System.currentTimeMillis() + seconds * 1000L, seconds)
-        timers += timer
-        scope.launch {
-            delay(seconds * 1000L)
-            if (timers.remove(timer)) ring(timer)
-        }
+    fun startTimer(seconds: Int, label: String?, group: String? = null) {
+        val timer = timers.start(seconds, label, group)
+        if (group == null) timer.label?.let { learnTimer(it, seconds) }
     }
 
-    fun cancelTimer(label: String?): Boolean {
-        val t = timers.lastOrNull { label == null || it.label.equals(label, ignoreCase = true) } ?: return false
-        return timers.remove(t)
+    /** A timer named on the island, remembered like one named by voice. */
+    fun renameTimer(id: Long, label: String) {
+        val t = timers.renameId(id, label) ?: return
+        if (t.group == null) t.label?.let { learnTimer(it, t.seconds) }
     }
 
-    fun describeTimers(): List<String> = timers.map { t ->
-        val left = ((t.endsAt - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
-        "${t.label ?: "Timer"}: ${left / 60} min ${left % 60} s left"
+    /**
+     * Counts that whoever is at the tablet named a timer and how long it was, so "sätt en
+     * pastatimer" can use the usual length. Recipe timers aren't habits, their recipe sets them.
+     */
+    private fun learnTimer(label: String, seconds: Int) {
+        val s = settings
+        if (s.access(Secret.Memory) == Access.Off || s.guest) return
+        val fact = app.homeydash.agent.Timers.habit(label, seconds, s.asker, java.time.ZonedDateTime.now())
+        scope.launch { runCatching { services.memory.learn(listOf(fact)) } }
     }
 
-    private suspend fun ring(timer: KitchenTimer) {
+    private suspend fun ring(timer: app.homeydash.agent.KitchenTimer) {
         services.onActive?.invoke()
-        open = true
         val swedish = when (settings.answers) {
             app.homeydash.agent.Language.Swedish -> true
             app.homeydash.agent.Language.English -> false
@@ -1174,19 +1183,32 @@ class Assistant(
             else -> name?.let { "$it is done." } ?: "The timer is done."
         }
         lines += Line(false, text)
+        beep()
+        say(text)
+        if (state == AssistantState.Speaking) state = AssistantState.Idle
+        // Beeps again every half minute until it is stopped, snoozed or gives up.
+        while (true) {
+            delay(app.homeydash.agent.TimerBoard.RING_EVERY_MS)
+            val now = timers.timers.value.firstOrNull { it.id == timer.id }
+            if (now?.ringing != true) break
+            services.onActive?.invoke()
+            beep()
+        }
+    }
+
+    private suspend fun beep() {
         runCatching {
             val tone = ToneGenerator(AudioManager.STREAM_ALARM, 90)
             repeat(3) { tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 400); delay(700) }
             tone.release()
         }
-        say(text)
-        state = AssistantState.Idle
     }
 
     private companion object {
         const val SPEAKER_DELAY_MS = 800L
         /** How often to check whether the local AI needs warming while it waits (see Agent.REWARM_AFTER_MS). */
         const val KEEP_WARM_MS = 2 * 60 * 1000L
+        const val TIMER_TICK_MS = 500L
         const val BATTERY_CHECK_MS = 60 * 1000L
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */

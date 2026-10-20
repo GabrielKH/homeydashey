@@ -1056,6 +1056,16 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             color = g.muted,
         )
     }
+    SettingsBox("Kitchen timers") {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Ask for a name", settings.askTimerName) { update { it.copy(askTimerName = !it.askTimerName) } }
+        }
+        Text(
+            "After a timer is started without a name, the assistant asks if you want to give it one. Named timers are remembered, so \"sätt en pastatimer\" uses your usual length.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = g.muted,
+        )
+    }
     if (settings.voice == VoiceStyle.Alma) {
         SettingsBox("Alma") {
             PiperVoiceState(

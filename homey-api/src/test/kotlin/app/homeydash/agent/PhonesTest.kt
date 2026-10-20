@@ -75,9 +75,7 @@ class PhonesTest {
         override fun goodnight() {}
         override suspend fun weather(): String? = null
         override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean) = emptyList<AgentEvent>()
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 

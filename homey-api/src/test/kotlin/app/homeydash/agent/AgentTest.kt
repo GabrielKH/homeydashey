@@ -87,9 +87,7 @@ class AgentTest {
         override suspend fun weather() = "Sunny, 18 °C"
         override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean) =
             listOf(AgentEvent("Dentist", "09:00", "10:00", false, if (withLocations) "Main street 1" else null))
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 

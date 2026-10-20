@@ -61,6 +61,9 @@ class RecipeTools(
         }
     }
 
+    /** The open recipe's title, so its timers show together under it. */
+    fun openName(): String? = cooking.current()?.first?.title
+
     /** Every time named in the open recipe's steps, with its step number (from 1). */
     fun stepTimers(): List<Pair<Int, app.homeydash.recipes.StepTimer>> {
         val (r, _) = cooking.current() ?: return emptyList()

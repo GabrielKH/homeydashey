@@ -81,6 +81,7 @@ import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.AssistantServices
 import app.homeydash.data.AppUpdater
 import app.homeydash.ui.assistant.AssistantLayer
+import app.homeydash.ui.assistant.TimerIsland
 import app.homeydash.ui.assistant.AssistantSettingsDialog
 import app.homeydash.ui.assistant.FaceWatch
 import app.homeydash.ui.assistant.FacesDialog
@@ -449,7 +450,7 @@ fun DashboardScreen(
                     when {
                         target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
                         target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
-                        target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label) })
+                        target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label, kitchen.cooking.current()?.first?.title ?: "Recept") })
                         target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
                         target == CALENDAR -> CalendarScreen(
                             hasPermission = calendarAllowed,
@@ -520,6 +521,7 @@ fun DashboardScreen(
                 onChooseSpeaker = { id -> assistantServices.settingsStore.update { it.copy(speakerId = id) } },
                 onOpenSettings = { showAssistantSettings = true },
             )
+            TimerIsland(assistant, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
             snapshot.error?.let { message ->
                 ErrorBanner(message, onDismiss = store::clearError, modifier = Modifier.align(Alignment.BottomCenter))
             }

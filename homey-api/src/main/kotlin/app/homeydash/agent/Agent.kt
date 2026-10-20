@@ -767,6 +767,8 @@ class Agent(
         append("and tell them the step in plain words. Answer questions about amounts and times from that recipe. ")
         append("If the step has a cooking time, offer to start a timer for it. When the user wants timers for the whole recipe (\"timers for everything\", \"sätt alla timers\"), ")
         append("call recipe_timers once instead of going through the steps.\n")
+        append("Kitchen timers go through the timer tool: start, list, cancel one or all, rename, add or take away minutes, pause and resume, naming a timer the way the user does (\"pastan\" is Pasta). ")
+        append("For a named timer without a length (\"sätt en pastatimer\"), start it without minutes so the usual length is used; when a timer rings, \"stopp\" cancels it and \"fem minuter till\" adds 5 minutes.\n")
         append("Answer what's in the fridge, freezer or pantry and what goes off soon from fridge_contents. ")
         append("When the user says they bought, ate, finished, opened or froze something, update the fridge with your tools. ")
         append("When asked what to cook, suggest using what goes off first, and look in find_recipes if you have it.\n")

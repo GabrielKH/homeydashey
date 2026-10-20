@@ -468,7 +468,7 @@ private fun CookView(kitchen: Kitchen, r: Recipe, state: CookingState, onTimer: 
                 }
                 if (timers.isNotEmpty()) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        timers.forEach { t -> PillButton(Sym.timer, "Timer ${t.label}") { onTimer(t.seconds, r.title) } }
+                        timers.forEach { t -> PillButton(Sym.timer, "Timer ${t.label}") { onTimer(t.seconds, "Steg ${index + 1} · ${t.label}") } }
                     }
                 }
                 r.steps.getOrNull(index + 1)?.let { next ->

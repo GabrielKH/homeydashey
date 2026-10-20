@@ -201,6 +201,8 @@ data class AgentSettings(
     val pace: Int = DEFAULT_PACE,
     /** Says every 20 minutes in the day that the tablet needs charging, when its battery is low; see [BatteryNag]. */
     val batteryReminders: Boolean = true,
+    /** After a timer is started without a name, the assistant asks whether to give it one. */
+    val askTimerName: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
     val wakeSound: WakeSound = WakeSound.Voice,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */

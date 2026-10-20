@@ -74,8 +74,14 @@ object StepText {
             "open_device" -> "Opening ${device()}"
             "goodnight" -> "Getting goodnight ready"
             "timer" -> when (str("action").lowercase()) {
-                "start" -> "Starting a ${str("minutes")} min timer" + (str("label").takeIf { it.isNotEmpty() }?.let { " for $it" } ?: "")
-                "cancel" -> "Stopping a timer"
+                "start" -> if (str("minutes").isEmpty()) "Starting the ${str("label")} timer" else
+                    "Starting a ${str("minutes")} min timer" + (str("label").takeIf { it.isNotEmpty() }?.let { " for $it" } ?: "")
+                "cancel", "stop" -> "Stopping a timer"
+                "cancel_all" -> "Stopping the timers"
+                "rename" -> "Naming the timer " + str("new_label")
+                "add" -> "Changing a timer"
+                "pause" -> "Pausing a timer"
+                "resume" -> "Starting the timer again"
                 else -> "Checking the timers"
             }
             "recipe_timers" -> "Starting the recipe's timers"
