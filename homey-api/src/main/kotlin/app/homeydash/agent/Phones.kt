@@ -43,6 +43,15 @@ object Phones {
             card.inputArgs.all { it.type in RING_ARG_TYPES }
     }
 
+    /**
+     * The card that asks Apple for the phone's location once ("Update device data"), so the
+     * Find My app's polling can stay off and the phone's GPS only wakes when someone asks.
+     */
+    fun refreshCard(cards: List<FlowCardAction>): FlowCardAction? = cards.firstOrNull { card ->
+        val t = FlowCards.tokens(card.cardId)
+        ("update" in t || "refresh" in t) && "interval" !in t && card.inputArgs.isEmpty()
+    }
+
     /** The arguments to ring with: a short subject where the card asks for one, the defaults for the rest. */
     fun ringArgs(card: FlowCardAction, from: String): JsonObject = JsonObject(
         card.inputArgs.mapNotNull { arg ->
