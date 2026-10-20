@@ -167,6 +167,13 @@ class Endpointer(
      */
     var held = false
         private set
+    /** How long each pause that turned out to be a breath lasted, in ms, for the person's pause habit. */
+    val pauseLengths = ArrayList<Int>()
+    /** How far into the recording the last speech ended, in ms, once paused; the question so far is up to here. */
+    var speechEndMs = 0.0
+        private set
+    /** The quiet that ends the question after the pause going on now; [waitFor] sets it per pause. */
+    private var patienceNow = patienceMs
 
     private var elapsedMs = 0.0
     private var speechMs = 0.0
@@ -176,7 +183,20 @@ class Endpointer(
     private val run = ArrayList<Double>()
     private var runMs = 0.0
 
-    fun feed(buf: ShortArray, n: Int): State {
+    /**
+     * After the pause numbered [pause] (see [pauses]) has been judged, how much quiet in all
+     * ends the question: a short wait when what was said reads as finished, a long one when
+     * more seems to be coming. Ignored once a later pause has begun.
+     */
+    fun waitFor(pause: Int, ms: Long) {
+        if (pause == pauses && state == State.Paused) patienceNow = ms.toInt().coerceAtLeast(0)
+    }
+
+    /**
+     * [speech] is a voice-activity model's word on these samples when there is one; without it
+     * the loudness against the room's floor decides.
+     */
+    fun feed(buf: ShortArray, n: Int, speech: Boolean? = null): State {
         if (n <= 0 || state == State.Done || state == State.NoSpeech) return state
         var sum = 0.0
         for (i in 0 until n) sum += buf[i].toDouble() * buf[i]
@@ -190,7 +210,7 @@ class Endpointer(
             rms < floor -> floor * 0.7 + rms * 0.3
             else -> floor * 0.995 + rms * 0.005
         }
-        val loud = rms > maxOf(floor * 2.5, MIN_SPEECH_RMS)
+        val loud = speech ?: (rms > maxOf(floor * 2.5, MIN_SPEECH_RMS))
         if (loud) {
             if (quietMs > GAP_MS) { run.clear(); runMs = 0.0 }
             run += rms
@@ -207,6 +227,8 @@ class Endpointer(
                 if (quietMs >= silenceMs) {
                     held = isHeld()
                     pauses++
+                    speechEndMs = elapsedMs - quietMs
+                    patienceNow = patienceMs
                     state = State.Paused
                 }
             }
@@ -215,13 +237,14 @@ class Endpointer(
                     // Talking again: the pause was a breath, not the end.
                     speechMs += ms
                     if (speechMs >= START_MS) {
+                        pauseLengths += quietMs.toInt()
                         state = State.Speaking
                         quietMs = 0.0
                     }
                 } else {
                     speechMs = 0.0
                     quietMs += ms
-                    if (quietMs >= patienceMs) state = State.Done
+                    if (quietMs >= patienceNow) state = State.Done
                 }
             }
             else -> {}

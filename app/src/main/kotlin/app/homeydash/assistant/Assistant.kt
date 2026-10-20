@@ -11,6 +11,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.homeydash.agent.TurnEnd
+import app.homeydash.agent.TurnJudge
+import app.homeydash.agent.SoundPrint
 import app.homeydash.agent.Agent
 import app.homeydash.agent.Access
 import app.homeydash.agent.AgentListener
@@ -74,11 +76,11 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     val faces = FaceService(appContext)
     val web = WebSearch(http)
     val voiceModels = VoiceModels(appContext, http, scope)
-    val wake = WakeListener(voiceModels, scope)
+    val wake = WakeListener(appContext, voiceModels, scope)
     /** Voiceprints, for telling who said the wake name. */
     val prints = VoicePrints(appContext, http, scope)
     /** Records questions for Whisper or OpenAI, when they hear instead of Google. */
-    val recorder = SpeechRecorder()
+    val recorder = SpeechRecorder(appContext)
     val transcriber = app.homeydash.agent.Transcriber(http)
     /** Called when the assistant starts listening or ringing, so a dimmed screen lights up. */
     var onActive: (() -> Unit)? = null
@@ -447,8 +449,13 @@ class Assistant(
     fun listen(heard: ShortArray? = null) {
         if (!open && !conversing) freshScreen()
         services.output.stop()
-        // The wake name may have been listened for while it talked; the question gets the microphone.
-        if (!services.wake.enrolling) services.wake.stop()
+        // The wake name may have been listened for while it talked; the question gets the
+        // microphone, with whatever was said after the name as its start.
+        var start = heard
+        if (!services.wake.enrolling) {
+            services.wake.stop()
+            if (start == null) start = services.wake.afterName()
+        }
         job?.cancel()
         services.onActive?.invoke()
         warmUp()
@@ -469,7 +476,7 @@ class Assistant(
         }
         val swedish = language == app.homeydash.agent.Language.Swedish
         if (settings.hearers().isNotEmpty() && SystemClock.elapsedRealtime() >= hearersDownUntil) {
-            listenRecorded(language, heard)
+            listenRecorded(language, start)
             return
         }
         if (!swedish && SystemClock.elapsedRealtime() < offlineUntil && listenOffline()) return
@@ -507,12 +514,16 @@ class Assistant(
         val hint = hint(s)
         // What Whisper made of the question up to the latest pause, while recording goes on.
         var early: Early? = null
+        // How long this person tends to pause between thoughts, from the memory graph.
+        val habit = app.homeydash.agent.Memory.pauseHabitOf(services.memory.data.value.facts, voice?.person?.id)
         services.recorder.record(
             gain = app.homeydash.agent.MicSensitivity.gain(s.micSensitivity),
             start = heard,
             onLevel = { l -> meter(floatArrayOf(l, l, l * 0.8f, l * 0.6f)) },
-            onPause = { wav, pause, held ->
-                // A pause: answer now if what was said reads as finished, else wait for the rest,
+            onPause = { wav, pause, held, turn ->
+                // A pause: Whisper writes down what was said so far, and the turn judge counts
+                // the cues of a finished turn in the words and the voice. Many cues and the
+                // question is taken as done almost at once; few, and it waits for the rest,
                 // like a person would through an "öhh" or "and…".
                 val noticed = SystemClock.elapsedRealtime()
                 scope.launch {
@@ -524,19 +535,18 @@ class Assistant(
                     if (!recording || state != AssistantState.Listening || services.recorder.pausedAt != pause) return@launch
                     early = Early(pause, text, noticed)
                     TurnEnd.clean(text).takeIf { it.isNotEmpty() }?.let { partial = it }
-                    if (TurnEnd.complete(text, s.wakeName, held)) {
-                        recording = false
-                        services.recorder.stop()
-                        timeHeard(noticed, PAUSE_MS)
-                        heard(text)
-                    } else {
-                        services.trace("listen", "Waiting for the rest: \"$text\"" + if (held) " (a held sound before the pause)" else "", true)
-                    }
+                    val judged = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { TurnJudge.judge(text, s.wakeName, held, turn, habit) }
+                    val sinceNoticed = SystemClock.elapsedRealtime() - noticed
+                    // The wait counts from when the pause began; what Whisper took is already part of it.
+                    services.recorder.waitFor(pause, (judged.waitMs - SpeechRecorder.PAUSE_MS - sinceNoticed).coerceAtLeast(0))
+                    services.trace("listen", "Pause after \"$text\": ${judged.line()}" + (if (habit != 1.0) " (pause habit ×%.2f)".format(habit) else ""), true)
                 }
             },
             onDone = done@{ wav ->
                 recording = false
+                learnPauses()
                 if (wav == null) {
+                    silentWake()
                     heard("")
                     return@done
                 }
@@ -544,7 +554,7 @@ class Assistant(
                 early?.let { (pause, text, noticed) ->
                     if (services.recorder.pausedAt == pause) {
                         // Heard at the pause; the wait since then for more is part of the time.
-                        timeHeard(noticed, PAUSE_MS)
+                        timeHeard(noticed, SpeechRecorder.PAUSE_MS.toLong())
                         heard(text)
                         return@done
                     }
@@ -562,7 +572,7 @@ class Assistant(
                         return@launch
                     }
                     if (state == AssistantState.Listening) {
-                        timeHeard(noticed, PAUSE_MS)
+                        timeHeard(noticed, SpeechRecorder.PAUSE_MS.toLong())
                         heard(text)
                     }
                 }
@@ -704,9 +714,10 @@ class Assistant(
      * The wake name was heard; [person] is whoever the voice belongs to, if known, and
      * [character] the one whose name was said, which answers for this conversation.
      */
-    fun wake(person: KnownPerson?, character: app.homeydash.agent.Persona = services.settings.value.characterOf(person)) {
+    fun wake(person: KnownPerson?, character: app.homeydash.agent.Persona = services.settings.value.characterOf(person), sound: ShortArray? = null) {
         voice = Seen(person, SystemClock.elapsedRealtime())
         woken = Woken(character, person?.id, SystemClock.elapsedRealtime())
+        wakeSound = sound?.takeIf { person == null }
         rememberWoke(person, character)
         // Woken again after it was stopped: a new talk, so the last one's answers aren't still on screen.
         if (!conversing && state == AssistantState.Idle) freshScreen()
@@ -739,6 +750,52 @@ class Assistant(
 
     /** The last "Ja?", so the next one is different. */
     private var lastWakeAnswer: String? = null
+
+    /** The sound of the last wake name by a voice it didn't know, until the question shows whether it was a real call. */
+    private var wakeSound: ShortArray? = null
+
+    /**
+     * Woken by an unknown voice and then nothing was said: most likely the TV or the radio.
+     * The sound's fingerprint goes into the memory graph, so the same sound never wakes it again.
+     */
+    private fun silentWake() {
+        val sound = wakeSound ?: return
+        wakeSound = null
+        val s = services.settings.value
+        if (s.access(Secret.Memory) == Access.Off) return
+        val snap = store.snapshot.value
+        val room = s.speakerId?.let { snap.devices[it]?.zone }?.let { snap.zones[it]?.name }
+        scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val print = SoundPrint.of(sound)
+            val facts = services.memory.data.value.facts
+            if (app.homeydash.agent.Memory.knownFalseWake(facts, print)) return@launch
+            val fact = app.homeydash.agent.Memory.falseWake(print, room, java.time.ZonedDateTime.now()) ?: return@launch
+            runCatching { services.memory.learn(listOf(fact)) }
+            services.trace("wake", "Nothing was said after a wake by an unknown voice: remembered the sound as a false wake (${print.size} frames).", true)
+        }
+    }
+
+    /** The pauses within the question just recorded, as the person's pause habit in the memory graph. */
+    private fun learnPauses() {
+        val pauses = services.recorder.pauseLengths
+        val person = voice?.person ?: return
+        val s = services.settings.value
+        if (pauses.size < PAUSES_TO_LEARN || s.access(Secret.Memory) == Access.Off) return
+        val median = pauses.sorted()[pauses.size / 2].toLong()
+        scope.launch {
+            runCatching { services.memory.learn(listOf(app.homeydash.agent.Memory.pauseHabit(median, app.homeydash.agent.Asker(person.id, person.name), java.time.ZonedDateTime.now()))) }
+        }
+    }
+
+    /** Whether a TV, speaker or radio in the tablet's room reports playing right now, for the wake judge. */
+    fun roomMediaPlaying(): Boolean {
+        val s = services.settings.value
+        val devices = store.snapshot.value.devices
+        val room = s.speakerId?.let { devices[it]?.zone } ?: return false
+        return devices.values.any { d ->
+            d.zone == room && (d.capability("speaker_playing")?.booleanValue == true || (d.deviceClass in MEDIA_CLASSES && d.capability("onoff")?.booleanValue == true))
+        }
+    }
 
     /** "Ja?" in the voice that talks now, when that wake sound is chosen and already made; else null (the hum plays). */
     private fun wakeAnswer(): app.homeydash.agent.Pcm? {
@@ -1099,9 +1156,18 @@ class Assistant(
     private suspend fun say(text: String, s: AgentSettings = settings, onStart: () -> Unit = {}) {
         state = AssistantState.Speaking
         answering = true
-        val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
-        if (speaker != null && sayOn(speaker.second, text, s, onStart)) return
-        services.output.speak(text, s.answers, s.voice, ::meter, onStart)
+        // An answer that says one of the names must not wake the other character.
+        val names = s.wakeNames(services.faces.people.value)
+        val spoken = " " + WakeName.clean(text) + " "
+        val saysName = names.any { WakeName.key(it).let { k -> k.isNotEmpty() && spoken.contains(" $k ") } }
+        if (saysName) services.wake.muted = true
+        try {
+            val speaker = s.speakerId?.let { id -> speakers().firstOrNull { it.first.id == id } }
+            if (speaker != null && sayOn(speaker.second, text, s, onStart)) return
+            services.output.speak(text, s.answers, s.voice, ::meter, onStart)
+        } finally {
+            if (saysName) services.wake.muted = false
+        }
     }
 
     /** The voice's level and its low, middle and high parts, for the face. */
@@ -1224,9 +1290,10 @@ class Assistant(
         const val OFFLINE_FOR_MS = 2 * 60 * 1000L
         const val SWEDISH_FOR_MS = 30 * 60 * 1000L
         const val HINT_CHARS = 400
+        /** Pauses within one question before its median is taken as the person's pause habit. */
+        const val PAUSES_TO_LEARN = 3
+        val MEDIA_CLASSES = setOf("tv", "settopbox", "speaker", "amplifier")
         const val FILLER_HINT = "Öh, ehm, hmm… "
-        /** The quiet [app.homeydash.agent.Endpointer] waits for before it counts a pause. */
-        const val PAUSE_MS = 700L
         val WEATHER_WORDS = Regex("väder|vädr|regn|snö|soligt|solen|prognos|temperatur|grader ute|weather|rain|snow|sunny|forecast", RegexOption.IGNORE_CASE)
         val TOMORROW = Regex("tomorrow|imorgon|i morgon", RegexOption.IGNORE_CASE)
     }

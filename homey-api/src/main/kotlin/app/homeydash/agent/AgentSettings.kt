@@ -89,6 +89,9 @@ object MicSensitivity {
 
     /** How sure the recogniser must be of each word, 0.8 at 0 to 0.55 at 100. */
     fun minConfidence(sensitivity: Int): Double = 0.8 - sensitivity.coerceIn(0, 100) * 0.0025
+
+    /** The false-wake rate per spotted name the [WakeJudge] accepts: strict at 0, easy at 100. */
+    fun alpha(sensitivity: Int): Double = WakeJudge.alpha(sensitivity)
 }
 
 /** How far the assistant may go with something sensitive. */
