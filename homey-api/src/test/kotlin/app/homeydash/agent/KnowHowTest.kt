@@ -238,4 +238,32 @@ class KnowHowTest {
         assertTrue(fact.obj.contains("Element Hall"))
         server.shutdown()
     }
+
+    @Test fun `the know-how graph joins topics to their tools, devices and the facts that name them`() {
+        val v = houseView()
+        val skills = KnowHow.graph(KnowHowData(), view = v)
+        val facts = listOf(
+            Fact(id = "f1", whoName = "Gabriel", subject = "Gabriel", relation = "starts", obj = "Tvättmaskin on Sundays", kind = FactKind.Habit, used = 3),
+            Fact(id = "f2", subject = "the house", relation = "likes", obj = "timers for pasta"),
+            Fact(id = "f3", subject = "Gabriel", relation = "likes", obj = "blue"),
+        )
+        val g = KnowHowGraph.build(skills, mapOf("homey_climate" to 4), v, facts)
+        fun at(key: String) = g.nodes.indexOfFirst { it.key == key }.also { assertTrue("no $key", it >= 0) }
+        fun joined(a: String, b: String) = at(b) in g.neighbours(at(a))
+        assertTrue(joined("t:homey_climate", "d:d-heat"))
+        assertTrue(joined("t:homey_climate", "tool:get_device"))
+        // A tool shared by topics ties them together.
+        assertTrue(joined("t:homey_covers", "tool:get_device"))
+        assertTrue(joined("t:recipes", "t:timers"))
+        // Facts hang off their person and join the device they name, or the topic their words bring.
+        assertTrue(joined("f:f1", "d:d-wash"))
+        assertTrue(joined("who:gabriel", "f:f1"))
+        assertTrue(joined("f:f2", "t:timers"))
+        assertFalse(g.nodes.any { it.key == "f:f3" })
+        assertEquals(KnowHowGraph.Source.Homey, g.nodes[at("t:homey_climate")].source)
+        assertTrue(KnowHowGraph.weight(g.nodes[at("t:homey_climate")]) > KnowHowGraph.weight(g.nodes[at("t:homey_covers")]))
+        val pos = KnowHowGraph.layout(g)
+        assertEquals(g.nodes.size * 2, pos.size)
+        assertTrue(pos.all { it in -1.001f..1.001f })
+    }
 }

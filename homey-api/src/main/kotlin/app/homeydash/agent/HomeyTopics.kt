@@ -144,6 +144,7 @@ object HomeyTopics {
                 id = "homey_energy", title = "Energy", about = "how much electricity devices use",
                 words = ENERGY_WORDS,
                 tools = listOf("get_device"),
+                devices = metered.map { it.id },
                 rules = listOf(
                     "measure_power is watts right now and meter_power kWh in total; read them with get_device, add them up for a room or the house, and say them in words (\"ungefär 1,2 kilowatt\").",
                     "Measuring power: " + metered.take(MAX_DEVICES).joinToString { it.name + (it.room?.let { r -> " ($r)" } ?: "") } + if (metered.size > MAX_DEVICES) " and ${metered.size - MAX_DEVICES} more." else ".",
@@ -178,6 +179,7 @@ object HomeyTopics {
             tools = listOf("get_device", "device_actions", "run_device_action"),
             rules = listOf(rule, listed) + meanings,
             fromHomey = true,
+            devices = devices.map { it.id },
         )
     }
 }

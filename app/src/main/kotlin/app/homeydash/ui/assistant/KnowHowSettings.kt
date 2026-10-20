@@ -38,6 +38,9 @@ import app.homeydash.ui.dashboard.SettingsBox
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.launch
 
+/** The know-how drawn as a graph beside the memory's, or topic by topic. */
+private enum class KnowHowView(val label: String) { Graph("Graph"), Topics("Topics") }
+
 /**
  * Settings → What the assistant sees → Know-how: the rules every question gets, then each
  * topic of the know-how graph with what brings it into a question, its rules (the owner's
@@ -58,6 +61,13 @@ internal fun KnowHowTopics(services: AssistantServices, settings: AgentSettings,
             "and the same, so the local AI answers faster and follows the rules better. Off sends everything with every question.",
         settings.knowHow,
     ) { on -> services.settingsStore.update { it.copy(knowHow = on) } }
+    var tab by remember { mutableStateOf(KnowHowView.Graph) }
+    Segmented(KnowHowView.entries, tab, { it.label }) { tab = it }
+    if (tab == KnowHowView.Graph) {
+        val memory by services.memory.data.collectAsState()
+        KnowHowGraphTab(skills, data, view, memory.facts, specs)
+        return
+    }
     SettingsBox("Every question") {
         val core = remember(settings) { services.agent.core(settings) }
         RuleBook.sentences(core).forEach { Bullet(it) }

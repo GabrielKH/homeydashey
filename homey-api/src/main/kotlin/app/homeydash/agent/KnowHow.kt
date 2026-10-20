@@ -44,6 +44,8 @@ data class Skill(
     val own: Boolean = false,
     /** Made from what is in Homey right now ([HomeyTopics]), so it changes as the house does. */
     val fromHomey: Boolean = false,
+    /** Ids of the Homey devices it is about, besides those of its [classes], for the know-how graph. */
+    val devices: List<String> = emptyList(),
 )
 
 /**
@@ -325,7 +327,7 @@ object KnowHow {
      * A device named like a room ("Vardagsrum" for the Apple TV) only counts when named with
      * more than the room, so "tänd i vardagsrummet" doesn't bring the TV.
      */
-    private fun named(view: HomeView, text: String, tokens: List<String>): List<AgentDevice> {
+    internal fun named(view: HomeView, text: String, tokens: List<String>): List<AgentDevice> {
         val rooms = view.rooms.values.map { Routines.normalize(it) }.toSet()
         return view.devices.filter { d ->
             (listOf(d.name) + d.nicknames).any { n ->
