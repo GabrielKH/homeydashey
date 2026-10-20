@@ -159,7 +159,7 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                                 services.trace(
                                     "wake",
                                     // Not through format(): what Whisper heard and the notes can hold a "%".
-                                    "\"${character.label}\" ${if (hit.spotted) "spotted" else "found as taught"} (prior ${"%.2f".format(prior)}): ${verdict.line()}, judge ${judged.share} % in ${SystemClock.elapsedRealtime() - began} ms. ${who.log}",
+                                    "\"${character.label}\" ${if (hit.spotted) "spotted" else "found as taught"} (prior ${"%.2f".format(prior)}): ${verdict.line()}, judge ${judged.share} % of ${judged.line} in ${SystemClock.elapsedRealtime() - began} ms. ${who.log}",
                                     localOnly = false,
                                 )
                                 // Over its own voice, only someone it knows can cut in, so TARS saying
@@ -210,9 +210,12 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
 }
 
 /** What the wake judge made of one hit, with who it heard and the room's prior. */
-private class Judged(val verdict: WakeJudge.Verdict, val judge: WakeJudge, val who: Speaker, val character: app.homeydash.agent.Persona, val prior: Double) {
+private class Judged(val verdict: WakeJudge.Verdict, val judge: WakeJudge, val who: Speaker, val character: app.homeydash.agent.Persona, val prior: Double, val strictness: Int) {
     /** The score as a share of what waking needs, for the meter. */
     val share: Int get() = WakeJudge.share(verdict, judge)
+
+    /** Whose line the judge used, for the log: "Gabriel's strictness 60 %". */
+    val line: String get() = (who.person?.let { "${it.name}'s" } ?: "the usual") + " strictness $strictness %"
 }
 
 /** How the people who taught their voice say [name], for the listener; null when nobody did. */
@@ -277,9 +280,12 @@ private suspend fun judgeHit(
             WakeJudge.whisper(text, names)
         },
     )
-    val judge = WakeJudge(alpha = MicSensitivity.alpha(settings.micSensitivity))
+    // The voice is known before the judge starts, so the line is the one that person set for this name.
+    val person = who.person?.let { p -> services.faces.people.value.firstOrNull { it.id == p.id } ?: p }
+    val strictness = person?.strictnessFor(name) ?: WakeJudge.STRICTNESS
+    val judge = WakeJudge(alpha = MicSensitivity.alpha(settings.micSensitivity), strictness = strictness)
     val verdict = withContext(Dispatchers.Default) { judge.judge(prior, witnesses, armed) }
-    return Judged(verdict, judge, who, character, prior)
+    return Judged(verdict, judge, who, character, prior, strictness)
 }
 
 /** Who said the wake name, how far over the closest known voice's bar the voiceprint was (null without voiceprints), and why. */
@@ -445,7 +451,47 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
         style = MaterialTheme.typography.bodyMedium,
         color = g.muted,
     )
+    WakeStrictness(services, settings)
     ListenTest(services, settings)
+}
+
+/**
+ * Settings → Voice activation → how sure the wake judge must be, for each person and each name
+ * they taught: lower wakes on less (quicker, more false wakes), higher waits for more witnesses,
+ * up to Whisper hearing the name too.
+ */
+@Composable
+private fun WakeStrictness(services: AssistantServices, settings: AgentSettings) {
+    val g = GlassTheme.colors
+    val people by services.faces.people.collectAsState()
+    val names = settings.wakeNames(people)
+    val rows = people.flatMap { p -> names.filter { n -> p.printsFor(n).isNotEmpty() || p.saidFor(n).isNotEmpty() }.map { p to it } }
+    if (rows.isEmpty()) return
+    Text("How sure the judge must be", style = MaterialTheme.typography.labelLarge, color = g.fg)
+    Text(
+        "For each voice and name. At 50 % your voice plus the name said the way you taught it wakes it. " +
+            "Higher needs more: around 75 % it usually also wants the spotter or Whisper to hear the name, which stops singing and made-up words but can take a moment longer. " +
+            "Lower wakes on less. Use Test listening below to see where your own calls land.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = g.muted,
+    )
+    rows.forEach { (person, name) ->
+        val value = person.strictnessFor(name)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("${person.name} · $name", style = MaterialTheme.typography.bodyMedium, color = g.fg, modifier = Modifier.width(150.dp))
+            // Saved when the finger lifts (each change restarts the listener).
+            app.homeydash.ui.dashboard.GlassSlider(
+                value / 100f,
+                { v ->
+                    val set = (v * 100).roundToInt().coerceIn(0, 100)
+                    services.faces.setStrictness(person.id, name, set)
+                    services.trace("wake", "${person.name} set the wake judge for \"$name\" to $set %.", localOnly = false)
+                },
+                Modifier.weight(1f),
+            )
+            Text("$value %", style = MaterialTheme.typography.labelLarge, color = g.fg)
+        }
+    }
 }
 
 /** One thing said during the listening test, and what each part of the wake made of it. */
@@ -528,12 +574,12 @@ private fun ListenTest(services: AssistantServices, settings: AgentSettings) {
                     }
                     val saidText = share?.let { "%.0f %% of the bar".format(it * 100) }
                     val bar = taught.getOrNull(names.indexOf(hit.name))?.bar
-                    val line = TestLine(words, caught.lastOrNull()?.let { (if (it.spotted) "spotted " else "found as taught ") + it.name }, saidText, judged.share, judged.verdict.line(), judged.verdict.wake)
+                    val line = TestLine(words, caught.lastOrNull()?.let { (if (it.spotted) "spotted " else "found as taught ") + it.name }, saidText, judged.share, judged.verdict.line() + " · " + judged.line, judged.verdict.wake)
                     lines.add(0, line)
                     while (lines.size > 8) lines.removeAt(lines.lastIndex)
                     services.trace(
                         "wake-test",
-                        "Heard \"$words\" (${"%.1f".format(sound.size / 16000f)} s): ${line.spotted ?: "no name caught"}${saidText?.let { ", said like taught $it" + (bar?.let { b -> " (bar ${"%.3f".format(b)})" } ?: "") } ?: ""}, judge ${line.share} % (${judged.verdict.line()}). ${judged.who.log}",
+                        "Heard \"$words\" (${"%.1f".format(sound.size / 16000f)} s): ${line.spotted ?: "no name caught"}${saidText?.let { ", said like taught $it" + (bar?.let { b -> " (bar ${"%.3f".format(b)})" } ?: "") } ?: ""}, judge ${line.share} % of ${judged.line} (${judged.verdict.line()}). ${judged.who.log}",
                         localOnly = false,
                     )
                 }

@@ -31,6 +31,8 @@ data class KnownPerson(
     val warmVoices: Map<Persona, String> = emptyMap(),
     /** How they say each wake name ([SaidName.encode]), by the name's key, from teaching their voice. */
     val saidNames: Map<String, List<String>> = emptyMap(),
+    /** How sure the wake judge must be before waking for them (see [WakeJudge.upper]), by the name's key; missing for the usual. */
+    val strictness: Map<String, Int> = emptyMap(),
 ) {
     /** Their first character, null for the house's. */
     val character: Persona? get() = characters.firstOrNull()
@@ -42,6 +44,9 @@ data class KnownPerson(
 
     /** How they say [wakeName], as taught; empty when not taught. */
     fun saidFor(wakeName: String): List<SaidName.Shape> = saidNames[WakeName.key(wakeName)].orEmpty().mapNotNull { SaidName.decode(it) }
+
+    /** How sure the wake judge must be that they called [wakeName], 0–100. */
+    fun strictnessFor(wakeName: String): Int = strictness[WakeName.key(wakeName)] ?: WakeJudge.STRICTNESS
 
     /** [more] ways of saying [wakeName] added, keeping the newest [SAID_KEPT]. */
     fun withSaid(wakeName: String, more: List<SaidName.Shape>): KnownPerson {

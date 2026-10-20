@@ -2,6 +2,7 @@ package app.homeydash.agent
 
 import kotlin.math.exp
 import kotlin.math.ln
+import kotlin.math.pow
 
 /**
  * Decides whether a spotted wake name was really someone calling the assistant, from several
@@ -16,7 +17,7 @@ import kotlin.math.ln
  * decide most hits in a few milliseconds and the Whisper check on the Mac runs only for the
  * unclear ones.
  */
-class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
+class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, strictness: Int = STRICTNESS) {
     /** What one witness said: its [name] for the log, its evidence [lambda] (log-likelihood ratio), and a few words. */
     data class Evidence(val name: String, val lambda: Double, val note: String = "")
 
@@ -31,8 +32,13 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
             " → " + (if (wake) "woke" else if (undecided) "left undecided, dropped" else "dropped") + " (%.1f)".format(score)
     }
 
-    /** Wake above this. */
-    val upper: Double = ln((1 - beta) / alpha)
+    /**
+     * Wake above this: the line the error rates set, moved by [strictness] (0–100, set per person
+     * and name under Voice activation). Every 30 points over 50 doubles the evidence needed, so
+     * at the top the name and the voice alone are not enough and Whisper must hear the name too;
+     * under 50 it halves the same way.
+     */
+    val upper: Double = ln((1 - beta) / alpha) * 2.0.pow((strictness.coerceIn(0, 100) - STRICTNESS) / 30.0)
     /** Drop below this. */
     val lower: Double = ln(beta / (1 - alpha))
 
@@ -40,19 +46,23 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
      * Hears [witnesses] in order until the score, starting from the log odds of [prior],
      * crosses a line. [armed] (a hit a moment ago that ended undecided) halves the bar to wake,
      * as Apple's second, lower threshold does. Undecided after every witness counts as dropped:
-     * a wake needs the evidence.
+     * a wake needs the evidence. One witness is never enough while another can be asked: a
+     * sung "la la la" can come close to the name as taught, and only the voice or the words
+     * tell it apart.
      */
     fun judge(prior: Double, witnesses: List<Witness>, armed: Boolean = false): Verdict {
         val p = prior.coerceIn(0.01, 0.99)
         var score = ln(p / (1 - p))
         val top = if (armed) upper / 2 else upper
         val heard = ArrayList<Evidence>()
+        var backers = 0
         for (w in witnesses) {
-            if (score >= top) return Verdict(true, score, heard, false)
+            if (score >= top && backers >= 2) return Verdict(true, score, heard, false)
             if (score <= lower) return Verdict(false, score, heard, false)
             val e = w.hear() ?: continue
             heard += e
             score += e.lambda
+            if (e.lambda >= BACKS) backers++
         }
         return when {
             score >= top -> Verdict(true, score, heard, false)
@@ -64,6 +74,10 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
     companion object {
         const val DEFAULT_ALPHA = 0.02
         const val DEFAULT_BETA = 0.05
+        /** The strictness when nobody set one: the line the error rates set. */
+        const val STRICTNESS = 50
+        /** Evidence at least this strong counts as a witness backing the wake. */
+        private const val BACKS = 1.0
 
         private fun signed(x: Double) = (if (x >= 0) "+" else "") + "%.1f".format(x)
 

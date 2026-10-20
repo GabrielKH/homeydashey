@@ -87,35 +87,50 @@ object SaidName {
         return (d[(d.size * 3 / 4).coerceAtMost(d.size - 1)] * ROOM).coerceIn(MIN_BAR, MAX_BAR)
     }
 
-    /** One template against what was heard; null when either is empty. */
+    /**
+     * One template against what was heard; null when either is empty. Each step moves one frame
+     * on in both, or two in one and one in the other, so the name may be said up to twice as fast
+     * or as slow as taught but no more: a free warp lets a sung "la la la" stretch any vowel of
+     * the name over one held note and match far better than it should.
+     */
     fun distance(name: Shape, heard: Shape): Match? {
         val m = name.size
         val n = heard.size
         if (m == 0 || n == 0) return null
-        // cost[j]: the cheapest path through the name's frames so far ending at heard frame j.
-        var cost = FloatArray(n)
-        var next = FloatArray(n)
-        val a0 = name.frames[0]
-        for (j in 0 until n) cost[j] = 1f - dot(a0, heard.frames[j])
+        val inf = Float.MAX_VALUE / 4
+        // c2, c1, c0: the cheapest path ending at heard frame j, for name frames i-2, i-1 and i.
+        var c3 = FloatArray(n) { inf }
+        var c2 = FloatArray(n) { inf }
+        var c1 = FloatArray(n)
+        var c0 = FloatArray(n)
+        var d2 = FloatArray(n)
+        var d1 = FloatArray(n)
+        var d0 = FloatArray(n)
+        for (j in 0 until n) { d1[j] = 1f - dot(name.frames[0], heard.frames[j]); c1[j] = d1[j] }
         for (i in 1 until m) {
             val a = name.frames[i]
+            for (j in 0 until n) d0[j] = 1f - dot(a, heard.frames[j])
             for (j in 0 until n) {
-                // From the frame before in both, in the name only (the name said faster than
-                // taught), or in what was heard only (said slower, held longer).
-                var c = cost[j]
-                if (j > 0) c = min(c, min(cost[j - 1], next[j - 1]))
-                next[j] = c + 1f - dot(a, heard.frames[j])
+                var best = inf
+                if (j >= 1) best = c1[j - 1]
+                // Said slower: one name frame over two heard ones.
+                if (j >= 2 && c1[j - 2] + d0[j - 1] < best) best = c1[j - 2] + d0[j - 1]
+                // Said faster: two name frames on one heard one.
+                if (j >= 1 && c2[j - 1] + d1[j] < best) best = c2[j - 1] + d1[j]
+                if (j >= 1 && c3[j - 1] + d2[j] + d1[j] < best) best = c3[j - 1] + d2[j] + d1[j]
+                c0[j] = if (best >= inf) inf else best + d0[j]
             }
-            val t = cost; cost = next; next = t
+            val t = c3; c3 = c2; c2 = c1; c1 = c0; c0 = t
+            val u = d2; d2 = d1; d1 = d0; d0 = u
         }
         // Averaged over the name's own length, so a long name isn't held to a stricter bar.
         var best = Float.MAX_VALUE
         var end = 0
         for (j in 0 until n) {
-            val v = cost[j] / m
+            val v = c1[j] / m
             if (v < best) { best = v; end = j }
         }
-        return Match(best, end)
+        return if (best >= inf / m) null else Match(best, end)
     }
 
     /** A shape as text for saving: bytes of each value times 127, in Base64. */

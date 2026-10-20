@@ -345,4 +345,39 @@ class SaidNameTest {
         assertTrue(woke.line(), woke.wake)
         assertEquals(100, WakeJudge.share(woke, WakeJudge(alpha = MicSensitivity.alpha(50))))
     }
+
+    @Test
+    fun `one witness never wakes while another can be asked, and strictness can ask for Whisper`() {
+        // Gabriel singing "pam param pam": close to the name as taught, with his face at the tablet.
+        var asked = 0
+        fun sung(strictness: Int, words: String) = WakeJudge(alpha = MicSensitivity.alpha(50), strictness = strictness).judge(
+            0.75,
+            listOf(
+                WakeJudge.Witness { WakeJudge.said(0.13f, 0.2f) },
+                WakeJudge.Witness { asked++; WakeJudge.voice(0.3f, "Gabriel") },
+                WakeJudge.Witness { WakeJudge.whisper(words, listOf("Nova")) },
+            ),
+        )
+        assertTrue(sung(50, "pam param pam").wake)
+        assertEquals(1, asked)
+        val strict = sung(80, "pam param pam")
+        assertFalse(strict.line(), strict.wake)
+        assertTrue(sung(80, "Hej Nova").wake)
+        // Strictness moves the line both ways, 30 points per doubling.
+        assertEquals(WakeJudge().upper * 2, WakeJudge(strictness = 80).upper, 1e-9)
+        assertEquals(WakeJudge().upper / 2, WakeJudge(strictness = 20).upper, 1e-9)
+        val gabriel = KnownPerson("g", "Gabriel", Role.Owner, emptyList(), strictness = mapOf(WakeName.key("Nova") to 70))
+        assertEquals(70, gabriel.strictnessFor("nova"))
+        assertEquals(WakeJudge.STRICTNESS, gabriel.strictnessFor("TARS"))
+    }
+
+    @Test
+    fun `a name squeezed far faster than taught is not found as taught`() {
+        val taught = SaidName.of(word(listOf(120.0, 125.0, 130.0, 110.0), nova))!!
+        // A free warp lets a few frames with the right sounds stand in for the whole name: the
+        // way a sung "la la la" matched. Faster than three times as taught no longer fits.
+        val again = SaidName.distance(taught, SaidName.heard(word(listOf(120.0, 125.0, 130.0, 110.0), nova, seed = 2)))!!.distance
+        val squeezed = SaidName.distance(taught, SaidName.heard(word(listOf(120.0, 125.0, 130.0, 110.0), nova, msEach = 30, seed = 2)))!!.distance
+        assertTrue("%.3f vs %.3f".format(again, squeezed), squeezed > again + 0.1f)
+    }
 }
