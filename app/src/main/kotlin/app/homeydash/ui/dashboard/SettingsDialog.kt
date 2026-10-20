@@ -150,8 +150,7 @@ internal fun AppearanceSettings(
     onHomeBackground: () -> Unit,
 ) {
     val g = GlassTheme.colors
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Appearance", style = MaterialTheme.typography.labelMedium, color = g.muted)
+    SettingsBox("Look") {
         Row(
             Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -181,7 +180,7 @@ internal fun AppearanceSettings(
                 }
             }
         }
-        Text("Theme", style = MaterialTheme.typography.labelMedium, color = g.muted)
+        Text("Theme", style = MaterialTheme.typography.labelLarge, color = g.fg)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Palette.entries.forEach { option ->
                 val selected = option == palette
@@ -199,7 +198,7 @@ internal fun AppearanceSettings(
                 }
             }
         }
-        Text("Style", style = MaterialTheme.typography.labelMedium, color = g.muted)
+        Text("Style", style = MaterialTheme.typography.labelLarge, color = g.fg)
         Row(
             Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -219,7 +218,7 @@ internal fun AppearanceSettings(
                 )
             }
         }
-        Text("Display size", style = MaterialTheme.typography.labelMedium, color = g.muted)
+        Text("Display size", style = MaterialTheme.typography.labelLarge, color = g.fg)
         Row(
             Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -244,7 +243,8 @@ internal fun AppearanceSettings(
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
-        Text("Highlight", style = MaterialTheme.typography.labelMedium, color = g.muted)
+    }
+    SettingsBox("Highlight") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Accent.entries.forEach { option ->
                 val selected = option == accent
@@ -274,6 +274,8 @@ internal fun AppearanceSettings(
             Bubble(Sym.autoAwesome, on = true)
             Text("Lights that are on and the active mood use this.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
         }
+    }
+    SettingsBox("Background") {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -304,8 +306,7 @@ internal fun HomeySettings(
     onCalendars: () -> Unit,
 ) {
     val g = GlassTheme.colors
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Homey", style = MaterialTheme.typography.labelMedium, color = g.muted)
+    SettingsBox("Homey") {
         Text(
             listOfNotNull(info.homeyModelName ?: "Homey", info.homeyVersion?.let { "version $it" }).joinToString(", "),
             style = MaterialTheme.typography.bodyLarge,
@@ -332,8 +333,7 @@ internal fun HomeySettings(
 @Composable
 internal fun AppSettings(version: String, update: AppUpdater.State, onCheckUpdate: () -> Unit, onInstallUpdate: () -> Unit) {
     val g = GlassTheme.colors
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("App", style = MaterialTheme.typography.labelMedium, color = g.muted)
+    SettingsBox("App") {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 when (update) {
@@ -404,8 +404,7 @@ internal fun ScreenSettings(
     val hasProximity = remember(context) {
         (context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager)?.getDefaultSensor(Sensor.TYPE_PROXIMITY) != null
     }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Screen", style = MaterialTheme.typography.labelMedium, color = g.muted)
+    SettingsBox("Screen") {
         Text("Dim the screen after", style = MaterialTheme.typography.labelLarge, color = g.fg)
         Row(
             Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
@@ -433,6 +432,8 @@ internal fun ScreenSettings(
             enabled = hasProximity && dimAfter > 0,
             onChange = onWakeOnProximity,
         )
+    }
+    SettingsBox("Kiosk") {
         SettingSwitch(
             title = "Kiosk mode",
             detail = "Pins the dashboard so Home and Back can't leave it (Android asks once). To leave, turn this off or hold Back and Overview.",

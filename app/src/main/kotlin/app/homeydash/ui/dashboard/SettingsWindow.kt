@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,7 +47,6 @@ import app.homeydash.ui.components.PanelShape
 import app.homeydash.ui.components.RoundButton
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
-import app.homeydash.ui.components.TallDialogHeightShare
 import app.homeydash.ui.components.glass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.components.screenSizeDp
@@ -126,7 +126,8 @@ fun SettingsWindow(
         BackHandler(onBack = back)
         val screen = screenSizeDp()
         Row(
-            Modifier.width(minOf(1240.dp, screen.width - 40.dp)).height(screen.height * TallDialogHeightShare),
+            // The whole screen, with the same margin as the dashboard around it.
+            Modifier.width(screen.width - 32.dp).height(screen.height - 32.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Menu(selected = parent ?: section, compact = compact, onCompact = onCompact, onPick = pick)
@@ -264,6 +265,25 @@ private fun MenuItem(category: Category, selected: Boolean, compact: Boolean, on
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(start = 12.dp),
+        )
+    }
+}
+
+/**
+ * A titled group of settings in a glass box of its own, like a tablet's settings: the name
+ * above, the rows inside with room between them.
+ */
+@Composable
+fun SettingsBox(title: String?, content: @Composable ColumnScope.() -> Unit) {
+    val g = GlassTheme.colors
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (title != null) {
+            Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = g.muted, modifier = Modifier.padding(start = 14.dp, top = 4.dp))
+        }
+        Column(
+            Modifier.fillMaxWidth().glass(RoundedCornerShape(22.dp)).padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            content = content,
         )
     }
 }
