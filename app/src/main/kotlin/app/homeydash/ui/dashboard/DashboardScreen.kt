@@ -289,6 +289,7 @@ fun DashboardScreen(
     calendar: CalendarRepository,
     assistantServices: AssistantServices,
     kitchen: app.homeydash.data.Kitchen,
+    modules: app.homeydash.data.Modules,
     onForget: () -> Unit,
 ) {
     val update by updater.state.collectAsStateWithLifecycle()
@@ -302,7 +303,12 @@ fun DashboardScreen(
     val weatherState by weather.state.collectAsStateWithLifecycle()
     val weatherSource by weather.source.collectAsStateWithLifecycle()
     val weatherPlace by weather.place.collectAsStateWithLifecycle()
-    val hasCalendar by calendar.hasPermission.collectAsStateWithLifecycle()
+    // Parts of the dashboard the owner turned off under Modules stay out of the menu and the overview.
+    val moduleChoices by modules.choices.collectAsStateWithLifecycle()
+    fun moduleOn(id: String) = app.homeydash.modules.AppModules.isOn(moduleChoices, id)
+    val calendarAllowed by calendar.hasPermission.collectAsStateWithLifecycle()
+    val hasCalendar = calendarAllowed && moduleOn("calendar")
+    val homeyCalendarError by calendar.homeyError.collectAsStateWithLifecycle()
     val events by calendar.events.collectAsStateWithLifecycle()
     val calendars by calendar.calendars.collectAsStateWithLifecycle()
     val chosenCalendars by calendar.selected.collectAsStateWithLifecycle()
@@ -369,6 +375,9 @@ fun DashboardScreen(
     }
 
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
+    // A page whose module was just turned off goes back to the overview.
+    val pageOff = (destination == RECIPES && !moduleOn("recipes")) || (destination == FRIDGE && !moduleOn("fridge")) || (destination == CALENDAR && !moduleOn("calendar"))
+    LaunchedEffect(pageOff) { if (pageOff) destination = OVERVIEW }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showDevices by rememberSaveable { mutableStateOf(false) }
 
@@ -418,6 +427,8 @@ fun DashboardScreen(
             hasMoods = moods.isNotEmpty(),
             hasMedia = players.isNotEmpty(),
             hasCalendar = hasCalendar,
+            hasRecipes = moduleOn("recipes"),
+            hasFridge = moduleOn("fridge"),
             destination = destination,
             onNavigate = { destination = it },
             onSettings = { showSettings = true },
@@ -441,7 +452,7 @@ fun DashboardScreen(
                         target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label) })
                         target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
                         target == CALENDAR -> CalendarScreen(
-                            hasPermission = hasCalendar,
+                            hasPermission = calendarAllowed,
                             events = events,
                             load = { from, until -> calendar.events(from, until) },
                             onPermissionResult = calendar::permissionChanged,
@@ -474,7 +485,12 @@ fun DashboardScreen(
                             favourites = favourites,
                             order = overviewOrder,
                             onOrder = display::setOverviewOrder,
-                            hasHousehold = household.people.isNotEmpty() || !household.usersAllowed,
+                            hasHousehold = moduleOn("home") && (household.people.isNotEmpty() || !household.usersAllowed),
+                            widgetsOff = buildSet {
+                                if (!moduleOn("weather")) add("weather")
+                                if (!moduleOn("calendar")) add("calendar")
+                                if (!moduleOn("fridge")) add("fridge")
+                            },
                             widget = { key ->
                                 if (key == "fridge") FridgeCard(
                                     kitchen,
@@ -484,7 +500,7 @@ fun DashboardScreen(
                                 if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
                                 if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                 if (key == "calendar") CalendarCard(
-                                    hasPermission = hasCalendar,
+                                    hasPermission = calendarAllowed,
                                     events = events,
                                     view = calendarView,
                                     onView = display::setCalendarView,
@@ -549,6 +565,7 @@ fun DashboardScreen(
                             HomeySettings(info, onChooseDevices, onChooseRooms, onWeather, onCalendars)
                             ForgetButton(onForgetHomey)
                         }
+                        "modules" -> ModulesSettings(modules, snapshot.devices, homeyCalendarError)
                         else -> AppSettings(updater.currentVersion, update, onCheckUpdate, onInstallUpdate)
                     }
                 },
@@ -750,6 +767,8 @@ private fun Sidebar(
     hasMoods: Boolean,
     hasMedia: Boolean,
     hasCalendar: Boolean,
+    hasRecipes: Boolean,
+    hasFridge: Boolean,
     destination: String,
     onNavigate: (String) -> Unit,
     onSettings: () -> Unit,
@@ -801,8 +820,8 @@ private fun Sidebar(
         if (hasMoods) NavItem(Sym.autoAwesome, "Moods", destination == MOODS, compact = compact) { onNavigate(MOODS) }
         if (hasMedia) NavItem(Sym.playCircle, "Media", destination == MEDIA, compact = compact) { onNavigate(MEDIA) }
         if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
-        NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
-        NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
+        if (hasRecipes) NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
+        if (hasFridge) NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {

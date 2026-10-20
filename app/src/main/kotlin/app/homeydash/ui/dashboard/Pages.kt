@@ -105,6 +105,8 @@ fun OverviewScreen(
     widget: @Composable (String) -> Unit,
     /** Whether Homey has users to show in a who's home card. */
     hasHousehold: Boolean = false,
+    /** Cards whose module is turned off under Modules: weather, calendar, fridge. */
+    widgetsOff: Set<String> = emptySet(),
 ) {
     val g = GlassTheme.colors
     val lightsOn = remember(rooms) { rooms.sumOf { it.lightsOn } }
@@ -117,10 +119,10 @@ fun OverviewScreen(
     val roomsById = remember(rooms) { rooms.associateBy { ROOM_KEY + it.zone.id } }
     val favouritesById = remember(favourites) { favourites.associateBy { FAV + it.id } }
     val hasPlayer = player != null
-    val laneCards = remember(hasPlayer, hasHousehold, favouritesById, roomsById) { buildList {
-        add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
-        add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
-        add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
+    val laneCards = remember(hasPlayer, hasHousehold, favouritesById, roomsById, widgetsOff) { buildList {
+        if ("weather" !in widgetsOff) add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
+        if ("calendar" !in widgetsOff) add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
+        if ("fridge" !in widgetsOff) add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
         if (hasHousehold) add(LaneCard("home", LaneCard.Kind.Info, wide = true, height = 200))
         if (hasPlayer) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
         favouritesById.forEach { (key, device) ->

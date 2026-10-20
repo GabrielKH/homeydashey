@@ -154,3 +154,20 @@ fun hiddenDeviceIds(user: JsonObject): Set<String> {
         }
         .toSet()
 }
+
+/** An app installed on Homey, from `GET /api/manager/apps/app`. */
+@Serializable
+data class HomeyApp(
+    /** e.g. `com.apple.findmy`. */
+    val id: String,
+    val name: String = id,
+    val version: String? = null,
+    val enabled: Boolean = true,
+    /** starting, running, stopping, stopped or crashed. */
+    val state: String? = null,
+) {
+    val running: Boolean get() = enabled && (state == null || state == "running" || state == "starting")
+}
+
+/** The app a device comes from, from its `driverUri` (`homey:app:<appId>:<driver>`). */
+val Device.appId: String? get() = driverUri?.takeIf { it.startsWith("homey:app:") }?.removePrefix("homey:app:")?.substringBefore(':')?.ifEmpty { null }

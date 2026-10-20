@@ -265,4 +265,15 @@ class MemoryTest {
         d = Memory.merge(d, Memory.woke(g, Persona.Tars, at), 4)
         assertEquals(2, d.facts.first { it.kind == FactKind.Habit }.count)
     }
+
+    @Test fun `a module choice replaces the last one`() {
+        var data = MemoryData()
+        data = Memory.merge(data, Memory.moduleChoice("Calendar", on = true, source = "Built in: this tablet's accounts"), 1)
+        data = Memory.merge(data, Memory.moduleChoice("Calendar", on = true, source = "Homey app: IcalCalendar"), 2)
+        assertEquals(1, data.facts.size)
+        assertEquals("Homey app: IcalCalendar", data.facts.single().obj)
+        data = Memory.merge(data, Memory.moduleChoice("Calendar", on = false, source = "x"), 3)
+        assertEquals(1, data.facts.size)
+        assertTrue("turned off" in data.facts.single().obj)
+    }
 }

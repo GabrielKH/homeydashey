@@ -51,6 +51,9 @@ class HomeyClient(
 
     suspend fun moods(): Map<String, Mood> = get("api/manager/moods/mood")
 
+    /** The apps installed on Homey, by id. Needs the key's "View apps" permission (homey.app.readonly). */
+    suspend fun apps(): Map<String, HomeyApp> = get("api/manager/apps/app")
+
     /** Homey users with whether they are home; for the assistant, behind its "Who is home" switch. */
     suspend fun users(): JsonElement = HomeyJson.parseToJsonElement(execute(request("api/manager/users/user").get().build()))
 
@@ -125,6 +128,17 @@ class HomeyClient(
     suspend fun runAction(card: FlowCardAction, args: JsonObject = JsonObject(emptyMap())) {
         val body = buildJsonObject { put("args", args) }.toString()
         execute(flowCardRequest(card, "run").post(body.toRequestBody(JSON_TYPE)).build())
+    }
+
+    /**
+     * Runs an app's Flow "Then" card, such as IcalCalendar's "Get calendar event", and returns
+     * what the card gave back (its tokens).
+     */
+    suspend fun runAppAction(appId: String, cardId: String, args: JsonObject = JsonObject(emptyMap())): JsonElement {
+        val card = FlowCardAction(id = "homey:app:$appId:$cardId")
+        val body = buildJsonObject { put("args", args) }.toString()
+        val text = execute(flowCardRequest(card, "run").post(body.toRequestBody(JSON_TYPE)).build())
+        return if (text.isBlank()) JsonObject(emptyMap()) else HomeyJson.parseToJsonElement(text)
     }
 
     /** The choices an autocomplete argument offers, such as Sonos favourites. */

@@ -210,6 +210,16 @@ class HomeyStore(
 
     suspend fun flows(): List<HomeyFlow> = client.flows()
 
+    /** The apps installed on Homey, or null when the API key may not list them. */
+    suspend fun apps(): Map<String, HomeyApp>? = try {
+        client.apps()
+    } catch (e: HomeyHttpException) {
+        if (e.code == 401 || e.code == 403) null else throw e
+    }
+
+    suspend fun runAppAction(appId: String, cardId: String, args: JsonObject = JsonObject(emptyMap())): JsonElement =
+        client.runAppAction(appId, cardId, args)
+
     suspend fun users(): JsonElement = client.users()
 
     suspend fun logicVariables(): JsonElement = client.logicVariables()

@@ -262,6 +262,19 @@ object Memory {
         kind = FactKind.Said,
     )
 
+    /**
+     * How the house gets one part of the dashboard, from the modules page ("The house's
+     * calendar comes from the IcalCalendar Homey app"), as one fact a new choice replaces, so
+     * the assistant knows where its calendar, music or phones come from and what is turned off.
+     */
+    fun moduleChoice(module: String, on: Boolean, source: String): Fact = Fact(
+        who = HOUSE,
+        subject = "The house's ${module.lowercase()}",
+        relation = "comes from",
+        obj = if (on) source else "nowhere, it is turned off on the dashboard",
+        kind = FactKind.Said,
+    )
+
     /** That [asker] woke [character] by its name, counted like a habit with the part of the day. */
     fun woke(asker: Asker, character: Persona, at: ZonedDateTime): Fact = Fact(
         who = asker.id,

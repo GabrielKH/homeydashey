@@ -8,6 +8,7 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.CalendarContract
+import app.homeydash.homey.HomeyCalendarEvent
 import androidx.core.content.ContextCompat
 import java.time.LocalDate
 import java.time.ZoneId
@@ -66,7 +67,8 @@ data class CalendarEvent(
 
 /**
  * Reads the calendars synced to the tablet (for example a Google account's family
- * calendar) through Android's calendar provider; no sign-in of its own.
+ * calendar) through Android's calendar provider; no sign-in of its own. When the Calendar
+ * module's source is the IcalCalendar Homey app, the events come from Homey instead ([useHomey]).
  */
 class CalendarRepository(
     private val context: Context,
@@ -88,6 +90,16 @@ class CalendarRepository(
     private var observing = false
     private var job: Job? = null
 
+    /** Reads IcalCalendar's events on Homey, while the Calendar module uses it. */
+    private var homey: (suspend () -> List<HomeyCalendarEvent>)? = null
+    private var homeyEvents: List<CalendarEvent> = emptyList()
+    private var homeyRead = 0L
+    private val homeyNames = mutableMapOf<Long, String>()
+
+    private val _homeyError = MutableStateFlow<String?>(null)
+    /** Why Homey's calendar couldn't be read last time, for the module's page. */
+    val homeyError: StateFlow<String?> = _homeyError.asStateFlow()
+
     init {
         // The settings store emits on every write to any setting; only a new choice of calendars matters here.
         scope.launch { settings.calendars.distinctUntilChanged().collect { refresh() } }
@@ -101,7 +113,18 @@ class CalendarRepository(
 
     /** Call after the permission dialog closes. */
     fun permissionChanged() {
-        _hasPermission.value = granted()
+        _hasPermission.value = usable()
+        refresh()
+    }
+
+    /** Takes the events from Homey's IcalCalendar app with [reader], or from the tablet again with null. */
+    fun useHomey(reader: (suspend () -> List<HomeyCalendarEvent>)?) {
+        if (reader == null && homey == null) return
+        homey = reader
+        homeyRead = 0L
+        homeyEvents = emptyList()
+        _homeyError.value = null
+        _hasPermission.value = usable()
         refresh()
     }
 
@@ -110,6 +133,7 @@ class CalendarRepository(
     }
 
     fun refresh() {
+        homey?.let { refreshHomey(it); return }
         if (!granted()) return
         _hasPermission.value = true
         observe()
@@ -128,6 +152,55 @@ class CalendarRepository(
             _events.value = events
         }
     }
+
+    private fun refreshHomey(reader: suspend () -> List<HomeyCalendarEvent>) {
+        job?.cancel()
+        job = scope.launch {
+            // Homey runs a card per event, so read it now and then, not on every refresh.
+            if (System.currentTimeMillis() - homeyRead > HOMEY_EVERY || homeyEvents.isEmpty()) {
+                runCatching { reader() }
+                    .onSuccess { list ->
+                        homeyEvents = list.map { it.toEvent() }
+                        homeyRead = System.currentTimeMillis()
+                        _homeyError.value = null
+                    }
+                    .onFailure { _homeyError.value = it.message ?: it.toString() }
+            }
+            if (homey !== reader) return@launch
+            val counts = homeyEvents.groupingBy { it.calendarId }.eachCount()
+            val calendars = homeyEvents.distinctBy { it.calendarId }.map { e ->
+                CalendarInfo(e.calendarId, homeyNames[e.calendarId] ?: "Calendar", "Homey", e.color, visible = true, synced = true, events = counts[e.calendarId] ?: 0)
+            }.sortedBy { it.name.lowercase() }
+            _calendars.value = calendars
+            _events.value = homeyEvents.filter { it.calendarId in homeyShown(calendars, selected.value) }
+        }
+    }
+
+    /** The chosen calendars when they are Homey's; otherwise all of them. */
+    private fun homeyShown(calendars: List<CalendarInfo>, chosen: Set<String>): Set<Long> {
+        val ids = calendars.map { it.id }.toSet()
+        return chosen.mapNotNull { it.toLongOrNull() }.filter { it in ids }.toSet().ifEmpty { ids }
+    }
+
+    private fun HomeyCalendarEvent.toEvent(): CalendarEvent {
+        val calendarId = HOMEY_IDS + (calendar.hashCode().toLong() and 0xFFFFFFFL)
+        homeyNames[calendarId] = calendar
+        // The tablet's all-day events sit at UTC midnight, and the pages read them that way.
+        fun utcDay(millis: Long) = java.time.Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
+            .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        return CalendarEvent(
+            id = uid.hashCode().toLong(),
+            title = title,
+            begin = if (allDay) utcDay(begin) else begin,
+            end = if (allDay) utcDay(end).coerceAtLeast(utcDay(begin) + DAY) else end,
+            allDay = allDay,
+            color = HOMEY_COLORS[(calendarId % HOMEY_COLORS.size).toInt()],
+            location = location,
+            calendarId = calendarId,
+        )
+    }
+
+    private fun usable() = homey != null || granted()
 
     private fun granted() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
@@ -172,6 +245,13 @@ class CalendarRepository(
 
     /** Events from [from] up to [until] (exclusive) in the chosen calendars, for the calendar page. */
     suspend fun events(from: LocalDate, until: LocalDate): List<CalendarEvent> {
+        if (homey != null) {
+            val zone = ZoneId.systemDefault()
+            val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
+            val stop = until.atStartOfDay(zone).toInstant().toEpochMilli()
+            val shown = homeyShown(_calendars.value, selected.value)
+            return homeyEvents.filter { it.end > start && it.begin < stop && it.calendarId in shown }
+        }
         if (!granted()) return emptyList()
         val chosen = settings.calendars.first()
         return withContext(Dispatchers.IO) {
@@ -230,5 +310,9 @@ class CalendarRepository(
 
     private companion object {
         const val DAY = 24 * 60 * 60 * 1000L
+        const val HOMEY_EVERY = 15 * 60 * 1000L
+        /** Homey's calendars get ids far from the tablet's, so a saved choice of one never picks the other. */
+        const val HOMEY_IDS = 1L shl 40
+        val HOMEY_COLORS = intArrayOf(0xFF4C9AFF.toInt(), 0xFFE5534B.toInt(), 0xFF2BA79B.toInt(), 0xFFE08A3C.toInt(), 0xFF8A63D2.toInt())
     }
 }
