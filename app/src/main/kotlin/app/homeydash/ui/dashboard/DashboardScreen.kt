@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -81,6 +82,7 @@ import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.AssistantServices
 import app.homeydash.data.AppUpdater
 import app.homeydash.ui.assistant.AssistantLayer
+import app.homeydash.ui.assistant.LocalTimerChip
 import app.homeydash.ui.assistant.TimerIsland
 import app.homeydash.ui.assistant.AssistantSettingsDialog
 import app.homeydash.ui.assistant.FaceWatch
@@ -442,75 +444,78 @@ fun DashboardScreen(
                     CircularProgressIndicator(Modifier.align(Alignment.Center), color = GlassTheme.colors.fg)
                 }
             } else {
-                AnimatedContent(
-                    targetState = destination,
-                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
-                    label = "page",
-                ) { target ->
-                    when {
-                        target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
-                        target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
-                        target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label, kitchen.cooking.current()?.first?.title ?: "Recept") })
-                        target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
-                        target == CALENDAR -> CalendarScreen(
-                            hasPermission = calendarAllowed,
-                            events = events,
-                            load = { from, until -> calendar.events(from, until) },
-                            onPermissionResult = calendar::permissionChanged,
-                            onChooseCalendars = { actions.open(Sheet.Calendars) },
-                        )
-                        target.startsWith(ROOM) -> {
-                            val id = target.removePrefix(ROOM)
-                            val room = rooms.firstOrNull { it.zone.id == id }
-                            if (room == null) {
-                                // The room was deleted or emptied; go back home.
-                                LaunchedEffect(id) { destination = OVERVIEW }
-                            } else {
-                                RoomScreen(
-                                    room, sections, snapshot.zones, snapshot.moods, actions,
-                                    hasMusic = speakers.isNotEmpty(),
-                                    arrangement = arrangement,
-                                    onCardOrder = display::setCardOrder,
-                                )
+                // Every page's header shows the running kitchen timers first among its chips.
+                CompositionLocalProvider(LocalTimerChip provides { TimerIsland(assistant) }) {
+                    AnimatedContent(
+                        targetState = destination,
+                        transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                        label = "page",
+                    ) { target ->
+                        when {
+                            target == MOODS -> MoodsScreen(moods, snapshot.zones, actions)
+                            target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
+                            target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label, kitchen.cooking.current()?.first?.title ?: "Recept") })
+                            target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
+                            target == CALENDAR -> CalendarScreen(
+                                hasPermission = calendarAllowed,
+                                events = events,
+                                load = { from, until -> calendar.events(from, until) },
+                                onPermissionResult = calendar::permissionChanged,
+                                onChooseCalendars = { actions.open(Sheet.Calendars) },
+                            )
+                            target.startsWith(ROOM) -> {
+                                val id = target.removePrefix(ROOM)
+                                val room = rooms.firstOrNull { it.zone.id == id }
+                                if (room == null) {
+                                    // The room was deleted or emptied; go back home.
+                                    LaunchedEffect(id) { destination = OVERVIEW }
+                                } else {
+                                    RoomScreen(
+                                        room, sections, snapshot.zones, snapshot.moods, actions,
+                                        hasMusic = speakers.isNotEmpty(),
+                                        arrangement = arrangement,
+                                        onCardOrder = display::setCardOrder,
+                                    )
+                                }
                             }
+                            else -> OverviewScreen(
+                                rooms = rooms,
+                                moods = moods,
+                                player = DashboardLayout.featuredPlayer(players, chosen = null, last = lastPlayer),
+                                zones = snapshot.zones,
+                                connection = connection,
+                                actions = actions,
+                                hasMusic = speakers.isNotEmpty(),
+                                onRoom = { destination = ROOM + it },
+                                favourites = favourites,
+                                order = overviewOrder,
+                                onOrder = display::setOverviewOrder,
+                                hasHousehold = moduleOn("home") && (household.people.isNotEmpty() || !household.usersAllowed),
+                                    widgetsOff = buildSet {
+                                    if (!moduleOn("weather")) add("weather")
+                                    if (!moduleOn("calendar")) add("calendar")
+                                    if (!moduleOn("fridge")) add("fridge")
+                                },
+                                widget = { key ->
+                                    if (key == "fridge") FridgeCard(
+                                        kitchen,
+                                        onOpen = { destination = FRIDGE },
+                                        onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
+                                    )
+                                    if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
+                                    if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
+                                    if (key == "calendar") CalendarCard(
+                                        hasPermission = calendarAllowed,
+                                        events = events,
+                                        view = calendarView,
+                                        onView = display::setCalendarView,
+                                        onPermissionResult = calendar::permissionChanged,
+                                        onChooseCalendars = { actions.open(Sheet.Calendars) },
+                                        onOpen = { destination = CALENDAR },
+                                    )
+                                },
+                            )
                         }
-                        else -> OverviewScreen(
-                            rooms = rooms,
-                            moods = moods,
-                            player = DashboardLayout.featuredPlayer(players, chosen = null, last = lastPlayer),
-                            zones = snapshot.zones,
-                            connection = connection,
-                            actions = actions,
-                            hasMusic = speakers.isNotEmpty(),
-                            onRoom = { destination = ROOM + it },
-                            favourites = favourites,
-                            order = overviewOrder,
-                            onOrder = display::setOverviewOrder,
-                            hasHousehold = moduleOn("home") && (household.people.isNotEmpty() || !household.usersAllowed),
-                            widgetsOff = buildSet {
-                                if (!moduleOn("weather")) add("weather")
-                                if (!moduleOn("calendar")) add("calendar")
-                                if (!moduleOn("fridge")) add("fridge")
-                            },
-                            widget = { key ->
-                                if (key == "fridge") FridgeCard(
-                                    kitchen,
-                                    onOpen = { destination = FRIDGE },
-                                    onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
-                                )
-                                if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
-                                if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
-                                if (key == "calendar") CalendarCard(
-                                    hasPermission = calendarAllowed,
-                                    events = events,
-                                    view = calendarView,
-                                    onView = display::setCalendarView,
-                                    onPermissionResult = calendar::permissionChanged,
-                                    onChooseCalendars = { actions.open(Sheet.Calendars) },
-                                    onOpen = { destination = CALENDAR },
-                                )
-                            },
-                        )
                     }
                 }
             }
@@ -521,7 +526,6 @@ fun DashboardScreen(
                 onChooseSpeaker = { id -> assistantServices.settingsStore.update { it.copy(speakerId = id) } },
                 onOpenSettings = { showAssistantSettings = true },
             )
-            TimerIsland(assistant, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
             snapshot.error?.let { message ->
                 ErrorBanner(message, onDismiss = store::clearError, modifier = Modifier.align(Alignment.BottomCenter))
             }

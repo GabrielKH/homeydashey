@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -55,7 +57,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import app.homeydash.agent.KitchenTimer
 import app.homeydash.agent.Timers
 import app.homeydash.assistant.Assistant
@@ -68,10 +74,14 @@ import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
 
+/** Draws the running kitchen timers; every page header calls it first among its chips. */
+val LocalTimerChip = compositionLocalOf<@Composable () -> Unit> { {} }
+
 /**
- * The kitchen timers as one glass island at the top of every page: the timer that rings
- * next with a "+2" for the others, which opens a list grouped by recipe. A ringing timer
- * makes it grow and pulse until it is stopped or given more time.
+ * The kitchen timers as one glass pill beside each page's chips (Goodnight, lights, music
+ * on the overview), clear of the assistant's island at the top: the timer
+ * that rings next with a "+2" for the others, which drops down a list grouped by recipe. A
+ * ringing timer turns it red and pulsing until it is stopped or given more time.
  */
 @Composable
 fun TimerIsland(assistant: Assistant, modifier: Modifier = Modifier) {
@@ -98,11 +108,8 @@ fun TimerIsland(assistant: Assistant, modifier: Modifier = Modifier) {
     val ordered = Timers.ordered(timers, now)
     val first = ordered.first()
 
-    Column(
-        modifier.widthIn(max = 520.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    val drop = with(LocalDensity.current) { IntOffset(0, (PILL_HEIGHT + 8.dp).roundToPx()) }
+    Box(modifier) {
         if (first.ringing) {
             RingingPill(
                 first,
@@ -114,14 +121,16 @@ fun TimerIsland(assistant: Assistant, modifier: Modifier = Modifier) {
                 first,
                 now,
                 others = ordered.size - 1,
-                onClick = { open = !open; touched++ },
+                onClick = { open = true; touched++ },
                 onStop = { board.stop(first.id) },
             )
         }
-        AnimatedVisibility(
-            visible = open && (ordered.size > 1 || !first.ringing),
-            enter = fadeIn(tween(160)) + expandVertically(tween(200), expandFrom = Alignment.Top),
-            exit = fadeOut(tween(120)) + shrinkVertically(tween(160), shrinkTowards = Alignment.Top),
+        // The list drops down over the cards below, lined up with the pill's right edge.
+        if (open && (ordered.size > 1 || !first.ringing)) Popup(
+            alignment = Alignment.TopEnd,
+            offset = drop,
+            onDismissRequest = { open = false; renaming = null },
+            properties = PopupProperties(focusable = true),
         ) {
             TimerList(
                 timers = timers,
@@ -145,24 +154,24 @@ private fun IslandPill(timer: KitchenTimer, now: Long, others: Int, onClick: () 
     val g = GlassTheme.colors
     Row(
         Modifier
-            .heightIn(min = 52.dp)
+            .height(PILL_HEIGHT)
             .pressable(onClick)
             .glass(PillShape)
             .animateContentSize()
-            .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 7.dp, end = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        TimerRing(timer.progress(now), if (timer.paused) g.muted else g.on, size = 38.dp)
+        TimerRing(timer.progress(now), if (timer.paused) g.muted else g.on, size = 30.dp)
         Text(
             timer.name(),
             style = MaterialTheme.typography.titleMedium,
             color = g.fg,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 200.dp),
+            modifier = Modifier.widthIn(max = 160.dp),
         )
-        TimeText(timer, now, big = true)
+        TimeText(timer, now, big = false)
         if (others > 0) {
             Box(
                 Modifier.clip(PillShape).background(g.on).padding(horizontal = 10.dp, vertical = 3.dp),
@@ -187,21 +196,21 @@ private fun RingingPill(timer: KitchenTimer, onStop: () -> Unit, onAdd: (Int) ->
     )
     Row(
         Modifier
-            .heightIn(min = 68.dp)
+            .height(PILL_HEIGHT)
             .glass(PillShape)
             .drawBehind { drawRect(g.danger.copy(alpha = pulse)) }
-            .padding(start = 22.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 14.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SymIcon(Sym.timer, filled = true, size = 26.dp, tint = g.fg)
+        SymIcon(Sym.timer, filled = true, size = 22.dp, tint = g.fg)
         Text(
             (timer.label?.let { "$it is done" } ?: "Timer done"),
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleMedium,
             color = g.fg,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 240.dp).padding(end = 6.dp),
+            modifier = Modifier.widthIn(max = 200.dp).padding(end = 4.dp),
         )
         TextButton("+1 min") { onAdd(1) }
         TextButton("+5 min") { onAdd(5) }
@@ -377,10 +386,10 @@ private fun TextButton(text: String, strong: Boolean = false, onClick: () -> Uni
     val g = GlassTheme.colors
     Box(
         Modifier
-            .heightIn(min = 44.dp)
+            .heightIn(min = 38.dp)
             .pressable(onClick)
             .then(if (strong) Modifier.clip(PillShape).background(g.danger) else Modifier.glass(PillShape))
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(text, style = MaterialTheme.typography.labelLarge, color = if (strong) Color.White else g.fg, fontWeight = FontWeight.Bold)
@@ -388,4 +397,6 @@ private fun TextButton(text: String, strong: Boolean = false, onClick: () -> Uni
 }
 
 private const val TICK_MS = 250L
+/** As tall as the chips beside it in the overview's header. */
+private val PILL_HEIGHT = 44.dp
 private const val CLOSE_AFTER_MS = 8_000L
