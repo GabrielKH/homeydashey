@@ -3,6 +3,7 @@ package app.homeydash.ui.dashboard
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -79,6 +80,9 @@ private val GROUPS = listOf(
 /** The dashboard's own pages; every other section is an assistant page. */
 val DASHBOARD_SECTIONS = setOf("appearance", "screen", "homey", "app")
 
+/** How big the wide settings page draws everything compared with the dashboard. */
+private const val WindowScale = 0.8f
+
 /** Screens at least this wide get settings as one page with a side menu, like a tablet's own settings. */
 val WIDE_SETTINGS = 840.dp
 
@@ -117,7 +121,8 @@ fun SettingsWindow(
         if (id !in DASHBOARD_SECTIONS) nav.page = id
         onSection(id)
     }
-    AppDialog(onDismiss) { Compact {
+    // A little smaller than the popups, with more room between things.
+    AppDialog(onDismiss) { Compact(WindowScale) {
         BackHandler(onBack = back)
         val screen = screenSizeDp()
         Row(
@@ -150,8 +155,8 @@ fun SettingsWindow(
                 // Each page starts at its top; only the content scrolls.
                 key(section) {
                     Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         if (onDashboard) {
                             dashboard(section)
@@ -169,7 +174,7 @@ fun SettingsWindow(
 @Composable
 private fun Menu(selected: String, compact: Boolean, onCompact: (Boolean) -> Unit, onPick: (String) -> Unit) {
     val g = GlassTheme.colors
-    val width by animateDpAsState(if (compact) 76.dp else 232.dp, label = "settingsMenu")
+    val width by animateDpAsState(if (compact) 84.dp else 248.dp, label = "settingsMenu")
     Column(
         Modifier
             .width(width)
@@ -200,18 +205,29 @@ private fun Menu(selected: String, compact: Boolean, onCompact: (Boolean) -> Uni
             Modifier.weight(1f).verticalScroll(rememberScrollState()),
             horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
         ) {
+            // Each group in a box of its own, its name above it.
             GROUPS.forEachIndexed { i, (name, categories) ->
-                if (compact) {
-                    if (i > 0) Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
-                } else {
+                if (!compact) {
                     Text(
                         name.uppercase(),
                         style = MaterialTheme.typography.labelMedium,
                         color = g.muted,
-                        modifier = Modifier.padding(start = 12.dp, top = if (i == 0) 0.dp else 18.dp, bottom = 6.dp),
+                        modifier = Modifier.padding(start = 12.dp, top = if (i == 0) 0.dp else 20.dp, bottom = 8.dp),
                     )
                 }
-                categories.forEach { c -> MenuItem(c, c.id == selected, compact) { onPick(c.id) } }
+                val box = RoundedCornerShape(20.dp)
+                Column(
+                    Modifier
+                        .padding(top = if (compact && i > 0) 12.dp else 0.dp)
+                        .then(if (compact) Modifier else Modifier.fillMaxWidth())
+                        .background(g.glassBottom, box)
+                        .border(1.dp, g.glassLine, box)
+                        .padding(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
+                ) {
+                    categories.forEach { c -> MenuItem(c, c.id == selected, compact) { onPick(c.id) } }
+                }
             }
         }
     }
@@ -223,7 +239,6 @@ private fun MenuItem(category: Category, selected: Boolean, compact: Boolean, on
     if (compact) {
         Box(
             Modifier
-                .padding(bottom = 4.dp)
                 .size(52.dp)
                 .pressable(onClick)
                 .then(if (selected) Modifier.glass(RoundedCornerShape(16.dp)) else Modifier),
@@ -236,10 +251,9 @@ private fun MenuItem(category: Category, selected: Boolean, compact: Boolean, on
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(bottom = 2.dp)
             .pressable(onClick)
             .then(if (selected) Modifier.glass(RoundedCornerShape(16.dp)) else Modifier)
-            .padding(horizontal = 12.dp, vertical = 11.dp),
+            .padding(horizontal = 12.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SymIcon(category.icon, filled = selected, size = 23.dp, tint = if (selected) g.fg else g.muted)
