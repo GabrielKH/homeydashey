@@ -502,6 +502,7 @@ class Agent(
         val book = memory?.takeIf { remembers(settings, view.local) } ?: return ""
         if (!Memory.CUES.containsMatchIn(question)) return ""
         val found = Memory.recall(book.data.value, question, settings.asker?.id, view.local, System.currentTimeMillis(), limit = 3)
+        book.used(question, settings.asker, RecallVia.Cue, found)
         if (found.isEmpty()) return ""
         listener?.trace("memory", "Recalled for the question: " + found.joinToString("; ") { Memory.line(it) }, found.any { it.localOnly })
         return "\nRemembered from earlier (use it if it fits):\n" + found.joinToString("\n") { "- " + Memory.line(it) }

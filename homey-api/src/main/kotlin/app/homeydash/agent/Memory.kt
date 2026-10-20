@@ -1,9 +1,12 @@
 package app.homeydash.agent
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -49,10 +52,32 @@ data class Fact(
     val parts: Map<String, Int> = emptyMap(),
     /** Learned from something only a local AI may see; never recalled for an internet AI. */
     val localOnly: Boolean = false,
+    /** How many times it was handed to the AI, and when last; [count] is how often it was said or done. */
+    val used: Int = 0,
+    val lastUsed: Long = 0,
+)
+
+/**
+ * One time the memory was looked in, for Settings → Memory → Recently used: what was asked,
+ * by whom, whether a cue word in the question or the AI's own recall tool looked, and the
+ * facts that came back, kept as lines too so a fact forgotten since still reads.
+ */
+@Serializable
+data class Recall(
+    val at: Long,
+    val who: String = Memory.HOUSE,
+    val whoName: String = "",
+    val question: String,
+    val via: RecallVia,
+    val facts: List<String> = emptyList(),
+    val lines: List<String> = emptyList(),
 )
 
 @Serializable
-data class MemoryData(val version: Int = 1, val facts: List<Fact> = emptyList())
+enum class RecallVia { Cue, Tool }
+
+@Serializable
+data class MemoryData(val version: Int = 1, val facts: List<Fact> = emptyList(), val recalls: List<Recall> = emptyList())
 
 /**
  * The assistant's long memory, kept on the tablet and out of the prompt, after Graphify's idea:
@@ -64,6 +89,7 @@ object Memory {
     const val HOUSE = ""
     const val MAX_FACTS = 400
     const val RECALL_LIMIT = 4
+    const val MAX_RECALLS = 60
 
     /** Words that say the answer needs something from before: habits, favourites, earlier talks. */
     val CUES = Regex(
@@ -185,6 +211,24 @@ object Memory {
         val (about, rest) = facts.partition { it.kind == FactKind.About }
         val kept = if (facts.size <= MAX_FACTS) facts else about + rest.sortedByDescending { strength(it, now) }.take((MAX_FACTS - about.size).coerceAtLeast(0))
         return data.copy(facts = kept)
+    }
+
+    /** Counts [found] as used for [question], newest recall first, keeping the last [MAX_RECALLS]. */
+    fun used(data: MemoryData, question: String, asker: Asker?, via: RecallVia, found: List<Fact>, now: Long): MemoryData {
+        val ids = found.map { it.id }.toSet()
+        val recall = Recall(
+            at = now,
+            who = asker?.id ?: HOUSE,
+            whoName = asker?.name.orEmpty(),
+            question = question.trim().take(200),
+            via = via,
+            facts = found.map { it.id },
+            lines = found.map { line(it) },
+        )
+        return data.copy(
+            facts = data.facts.map { if (it.id in ids) it.copy(used = it.used + 1, lastUsed = now) else it },
+            recalls = (listOf(recall) + data.recalls).take(MAX_RECALLS),
+        )
     }
 
     /** Removes the facts [what] names (by words); how many went. */
@@ -366,6 +410,21 @@ class MemoryBook(private val dir: File, private val clock: () -> Long = System::
         }
     }
 
+    /** Saves on its own, so a question being put together needn't wait for the disk. */
+    private val saver = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** That [found] was handed to the AI for [question]; counted and logged in the background. */
+    fun used(question: String, asker: Asker?, via: RecallVia, found: List<Fact>) {
+        val now = clock()
+        saver.launch { runCatching { change { d -> Memory.used(d, question, asker, via, found, now) } } }
+    }
+
+    /** Puts [obj] in place of what fact [id] says, from Settings → Memory. */
+    suspend fun edit(id: String, obj: String) {
+        val text = obj.trim().takeIf { it.isNotEmpty() } ?: return
+        change { d -> d.copy(facts = d.facts.map { if (it.id == id) it.copy(obj = text) else it }) }
+    }
+
     suspend fun learn(facts: List<Fact>) {
         if (facts.isEmpty()) return
         change { d -> facts.fold(d) { acc, f -> Memory.merge(acc, f, clock()) } }
@@ -382,7 +441,9 @@ class MemoryBook(private val dir: File, private val clock: () -> Long = System::
     suspend fun clear() = change { MemoryData() }
 
     /** Everything that is only [personId]'s, when they are removed from People. */
-    suspend fun forgetPerson(personId: String) = change { d -> d.copy(facts = d.facts.filterNot { it.who == personId }) }
+    suspend fun forgetPerson(personId: String) = change { d ->
+        d.copy(facts = d.facts.filterNot { it.who == personId }, recalls = d.recalls.filterNot { it.who == personId })
+    }
 
     private suspend fun change(edit: (MemoryData) -> MemoryData) = lock.withLock {
         val next = edit(_data.value)
@@ -426,6 +487,7 @@ class MemoryTools(private val book: MemoryBook, private val clock: () -> Long = 
         return when (call.name) {
             "recall" -> {
                 val found = Memory.recall(book.data.value, str("about"), asker?.id, local, clock())
+                book.used(str("about"), asker, RecallVia.Tool, found)
                 ToolResult(
                     if (found.isEmpty()) "No memory of that." else found.joinToString("\n") { Memory.line(it) },
                     localOnly = found.any { it.localOnly },
