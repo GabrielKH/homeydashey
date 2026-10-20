@@ -185,6 +185,28 @@ class ListeningTest {
     }
 
     @Test
+    fun `an ööö while searching for the words is waited through, never sent`() {
+        for (thinking in listOf("Ööö…", "Äää", "Eeeh,", "Mmmm.", "Hmm, ööh", "Ö.")) {
+            assertEquals(thinking, "", TurnEnd.clean(thinking))
+            val j = TurnJudge.judge(thinking, "Nova", held = false, turn = speech(1.0, 150.0, 140.0, 4.0, 0.5))
+            assertTrue(j.line(), j.waitMs >= 3000)
+        }
+        assertEquals("Tänd lampan", TurnEnd.clean("Äää, tänd lampan"))
+        assertEquals("Om en timme", TurnEnd.clean("Om en timme"))
+        assertFalse(TurnEnd.complete("Tänd, ööö"))
+    }
+
+    @Test
+    fun `a known voice over its bar plus a greeting wakes it even when the margin is small`() {
+        val v = WakeJudge(alpha = MicSensitivity.alpha(50)).judge(
+            WakeJudge.prior(mediaPlaying = false, nobodyHome = false, faceKnown = false),
+            listOf(WakeJudge.Witness { WakeJudge.spotter(withGreeting = true) }, WakeJudge.Witness { WakeJudge.voice(0.02f, "Gabriel") }),
+        )
+        assertTrue(v.line(), v.wake)
+        assertEquals(-1.8, WakeJudge.voice(-0.15f, null)!!.lambda, 1e-6)
+    }
+
+    @Test
     fun `a false wake is remembered once, found again, and the oldest go after sixty`() {
         val print = SoundPrint.of(jingle(1))
         val fact = Memory.falseWake(print, "Kök", noon)!!
@@ -244,8 +266,11 @@ class WakeKeywordsTest {
         assertEquals("▁TA R S", WakeKeywords.encode("TARS", tokens))
         assertEquals("▁HE J ▁NO V A", WakeKeywords.encode("hej Nova", tokens))
         val lines = WakeKeywords.keywords(listOf("Nova", "TARS"), tokens)
-        assertTrue(lines.toString(), "▁NO V A :1.5 #0.25 @n0" in lines)
-        assertTrue(lines.toString(), "▁HE Y ▁TA R S :1.5 #0.25 @g1" in lines)
+        assertTrue(lines.toString(), "▁NO V A :2.0 #0.15 @n0" in lines)
+        assertTrue(lines.toString(), "▁HE Y ▁TA R S :2.0 #0.15 @g1" in lines)
+        // The way the model itself writes TARS is there too.
+        assertTrue(lines.toString(), "▁HE Y ▁T AR S :2.0 #0.15 @g1" in lines)
+        assertTrue(WakeKeywords.encodings("TARS", tokens).containsAll(listOf("▁TA R S", "▁T AR S")))
         assertTrue(lines.toString(), lines.any { it.startsWith("▁NOW A ") })
         assertTrue(lines.toString(), lines.any { it.startsWith("▁TA R Z ") })
         assertEquals(WakeKeywords.Tag(1, true), WakeKeywords.tag("@g1"))

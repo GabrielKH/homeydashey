@@ -276,6 +276,8 @@ class Assistant(
         private set
     /** The last question was spoken, so the answer is followed by listening. */
     private var lastByVoice by mutableStateOf(false)
+    /** The last question ended with a goodbye: the conversation ends once it is answered. */
+    private var leaveAfter = false
 
     /** Talking by voice right now: the face fills the screen. */
     val voiceActive: Boolean
@@ -539,7 +541,7 @@ class Assistant(
                     val sinceNoticed = SystemClock.elapsedRealtime() - noticed
                     // The wait counts from when the pause began; what Whisper took is already part of it.
                     services.recorder.waitFor(pause, (judged.waitMs - SpeechRecorder.PAUSE_MS - sinceNoticed).coerceAtLeast(0))
-                    services.trace("listen", "Pause after \"$text\": ${judged.line()}" + (if (habit != 1.0) " (pause habit ×%.2f)".format(habit) else ""), true)
+                    services.trace("listen", "Pause after \"$text\": ${judged.line()}" + (if (habit != 1.0) " (pause habit ×%.2f)".format(habit) else ""), false)
                 }
             },
             onDone = done@{ wav ->
@@ -622,14 +624,26 @@ class Assistant(
         val text = TurnEnd.clean(said)
         meter(FloatArray(4))
         partial = ""
+        // The last answer asked "anything else?": a bare "no" then means that's all.
+        val offered = pending == null && lines.lastOrNull()?.takeIf { !it.fromUser }?.let { FollowUp.offers(it.text) } == true
+        val closing = FollowUp.closing(text, settings.wakeName)
         when {
+            // Only "ööö": still searching for the words, so it keeps listening.
+            text.isBlank() && said.isNotBlank() -> { keepConversation(); listenAgainOrRest() }
             text.isBlank() -> listenAgainOrRest()
             // Just the name ("Hey Nova") during a conversation: still here, keep listening.
             WakeName.heard(text, settings.wakeName) -> { keepConversation(); listenAgainOrRest() }
-            FollowUp.ends(text, settings.wakeName) -> endConversation()
+            FollowUp.ends(text, settings.wakeName, offered) -> {
+                services.trace("listen", "\"$text\" ends the conversation.", false)
+                endConversation()
+            }
             else -> {
-                swedishUntil = if (app.homeydash.agent.Confirmation.looksSwedish(text)) SystemClock.elapsedRealtime() + SWEDISH_FOR_MS else 0L
-                send(text, byVoice = true)
+                // A goodbye after a request ("släck lampan, hej då"): answered, then it leaves.
+                leaveAfter = closing != null
+                val ask = closing ?: text
+                if (closing != null) services.trace("listen", "\"$text\": answers \"$ask\", then ends the conversation.", false)
+                swedishUntil = if (app.homeydash.agent.Confirmation.looksSwedish(ask)) SystemClock.elapsedRealtime() + SWEDISH_FOR_MS else 0L
+                send(ask, byVoice = true)
             }
         }
     }
@@ -696,6 +710,7 @@ class Assistant(
     }
 
     private fun endConversation() {
+        leaveAfter = false
         conversing = false
         conversationUntil = 0L
         if (state == AssistantState.Listening) services.input.stop()
@@ -880,6 +895,7 @@ class Assistant(
         // Heard with the microphone left open after an answer: may be people talking, not a question.
         val followUp = byVoice && conversing
         lastByVoice = byVoice
+        if (!byVoice) leaveAfter = false
         // A typed question ends a spoken conversation.
         if (!byVoice) {
             conversing = false
@@ -1121,7 +1137,10 @@ class Assistant(
         state = AssistantState.Idle
         // A spoken question, or a yes/no question, is followed by listening for the next one.
         val yesNo = pending?.tapOnly == false
-        if (yesNo || (lastByVoice && settings.followUp != FollowUp.Off)) {
+        val leaving = leaveAfter.also { leaveAfter = false }
+        if (leaving && !yesNo) {
+            endConversation()
+        } else if (yesNo || (lastByVoice && settings.followUp != FollowUp.Off)) {
             keepConversation()
             listen()
         } else {

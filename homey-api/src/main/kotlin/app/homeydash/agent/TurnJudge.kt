@@ -22,6 +22,8 @@ object TurnJudge {
     const val CUES = 5
     const val MIN_WAIT_MS = 300L
     const val MAX_WAIT_MS = 3000L
+    /** The wait while nothing but "ööö" has been said: searching for the words. */
+    const val THINKING_MS = 5000.0
     /** The last stretch of speech the ending is judged on. */
     private const val ENDING_MS = 300
     private const val RATE_WINDOW_MS = 600
@@ -47,6 +49,12 @@ object TurnJudge {
      * what Whisper made of it ([text]) and whether a held sound came just before the pause.
      */
     fun judge(text: String, wakeName: String, held: Boolean, turn: ShortArray, habit: Double = 1.0): Judgement {
+        // Only "ööö" or "hmm" so far, or the name alone: the words haven't come yet, so it
+        // waits as long as a person searching for them needs.
+        val words = TurnEnd.clean(text)
+        if (words.isBlank() || (wakeName.isNotBlank() && WakeName.heard(words, wakeName))) {
+            return Judgement(0, (THINKING_MS * habit.coerceIn(0.6, 1.6)).roundToInt().toLong(), emptyList(), listOf("any words yet"))
+        }
         val found = ArrayList<String>()
         val missing = ArrayList<String>()
         fun cue(name: String, there: Boolean) = if (there) found += name else missing += name

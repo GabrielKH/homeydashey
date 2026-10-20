@@ -88,7 +88,7 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
          * The spotter's word: a hit over its threshold is evidence for, more when the name came
          * with a greeting ("hey Nova": two words are harder to hear by chance than one).
          */
-        fun spotter(withGreeting: Boolean): Evidence = Evidence("spotter", if (withGreeting) 3.0 else 2.0, if (withGreeting) "with greeting" else "name alone")
+        fun spotter(withGreeting: Boolean): Evidence = Evidence("spotter", if (withGreeting) 3.5 else 2.5, if (withGreeting) "with greeting" else "name alone")
 
         /**
          * The voiceprint's word from how far over (or under) their bar the closest known voice
@@ -97,12 +97,13 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA) {
          */
         fun voice(margin: Float?, who: String?): Evidence? {
             if (margin == null) return null
-            val lambda = (margin * 12.0).coerceIn(-3.0, 3.5)
+            // Over their bar at all already counts for: a cold or a quiet "hey" keeps the margin small.
+            val lambda = if (margin >= 0 && who != null) (1.5 + margin * 10.0).coerceAtMost(3.5) else (margin * 12.0).coerceIn(-3.0, 3.5)
             return Evidence("voice", lambda, if (who != null) "$who's" else "nobody known")
         }
 
         /** The tablet's own voice (its text-to-speech is a taught voice too): near-certain evidence against. */
-        fun itself(): Evidence = Evidence("voice", -6.0, "its own")
+        fun itself(): Evidence = Evidence("voice", -8.0, "its own")
 
         /** A stored false wake that sounds the same: [ber] is the best bit error rate against them. */
         fun fingerprint(ber: Double?): Evidence? = when {

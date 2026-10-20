@@ -40,6 +40,34 @@ object WakeKeywords {
         return out.joinToString(" ").takeIf { it.isNotEmpty() }
     }
 
+    /**
+     * Every way to write [phrase] in the fewest of the model's tokens: "TARS" is "▁TA R S" by
+     * greedy match, but the model itself hears "▁T AR S", and a keyword only fires on the
+     * tokens the model would emit. Empty when a letter has no token.
+     */
+    fun encodings(phrase: String, tokens: Set<String>): List<String> {
+        var out = listOf("")
+        for (word in phrase.uppercase().split(' ').filter { it.isNotEmpty() }) {
+            val ways = splits("▁" + word.filter { it.isLetter() }, tokens)
+            if (ways.isEmpty()) return emptyList()
+            val fewest = ways.minOf { it.size }
+            val best = ways.filter { it.size == fewest }.take(MAX_SPLITS).map { it.joinToString(" ") }
+            out = out.flatMap { a -> best.map { b -> if (a.isEmpty()) b else "$a $b" } }
+        }
+        return out.filter { it.isNotEmpty() }
+    }
+
+    /** All the ways to cut [text] into entries of [tokens]. */
+    private fun splits(text: String, tokens: Set<String>): List<List<String>> {
+        if (text.isEmpty()) return listOf(emptyList())
+        val out = ArrayList<List<String>>()
+        for (end in 1..text.length) {
+            val piece = text.substring(0, end)
+            if (piece in tokens) splits(text.substring(end), tokens).forEach { out += listOf(piece) + it }
+        }
+        return out
+    }
+
     /** [name] and the ways it tends to be said: a Swedish "Nova" lands as NOVA, NOVAH, NOVER or NOWA. */
     fun variants(name: String): List<String> {
         val n = name.uppercase().filter { it.isLetter() || it == ' ' }.trim()
@@ -48,6 +76,9 @@ object WakeKeywords {
         if (n.endsWith("A")) { out += n + "H"; out += n.dropLast(1) + "ER" }
         if ('V' in n) out += n.replace('V', 'W')
         if (n.endsWith("S")) { out += n.dropLast(1) + "Z"; out += n + "E" }
+        // What the model tends to hear instead, from spoken test clips: NOVAL, NOVAK, TALS, TAS.
+        if (n.last() in "AEIOU") { out += n + "L"; out += n + "K" }
+        if ('R' in n.drop(1)) { out += n.replace('R', 'L'); out += n.replace("R", "") }
         return out.toList()
     }
 
@@ -60,8 +91,8 @@ object WakeKeywords {
         val lines = ArrayList<String>()
         names.forEachIndexed { i, name ->
             for (v in variants(name)) {
-                encode(v, tokens)?.let { lines += "$it :%.1f #%.2f @n$i".format(boost, threshold) }
-                for (g in GREETINGS) encode("$g $v", tokens)?.let { lines += "$it :%.1f #%.2f @g$i".format(boost, threshold) }
+                encodings(v, tokens).forEach { lines += "$it :%.1f #%.2f @n$i".format(boost, threshold) }
+                for (g in GREETINGS) encodings("$g $v", tokens).forEach { lines += "$it :%.1f #%.2f @g$i".format(boost, threshold) }
             }
         }
         return lines.distinct()
@@ -81,6 +112,10 @@ object WakeKeywords {
     /** The token entries of a tokens.txt ("▁NO 123" per line). */
     fun tokensOf(text: String): Set<String> = text.lineSequence().map { it.substringBefore(' ').trim() }.filter { it.isNotEmpty() }.toSet()
 
-    const val BOOST = 1.5f
-    const val THRESHOLD = 0.25f
+    private const val MAX_SPLITS = 4
+    // Measured on 198 spoken clips (three voices, three speeds): with every token split and the
+    // extra variants, 2.0/0.15 heard 52 of 90 calls against 30 for the first setting, and let 19
+    // of 108 other sentences through to the wake judge, which drops those.
+    const val BOOST = 2.0f
+    const val THRESHOLD = 0.15f
 }

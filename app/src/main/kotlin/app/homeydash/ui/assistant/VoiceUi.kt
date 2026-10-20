@@ -185,18 +185,18 @@ fun WakeWatch(assistant: Assistant, services: AssistantServices, settings: Agent
                             services.trace(
                                 "wake",
                                 "\"${character.label}\" spotted (prior %.2f): ${verdict.line()} in ${SystemClock.elapsedRealtime() - began} ms. ${who.log}".format(prior),
-                                localOnly = true,
+                                localOnly = false,
                             )
                             // Over its own voice, only someone it knows can cut in, so TARS saying
                             // "TARS" doesn't interrupt himself.
                             val selfHeard = speaking && known.isNotEmpty() && who.person == null
-                            if (verdict.wake && selfHeard) services.trace("wake", "Ignored a wake while talking: no known voice.", localOnly = true)
+                            if (verdict.wake && selfHeard) services.trace("wake", "Ignored a wake while talking: no known voice.", localOnly = false)
                             // The other character answers people it recognises; with nobody taught it can't tell, so anyone.
                             val stranger = who.person == null && known.isNotEmpty() && (settings.onlyKnownVoices || character != settings.persona)
-                            if (verdict.wake && stranger && !selfHeard) services.trace("wake", "Ignored \"${character.label}\": the voice isn't someone it knows.", localOnly = true)
+                            if (verdict.wake && stranger && !selfHeard) services.trace("wake", "Ignored \"${character.label}\": the voice isn't someone it knows.", localOnly = false)
                             // Another character answers those who picked it under People.
                             val notTheirs = !selfHeard && !stranger && who.person != null && !settings.answers(character, who.person)
-                            if (verdict.wake && notTheirs) services.trace("wake", "Ignored \"${character.label}\": ${who.person?.name} hasn't picked ${character.label} under People.", localOnly = true)
+                            if (verdict.wake && notTheirs) services.trace("wake", "Ignored \"${character.label}\": ${who.person?.name} hasn't picked ${character.label} under People.", localOnly = false)
                             if (verdict.wake && !selfHeard && !stranger && !notTheirs) {
                                 wake.stop(token)
                                 assistant.wake(who.person, character, hit.sound)
