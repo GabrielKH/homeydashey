@@ -46,11 +46,11 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun KnowHowTopics(services: AssistantServices, settings: AgentSettings, tools: AgentTools) {
+internal fun KnowHowTopics(services: AssistantServices, settings: AgentSettings, view: app.homeydash.agent.HomeView, tools: AgentTools) {
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
     val data by services.knowHow.data.collectAsState()
-    val skills = remember(data, settings.batteryReminders) { KnowHow.graph(data, settings.batteryReminders) }
+    val skills = remember(data, settings.batteryReminders, view) { KnowHow.graph(data, settings.batteryReminders, view) }
     val specs = remember(tools) { tools.specs() }
     SwitchRow(
         "Only the know-how a question needs",
@@ -111,7 +111,7 @@ internal fun KnowHowTopics(services: AssistantServices, settings: AgentSettings,
 private fun TopicBox(services: AssistantServices, skill: Skill, mine: List<String>, learned: List<String>, used: Int, specs: List<app.homeydash.agent.ToolSpec>) {
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
-    SettingsBox(skill.title + if (skill.own) " (yours)" else "") {
+    SettingsBox(skill.title + if (skill.own) " (yours)" else if (skill.fromHomey) " (from Homey)" else "") {
         Text(
             buildString {
                 append("Comes with a question about ").append(skill.about.ifBlank { skill.title.lowercase() })

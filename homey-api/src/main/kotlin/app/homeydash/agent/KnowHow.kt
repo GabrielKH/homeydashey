@@ -42,6 +42,8 @@ data class Skill(
     val always: Boolean = false,
     /** Made by the owner, not shipped with the app. */
     val own: Boolean = false,
+    /** Made from what is in Homey right now ([HomeyTopics]), so it changes as the house does. */
+    val fromHomey: Boolean = false,
 )
 
 /**
@@ -58,6 +60,8 @@ data class KnowHowData(
     val learned: Map<String, List<String>> = emptyMap(),
     val used: Map<String, Int> = emptyMap(),
     val lastUsed: Map<String, Long> = emptyMap(),
+    /** When each topic made from Homey was first seen, so a new kind of device in the house is noticed once. */
+    val seen: Map<String, Long> = emptyMap(),
 )
 
 /** A topic found for a question, with how strongly and why ("words: spela", "device: Roborock"). */
@@ -221,12 +225,15 @@ object KnowHow {
     )
 
     /**
-     * Every topic on this tablet: the built-in ones with the owner's rules and the learned words
-     * added, then the owner's own. An own topic with a built-in's id adds to it instead.
+     * Every topic on this tablet: the built-in ones and those made from what is in Homey
+     * ([HomeyTopics], from [view]) with the owner's rules and the learned words added, then the
+     * owner's own. An own topic with the id of one of the others adds to it instead.
      */
-    fun graph(data: KnowHowData, batteryReminders: Boolean = true): List<Skill> {
+    fun graph(data: KnowHowData, batteryReminders: Boolean = true, view: HomeView? = null): List<Skill> {
         val own = data.own.associateBy { it.id }
-        val built = builtIn(batteryReminders).map { s ->
+        val shipped = builtIn(batteryReminders)
+        val fromHomey = view?.let { v -> HomeyTopics.from(v, shipped.flatMap { it.classes }.toSet()) }.orEmpty()
+        val built = (shipped + fromHomey).map { s ->
             val mine = own[s.id]
             s.copy(
                 words = (s.words + mine?.words.orEmpty().map(::loose) + data.learned[s.id].orEmpty()).distinct(),
@@ -418,6 +425,21 @@ class KnowHowBook(private val dir: File, private val clock: () -> Long = System:
                 change { d -> d.copy(used = d.used + ids.associateWith { (d.used[it] ?: 0) + 1 }, lastUsed = d.lastUsed + ids.associateWith { now }) }
             }
         }
+    }
+
+    /**
+     * Notes the topics made from Homey that are there now; returns the ones never seen before,
+     * or null the first time (everything is new then, so nothing counts as new). Saved only
+     * when something changed.
+     */
+    suspend fun notice(ids: Collection<String>): Set<String>? {
+        val d = _data.value
+        val fresh = ids.filter { it !in d.seen }.toSet()
+        if (fresh.isEmpty()) return emptySet()
+        val first = d.seen.isEmpty()
+        val now = clock()
+        change { it.copy(seen = it.seen + fresh.associateWith { now }) }
+        return if (first) null else fresh
     }
 
     /** Remembers [words] for topic [id], so they bring it next time. */

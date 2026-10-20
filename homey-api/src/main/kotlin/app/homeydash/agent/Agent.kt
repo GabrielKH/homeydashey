@@ -206,7 +206,8 @@ class Agent(
             val compact = brain.local && settings.compactTools
             val kept = history.filter { brain.local || !it.localOnly }
             val earlier = kept.flatMap { it.messages }
-            val skills = skills(settings)
+            val skills = skills(settings, homeView)
+            noticeNewKinds(skills, settings)
             // The topics this question needs that the conversation doesn't have yet.
             topicsBefore = kept.flatMap { it.topics }.toSet()
             val found = if (!settings.knowHow) emptyList() else KnowHow.find(skills, text, homeView, active(context), already = topicsBefore)
@@ -637,7 +638,8 @@ class Agent(
                 core = null
                 extra = emptyList()
             } else if (skills != null) {
-                val topical = skills.filter { !it.always }.flatMap { it.tools }.toSet()
+                // Everyday tools stay in the fixed part even when a topic names them too.
+                val topical = skills.filter { !it.always }.flatMap { it.tools }.toSet() - CORE_TOOLS
                 val wanted = found.flatMap { it.tools }.toSet()
                 core = all.filter { it.name !in topical }
                 extra = all.filter { it.name in topical && it.name in wanted }
@@ -731,7 +733,7 @@ class Agent(
         val fresh = System.currentTimeMillis() - lastActivity <= FORGET_AFTER_MS
         toolbox.privateContext = brain.local && fresh && history.any { it.localOnly }
         val compact = brain.local && settings.compactTools
-        val tools = Tools(toolbox.specs() + GUIDE_SPEC, compact, "", emptyList(), AskContext(), skills(settings).takeIf { settings.knowHow })
+        val tools = Tools(toolbox.specs() + GUIDE_SPEC, compact, "", emptyList(), AskContext(), skills(settings, homeView).takeIf { settings.knowHow })
         val messages = listOf(ChatMessage.system(fixed(settings, homeView, tools.core, tools.skills)))
         val specs = tools.sent
         val key = listOf(brain.baseUrl, brain.model, messages, specs).hashCode()
@@ -763,7 +765,7 @@ class Agent(
         return brains.map { brain ->
             val homeView = view(brain.local)
             val compact = brain.local && settings.compactTools
-            val t = Tools(tools(homeView).specs() + GUIDE_SPEC, compact, question, emptyList(), AskContext(), skills(settings).takeIf { settings.knowHow })
+            val t = Tools(tools(homeView).specs() + GUIDE_SPEC, compact, question, emptyList(), AskContext(), skills(settings, homeView).takeIf { settings.knowHow })
             val messages = conversation(settings, homeView, emptyList(), listOf(opening(settings, homeView, AskContext(), question, t)), t)
             val name = "${brain.provider.label} ${brain.model}"
             val line = try {
@@ -780,7 +782,7 @@ class Agent(
 
     /** Everything the assistant is told for a question, as one text (for tests and the settings preview). */
     fun systemPrompt(settings: AgentSettings, view: HomeView, context: AskContext): String =
-        fixed(settings, view, skills = skills(settings).takeIf { settings.knowHow }) + "\n" + situation(settings, view, context)
+        fixed(settings, view, skills = skills(settings, view).takeIf { settings.knowHow }) + "\n" + situation(settings, view, context)
 
     /** How to behave, and as whom. */
     fun rules(settings: AgentSettings, local: Boolean = true): String = shared(settings, local) + forWho(settings, local) + character(settings)
@@ -820,9 +822,30 @@ class Agent(
         skills(settings).filter { !it.always }.forEach { s -> s.rules.forEach { append(it).append('\n') } }
     }
 
-    /** Every topic of know-how: the built-in ones, and what the owner and the assistant added. */
-    fun skills(settings: AgentSettings): List<Skill> =
-        KnowHow.graph(knowHow?.data?.value ?: KnowHowData(), settings.batteryReminders)
+    /**
+     * Every topic of know-how: the built-in ones, those made from [view]'s devices in Homey, and
+     * what the owner and the assistant added.
+     */
+    fun skills(settings: AgentSettings, view: HomeView? = null): List<Skill> =
+        KnowHow.graph(knowHow?.data?.value ?: KnowHowData(), settings.batteryReminders, view)
+
+    /**
+     * A kind of device new to the house (a first heater, a car charger) goes into the memory
+     * graph once, as an event of the house: "Heating and climate came to the house on 20
+     * October 2026 (Element Hall)". The first time topics are made, nothing is new.
+     */
+    private suspend fun noticeNewKinds(skills: List<Skill>, settings: AgentSettings) {
+        val book = knowHow ?: return
+        val homey = skills.filter { it.fromHomey }
+        val fresh = book.notice(homey.map { it.id }) ?: return
+        val mem = memory?.takeIf { settings.access(Secret.Memory) != Access.Off } ?: return
+        val day = now().toLocalDate().toString()
+        val facts = homey.filter { it.id in fresh }.map { s ->
+            val devices = s.rules.firstOrNull { it.startsWith("Its devices: ") }?.removePrefix("Its devices: ")?.substringBefore(':')?.take(80)
+            Fact(subject = s.title, relation = "came to the house on", obj = day + (devices?.let { " ($it)" } ?: ""), kind = FactKind.Learned)
+        }
+        if (facts.isNotEmpty()) runCatching { mem.learn(facts) }
+    }
 
     /** The rules every question needs, whatever it is about: how to talk, the lights and devices, and the owner's standing instructions. */
     fun core(settings: AgentSettings): String = buildString {
@@ -977,6 +1000,11 @@ class Agent(
         val MEMORY_TOOLS = MEMORY_PACK + "recall"
         /** Marking people home or asleep and wake-up alarms: only when the question is about them. */
         val HOUSEHOLD_TOOLS = setOf("set_presence", "alarms")
+        /** Tools every question has, whatever topics name them: devices, rooms, moods, Flows, pages and looking things up. */
+        val CORE_TOOLS = setOf(
+            "set_device", "set_room", "get_device", "set_mood", "set_scene", "list_flows", "run_flow", "open_page", "open_device",
+            "goodnight", "weather", "set_theme", "ask_internet", "recall", KnowHow.GUIDE,
+        )
         /** Teaching and forgetting a topic's rules by voice. */
         val KNOW_HOW_PACK = setOf("teach", "forget_rule")
         val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK

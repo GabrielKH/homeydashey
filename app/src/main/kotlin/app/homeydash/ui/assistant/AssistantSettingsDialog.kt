@@ -893,7 +893,7 @@ private fun Preview(services: AssistantServices, settings: AgentSettings, previe
     var raw by remember { mutableStateOf(false) }
     Segmented(listOf(false, true), raw, { if (it) "Everything, as it reads it" else "Know-how by topic" }) { raw = it }
     if (!raw) {
-        KnowHowTopics(services, settings, tools)
+        KnowHowTopics(services, settings, view, tools)
         return
     }
     val prompt = remember(view) { services.agent.systemPrompt(settings, view, AskContext()) }

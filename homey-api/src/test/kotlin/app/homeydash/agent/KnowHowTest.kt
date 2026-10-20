@@ -174,4 +174,68 @@ class KnowHowTest {
         assertEquals("Elise", Memory.matching(data, "ring Elise", null, true, 0).single().subject)
         assertTrue(Memory.matching(data, "spela P1", null, true, 0).isEmpty())
     }
+
+    private val house: Map<String, Device> = HomeyJson.decodeFromString(
+        """
+        {
+          "d-heat": {"id":"d-heat","name":"Element Hall","zone":"z-hall","class":"heater","capabilities":["target_temperature","measure_temperature"],
+            "capabilitiesObj":{"target_temperature":{"id":"target_temperature","type":"number","value":20,"min":5,"max":30,"setable":true},
+                               "measure_temperature":{"id":"measure_temperature","type":"number","value":19.5,"setable":false}}},
+          "d-blind": {"id":"d-blind","name":"Persienn","zone":"z-kitchen","class":"blinds","capabilities":["windowcoverings_state"],
+            "capabilitiesObj":{"windowcoverings_state":{"id":"windowcoverings_state","type":"enum","value":"idle","setable":true,"values":[{"id":"up"},{"id":"idle"},{"id":"down"}]}}},
+          "d-wash": {"id":"d-wash","name":"Tvättmaskin","zone":"z-hall","class":"other","driverUri":"homey:app:com.miele:washer","capabilities":["onoff","measure_power"],
+            "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":true,"setable":true},
+                               "measure_power":{"id":"measure_power","type":"number","value":1200,"setable":false}}},
+          "d-lamp": {"id":"d-lamp","name":"Taklampa","zone":"z-kitchen","class":"light","capabilities":["onoff"],
+            "capabilitiesObj":{"onoff":{"id":"onoff","type":"boolean","value":true,"setable":true}}}
+        }
+        """.trimIndent(),
+    )
+
+    private fun houseView(only: Set<String> = house.keys) =
+        HomeView.build(zones, house.filterKeys { it in only }, emptyMap(), emptySet(), AgentSettings(), true)
+
+    @Test fun `Homey's devices make their own topics, with their names and capabilities`() {
+        val v = houseView()
+        val graph = KnowHow.graph(KnowHowData(), view = v)
+        val homey = graph.filter { it.fromHomey }.map { it.id }.toSet()
+        assertEquals(setOf("homey_climate", "homey_covers", "app_miele", "homey_energy"), homey)
+        fun top(q: String) = KnowHow.find(graph, q, v).map { it.skill.id }
+        assertEquals("homey_climate", top("gör det varmare i hallen").first())
+        assertEquals("homey_climate", top("hur är det med Element Hall").first())
+        assertEquals("homey_covers", top("dra ner persiennerna").first())
+        assertTrue(top("hur mycket ström drar tvättmaskinen?").containsAll(listOf("homey_energy", "app_miele")))
+        // Lights stay with every question's rules: no topic of their own.
+        assertTrue(top("tänd taklampan").isEmpty())
+        val climate = graph.first { it.id == "homey_climate" }
+        assertTrue(climate.rules.any { "Element Hall (Hall): target_temperature" in it })
+        assertTrue(climate.rules.any { it.startsWith("target_temperature is") })
+        // get_device is named by these topics but stays an everyday tool in the fixed part.
+        val agent = Agent(ChatClient(OkHttpClient()))
+        val s = AgentSettings()
+        val all = AgentTools(v, Home(), Dash()).specs() + Agent.GUIDE_SPEC
+        val core = all.filter { it.name !in (graph.flatMap { it.tools }.toSet() - Agent.CORE_TOOLS) }
+        assertTrue(agent.fixed(s, v, core, graph).contains("get_device(device)"))
+        assertTrue(agent.fixed(s, v, core, graph).contains("homey_climate (heating"))
+    }
+
+    @Test fun `a new kind of device is noticed once, and goes into the memory graph`() = runTest {
+        val book = KnowHowBook(folder.root)
+        val memory = MemoryBook(folder.newFolder("mem"))
+        val server = MockWebServer()
+        repeat(2) { server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"Okej."}}]}""")) }
+        server.start()
+        val s = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
+        val agent = Agent(ChatClient(OkHttpClient()), memory = memory, knowHow = book)
+        var only = setOf("d-lamp", "d-blind")
+        agent.ask("hej", s, { HomeView.build(zones, house.filterKeys { k -> k in only }, emptyMap(), emptySet(), s, it) }, { AgentTools(it, Home(), Dash()) })
+        assertTrue(memory.data.value.facts.isEmpty())
+        assertTrue("homey_covers" in book.data.value.seen)
+        only = only + "d-heat"
+        agent.ask("hej igen", s, { HomeView.build(zones, house.filterKeys { k -> k in only }, emptyMap(), emptySet(), s, it) }, { AgentTools(it, Home(), Dash()) })
+        val fact = memory.data.value.facts.single()
+        assertEquals("Heating and climate", fact.subject)
+        assertTrue(fact.obj.contains("Element Hall"))
+        server.shutdown()
+    }
 }
