@@ -100,15 +100,13 @@ fun AssistantSettingsDialog(
 ) {
     val g = GlassTheme.colors
     val update = services.settingsStore::update
-    var page by remember { mutableStateOf(initialPage) }
-    var editing by remember { mutableStateOf<app.homeydash.agent.Routine?>(null) }
+    val nav = remember { AssistantNav(initialPage) }
+    val page = nav.page
     LaunchedEffect(page) { onPage(page) }
     val back: () -> Unit = {
-        when (page) {
-            "main" -> onBack()
-            "routine" -> page = "routines"
-            "devices", "preview", "phones" -> page = "privacy"
-            else -> page = "main"
+        when {
+            page == "main" -> onBack()
+            else -> nav.page = AssistantNav.parent(page) ?: "main"
         }
         Unit
     }
@@ -125,15 +123,7 @@ fun AssistantSettingsDialog(
             Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 RoundButton(Sym.arrowBack, back, size = 44.dp, filledIcon = false)
                 Text(
-                    when (page) {
-                        "devices" -> "Hidden from the assistant"
-                        "preview" -> "What the assistant sees"
-                        "phones" -> "Phones"
-                        "routines" -> "Routines"
-                        "routine" -> editing?.name?.ifBlank { null } ?: "New routine"
-                        in PAGES -> PAGES.getValue(page)
-                        else -> "Assistant"
-                    },
+                    nav.title(),
                     style = MaterialTheme.typography.headlineMedium,
                     color = g.fg,
                     modifier = Modifier.weight(1f),
@@ -146,37 +136,86 @@ fun AssistantSettingsDialog(
                 Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                when (page) {
-                    "devices" -> HiddenDevices(services, zones, devices, hidden, settings) { id, hide ->
-                        update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
-                    }
-                    "preview" -> Preview(services, settings, preview)
-                    "phones" -> PhonesPage(services, devices, settings, update)
-                    "routines" -> RoutineList(services, onEdit = { editing = it; page = "routine" }, onRun = onRunRoutine)
-                    "routine" -> editing?.let { r ->
-                        androidx.compose.runtime.key(r.id) {
-                            RoutineEditor(services, r, zones, devices, moods, flows, onRun = onRunRoutine, onDone = { page = "routines" })
-                        }
-                    }
-                    "voice" -> VoicePage(services, settings, update)
-                    "listen" -> ListenPage(services, settings, update)
-                    "brain" -> BrainPage(services, settings, update, preview)
-                    "privacy" -> PrivacyPage(settings, update, onDevices = { page = "devices" }, onPreview = { page = "preview" }, onFaces = onFaces, onPhones = { page = "phones" })
-                    "spotify" -> Spotify(settings, update)
-                    "logs" -> Logs(services, settings, update)
-                    "memory" -> MemoryPage(services, settings, update)
-                    else -> Main(services, settings, update, onPage = { page = it }, onRoutines = { page = "routines" })
-                }
+                AssistantPage(nav, services, settings, zones, devices, hidden, preview, onFaces, moods, flows, onRunRoutine)
             }
         }
     } }
+}
+
+/**
+ * Which assistant settings page shows, and the routine being edited; shared by the popup and
+ * the wide settings page, which shows the same pages beside its side menu.
+ */
+@androidx.compose.runtime.Stable
+internal class AssistantNav(start: String) {
+    var page by mutableStateOf(start)
+    var editing by mutableStateOf<app.homeydash.agent.Routine?>(null)
+
+    fun title(): String = when (page) {
+        "devices" -> "Hidden from the assistant"
+        "preview" -> "What the assistant sees"
+        "phones" -> "Phones"
+        "routines" -> "Routines"
+        "routine" -> editing?.name?.ifBlank { null } ?: "New routine"
+        in PAGES -> PAGES.getValue(page)
+        else -> "Assistant"
+    }
+
+    companion object {
+        /** The page a page opens from, for the pages that aren't in the menu. */
+        fun parent(page: String): String? = when (page) {
+            "routine" -> "routines"
+            "devices", "preview", "phones" -> "privacy"
+            else -> null
+        }
+    }
+}
+
+/** The content of [nav]'s page. [menu] shows the main page's links to the others, which the wide page has in its side menu. */
+@Composable
+internal fun AssistantPage(
+    nav: AssistantNav,
+    services: AssistantServices,
+    settings: AgentSettings,
+    zones: Map<String, Zone>,
+    devices: Map<String, Device>,
+    hidden: Set<String>,
+    preview: (local: Boolean) -> Pair<HomeView, AgentTools>,
+    onFaces: () -> Unit,
+    moods: Map<String, app.homeydash.homey.Mood>,
+    flows: suspend () -> List<String>,
+    onRunRoutine: (app.homeydash.agent.Routine) -> Unit,
+    menu: Boolean = true,
+) {
+    val update = services.settingsStore::update
+    when (nav.page) {
+        "devices" -> HiddenDevices(services, zones, devices, hidden, settings) { id, hide ->
+            update { s -> s.copy(hiddenDevices = if (hide) s.hiddenDevices + id else s.hiddenDevices - id) }
+        }
+        "preview" -> Preview(services, settings, preview)
+        "phones" -> PhonesPage(services, devices, settings, update)
+        "routines" -> RoutineList(services, onEdit = { nav.editing = it; nav.page = "routine" }, onRun = onRunRoutine)
+        "routine" -> nav.editing?.let { r ->
+            androidx.compose.runtime.key(r.id) {
+                RoutineEditor(services, r, zones, devices, moods, flows, onRun = onRunRoutine, onDone = { nav.page = "routines" })
+            }
+        }
+        "voice" -> VoicePage(services, settings, update)
+        "listen" -> ListenPage(services, settings, update)
+        "brain" -> BrainPage(services, settings, update, preview)
+        "privacy" -> PrivacyPage(settings, update, onDevices = { nav.page = "devices" }, onPreview = { nav.page = "preview" }, onFaces = onFaces, onPhones = { nav.page = "phones" })
+        "spotify" -> Spotify(settings, update)
+        "logs" -> Logs(services, settings, update)
+        "memory" -> MemoryPage(services, settings, update)
+        else -> Main(services, settings, update, onPage = { nav.page = it }, onRoutines = { nav.page = "routines" }, menu = menu)
+    }
 }
 
 /** The settings pages behind the main page, with their titles. */
 private val PAGES = mapOf(
     "voice" to "Voice and look",
     "listen" to "Listening",
-    "brain" to "AI brains and servers",
+    "brain" to "AI and servers",
     "privacy" to "Privacy and security",
     "spotify" to "Spotify on Sonos",
     "logs" to "Logs for Claude",
@@ -191,6 +230,7 @@ private fun Main(
     update: ((AgentSettings) -> AgentSettings) -> Unit,
     onPage: (String) -> Unit,
     onRoutines: () -> Unit,
+    menu: Boolean = true,
 ) {
     val g = GlassTheme.colors
     Text(
@@ -221,6 +261,7 @@ private fun Main(
         color = g.muted,
     )
 
+    if (!menu) return
     Label("Settings")
     // Two to a row, so the eight pages take four rows instead of eight.
     val pages = listOf(
@@ -691,7 +732,7 @@ private fun Hearing(services: AssistantServices, settings: AgentSettings, update
     ) { on -> update { it.copy(useWhisper = on) } }
     if (settings.useWhisper) {
         Text(
-            "Whisper's address and its test are under AI brains and servers, with the other servers on your computer.",
+            "Whisper's address and its test are under AI and servers, with the other servers on your computer.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
@@ -1002,7 +1043,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
                 "(\"anna\" for anna.wav) for each character, or leave it empty for the model's own voice. People can pick " +
                 "their own under People. Everything stays in the house. Tap Hear it to try it; if the computer doesn't " +
                 "answer, the tablet's voice speaks and it tries the computer again two minutes later. " +
-                "The voice server's address is under AI brains and servers.",
+                "The voice server's address is under AI and servers.",
             style = MaterialTheme.typography.bodyMedium,
             color = g.muted,
         )
