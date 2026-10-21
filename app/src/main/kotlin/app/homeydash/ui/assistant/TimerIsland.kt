@@ -46,7 +46,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -71,6 +70,7 @@ import app.homeydash.ui.components.PillShape
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.glass
+import app.homeydash.ui.components.windowGlass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
@@ -157,7 +157,7 @@ private fun IslandPill(timer: KitchenTimer, now: Long, others: Int, onClick: () 
         Modifier
             .height(PILL_HEIGHT)
             .pressable(onClick)
-            .glass(PillShape)
+            .windowGlass(PillShape)
             .animateContentSize()
             .padding(start = 7.dp, end = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -198,7 +198,7 @@ private fun RingingPill(timer: KitchenTimer, onStop: () -> Unit, onAdd: (Int) ->
     Row(
         Modifier
             .height(PILL_HEIGHT)
-            .glass(PillShape)
+            .windowGlass(PillShape)
             .drawBehind { drawRect(g.danger.copy(alpha = pulse)) }
             .padding(start = 14.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -239,10 +239,8 @@ private fun TimerList(
         Modifier
             .width(460.dp)
             .heightIn(max = 520.dp)
-            // Solid underneath: see-through glass over the cards made the list hard to read.
-            .shadow(28.dp, PanelShape, ambientColor = Color.Black.copy(alpha = 0.35f), spotColor = Color.Black.copy(alpha = 0.35f))
-            .background(g.wallBase, PanelShape)
-            .glass(PanelShape)
+            // The same see-through dark as the assistant's side window (Gabriel, 2026-10-21).
+            .windowGlass(PanelShape)
             .pressable(onTouch)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 12.dp),
