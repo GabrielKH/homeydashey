@@ -117,12 +117,13 @@ object KnowHow {
             id = "timers", title = "Timers", about = "kitchen timers: start, stop, add time, rename",
             words = listOf(
                 "timer*", "timrar*", "äggklock*", "minut*", "minute*", "sekund*", "second*", "klar om", "ringer", "ringde", "ring*", "tyst",
-                "stopp", "stop", "snooze", "påminn*", "remind*", "nedräkning*", "countdown*",
+                "stopp", "stop", "snooze", "påminn*", "remind*", "nedräkning*", "countdown*", "mute*", "tysta*", "räkna ner", "räknar ner", "sluta räkna",
             ),
             tools = listOf("timer"),
             rules = listOf(
                 "Kitchen timers go through the timer tool: start, list, cancel one or all, rename, add or take away minutes, pause and resume, naming a timer the way the user does (\"pastan\" is Pasta).",
                 "For a named timer without a length (\"sätt en pastatimer\"), start it without minutes so the usual length is used; when a timer rings, \"stopp\" cancels it and \"fem minuter till\" adds 5 minutes.",
+                "Timers say out loud how long is left; when the user wants that quiet (\"tyst\", \"sluta räkna ner\", \"mute the timer\"), call timer with action mute, with the timer's label for just one; \"unmute\" brings it back.",
             ),
         ),
         Skill(

@@ -227,6 +227,83 @@ class TimersTest {
     private fun args(vararg pairs: Pair<String, String>) =
         kotlinx.serialization.json.JsonObject(pairs.associate { (k, v) -> k to kotlinx.serialization.json.JsonPrimitive(v) })
 
+    @Test
+    fun countdownPointsEveryTenMinutesThenFiveThreeOneAndHalf() {
+        assertEquals(listOf(300, 180, 60, 30), Timers.marks(600))
+        assertEquals(listOf(1200, 600, 300, 180, 60, 30), Timers.marks(1800))
+        assertEquals(listOf(30), Timers.marks(60))
+        assertTrue(Timers.marks(40).isEmpty())
+    }
+
+    @Test
+    fun saysEachCountdownPointOnceAndOnlyTheLastWhenSeveralWentBy() {
+        val b = board()
+        b.start(600, "Pasta")
+        assertTrue(b.dueMarks().isEmpty())
+        now += 300_000
+        assertEquals(listOf(300), b.dueMarks().map { it.second })
+        assertTrue(b.dueMarks().isEmpty())
+        // Busy through 3 minutes and 1 minute: just "one minute" is said.
+        now += 250_000
+        assertEquals(listOf(60), b.dueMarks().map { it.second })
+        now += 30_000
+        assertEquals(listOf(30), b.dueMarks().map { it.second })
+        now += 30_000
+        assertTrue(b.dueMarks().isEmpty())
+    }
+
+    @Test
+    fun addedTimeCountsDownAgain() {
+        val b = board()
+        val t = b.start(120, "Ägg")
+        now += 90_000
+        assertEquals(listOf(30), b.dueMarks().map { it.second })
+        b.addTo(t.id, 300)
+        now += 1_000
+        // 329 s left: the 5-minute point is next.
+        assertTrue(b.dueMarks().isEmpty())
+        now += 30_000
+        assertEquals(listOf(300), b.dueMarks().map { it.second })
+    }
+
+    @Test
+    fun mutedTimersStayQuietAndMutingARingingOneStopsIt() {
+        val b = board()
+        val pasta = b.start(600, "Pasta")
+        b.start(600, "Ris")
+        assertEquals(1, b.mute("pastan"))
+        now += 300_000
+        assertEquals(listOf("Ris"), b.dueMarks().map { it.first.label })
+        assertEquals(1, b.mute("pasta", mute = false))
+        now += 120_000
+        assertEquals(setOf("Pasta", "Ris"), b.dueMarks().map { it.first.label }.toSet())
+        now += 180_000
+        assertEquals(2, b.due().size)
+        assertEquals(2, b.mute(null))
+        assertTrue(b.timers.value.none { it.id == pasta.id })
+    }
+
+    @Test
+    fun countdownLinesInBothLanguages() {
+        assertEquals("Pasta, fem minuter kvar.", Timers.countdownLine("pasta", 300, swedish = true))
+        assertEquals("Pasta, en minut kvar.", Timers.countdownLine("Pasta", 60, swedish = true))
+        assertEquals("30 sekunder kvar på timern.", Timers.countdownLine(null, 30, swedish = true))
+        assertEquals("Rice, ten minutes left.", Timers.countdownLine("Rice", 600, swedish = false))
+    }
+
+    @Test
+    fun timerSoundsAreSoftAndNeverClip() {
+        val notice = TimerSounds.notice()
+        val alarm = TimerSounds.alarm(0)
+        val loud = TimerSounds.alarm(TimerSounds.MAX_ROUND + 3)
+        assertTrue(notice.isNotEmpty() && alarm.size > notice.size)
+        fun peak(a: ShortArray) = a.maxOf { kotlin.math.abs(it.toInt()) }
+        assertTrue(peak(notice) < 32767 * 0.4)
+        assertTrue(peak(loud) > peak(alarm) && peak(loud) < 32767)
+        // Fades out: ends in silence, no click.
+        assertEquals(0, alarm.last().toInt())
+    }
+
     private object NoHome : HomeControl {
         override suspend fun setCapability(deviceId: String, capability: String, value: kotlinx.serialization.json.JsonElement) {}
         override suspend fun setMood(mood: app.homeydash.homey.Mood) {}

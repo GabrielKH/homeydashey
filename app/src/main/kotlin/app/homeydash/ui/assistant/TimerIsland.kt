@@ -142,6 +142,7 @@ fun TimerIsland(assistant: Assistant, modifier: Modifier = Modifier) {
                 onRenamed = { id, name -> assistant.renameTimer(id, name); renaming = null; touched++ },
                 onAdd = { board.addTo(it.id, 60); touched++ },
                 onPause = { board.pauseId(it.id, !it.paused); touched++ },
+                onMute = { board.muteId(it.id, !it.muted); touched++ },
                 onStop = { board.stop(it.id); touched++ },
                 onStopGroup = { group -> board.cancelAll(group); touched++ },
                 onStopAll = { board.cancelAll(null); open = false },
@@ -229,6 +230,7 @@ private fun TimerList(
     onRenamed: (Long, String) -> Unit,
     onAdd: (KitchenTimer) -> Unit,
     onPause: (KitchenTimer) -> Unit,
+    onMute: (KitchenTimer) -> Unit,
     onStop: (KitchenTimer) -> Unit,
     onStopGroup: (String) -> Unit,
     onStopAll: () -> Unit,
@@ -277,6 +279,7 @@ private fun TimerList(
                     onRenamed = { onRenamed(t.id, it) },
                     onAdd = { onAdd(t) },
                     onPause = { onPause(t) },
+                    onMute = { onMute(t) },
                     onStop = { onStop(t) },
                 )
             }
@@ -298,6 +301,7 @@ private fun TimerRow(
     onRenamed: (String) -> Unit,
     onAdd: () -> Unit,
     onPause: () -> Unit,
+    onMute: () -> Unit,
     onStop: () -> Unit,
 ) {
     val g = GlassTheme.colors
@@ -340,6 +344,8 @@ private fun TimerRow(
         } else {
             SmallButton(Sym.add, onAdd)
             if (!timer.ringing) SmallButton(if (timer.paused) Sym.play else Sym.pause, onPause)
+            // Quiets the spoken countdown (and the voice when it's done) for this timer only.
+            SmallButton(if (timer.muted) Sym.volumeOff else Sym.volumeUp, onMute)
             SmallButton(Sym.close, onStop)
         }
     }

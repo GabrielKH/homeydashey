@@ -252,6 +252,12 @@ private fun Main(
             "Offers to name a timer started without one. Named timers are remembered, so \"sätt en pastatimer\" uses your usual length.",
             settings.askTimerName,
         ) { on -> update { it.copy(askTimerName = on) } }
+        SwitchRow(
+            "Count timers down out loud",
+            "Whoever set a timer hears their character say how long is left, at every 10 minutes and then 5, 3 and 1 minute and 30 seconds, " +
+                "after a soft bell. Say \"tyst\" or tap the speaker on a timer to quiet one.",
+            settings.timerCountdown,
+        ) { on -> update { it.copy(timerCountdown = on) } }
     }
 
     if (!menu) return

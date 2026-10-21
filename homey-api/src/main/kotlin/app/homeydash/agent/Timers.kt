@@ -27,6 +27,14 @@ data class KitchenTimer(
     val group: String? = null,
     val pausedLeftMs: Long? = null,
     val ringingSince: Long? = null,
+    /** Who set it (a person's id under People), so their own character counts it down. */
+    val owner: String? = null,
+    /** The character that was talking when it was set ([Persona] name). */
+    val character: String? = null,
+    /** The last countdown point said out loud, in seconds left ([Timers.marks]). */
+    val announced: Int? = null,
+    /** Told to be quiet: no spoken countdown, and it rings without a voice. */
+    val muted: Boolean = false,
 ) {
     val paused: Boolean get() = pausedLeftMs != null
     val ringing: Boolean get() = ringingSince != null
@@ -68,8 +76,11 @@ class TimerBoard(private val file: File?, private val clock: () -> Long = System
         nextId = (_timers.value.maxOfOrNull { it.id } ?: 0) + 1
     }
 
-    fun start(seconds: Int, label: String?, group: String? = null): KitchenTimer {
-        val timer = KitchenTimer(nextId++, label?.trim()?.takeIf { it.isNotEmpty() }?.replaceFirstChar(Char::uppercase), seconds, clock() + seconds * 1000L, group?.takeIf { it.isNotBlank() })
+    fun start(seconds: Int, label: String?, group: String? = null, owner: String? = null, character: String? = null): KitchenTimer {
+        val timer = KitchenTimer(
+            nextId++, label?.trim()?.takeIf { it.isNotEmpty() }?.replaceFirstChar(Char::uppercase), seconds, clock() + seconds * 1000L,
+            group?.takeIf { it.isNotBlank() }, owner = owner, character = character,
+        )
         change { it + timer }
         return timer
     }
@@ -120,9 +131,9 @@ class TimerBoard(private val file: File?, private val clock: () -> Long = System
     fun addTo(id: Long, seconds: Int): KitchenTimer? = replace(id) { t ->
         val now = clock()
         when {
-            t.ringing -> t.copy(endsAt = now + seconds.coerceAtLeast(1) * 1000L, seconds = seconds.coerceAtLeast(1), ringingSince = null)
+            t.ringing -> t.copy(endsAt = now + seconds.coerceAtLeast(1) * 1000L, seconds = seconds.coerceAtLeast(1), ringingSince = null, announced = null)
             t.paused -> t.copy(pausedLeftMs = (t.pausedLeftMs!! + seconds * 1000L).coerceAtLeast(1000), seconds = (t.seconds + seconds).coerceAtLeast(1))
-            else -> t.copy(endsAt = maxOf(t.endsAt + seconds * 1000L, now + 1000), seconds = (t.seconds + seconds).coerceAtLeast(1))
+            else -> t.copy(endsAt = maxOf(t.endsAt + seconds * 1000L, now + 1000), seconds = (t.seconds + seconds).coerceAtLeast(1), announced = if (seconds > 0) null else t.announced)
         }
     }
 
@@ -137,6 +148,38 @@ class TimerBoard(private val file: File?, private val clock: () -> Long = System
             else -> t
         }
     }
+
+    /**
+     * Timers that just passed a countdown point ([Timers.marks]: every 10 minutes, then 5, 3 and
+     * 1 minute and 30 seconds left), with that point in seconds; each point is handed over once.
+     * When several were passed at once (the app was busy or closed), only the last one counts.
+     */
+    fun dueMarks(): List<Pair<KitchenTimer, Int>> {
+        val now = clock()
+        val due = _timers.value.mapNotNull { t ->
+            if (t.muted || t.paused || t.ringing) return@mapNotNull null
+            val left = ((t.endsAt - now + 999) / 1000).toInt()
+            if (left <= 0) return@mapNotNull null
+            val mark = Timers.marks(t.seconds).filter { it >= left && it < (t.announced ?: Int.MAX_VALUE) }.minOrNull()
+                ?: return@mapNotNull null
+            t to mark
+        }
+        if (due.isNotEmpty()) change { list -> list.map { t -> due.firstOrNull { it.first.id == t.id }?.let { t.copy(announced = it.second) } ?: t } }
+        return due
+    }
+
+    /** Quiets one timer ([name]) or, without a name, all of them; a ringing one stops. Returns how many. */
+    fun mute(name: String?, mute: Boolean = true): Int {
+        val targets = if (name.isNullOrBlank()) _timers.value else listOfNotNull(find(name))
+        if (targets.isEmpty()) return 0
+        val ids = targets.map { it.id }.toSet()
+        change { list ->
+            list.filterNot { mute && it.id in ids && it.ringing }.map { if (it.id in ids) it.copy(muted = mute) else it }
+        }
+        return targets.size
+    }
+
+    fun muteId(id: Long, mute: Boolean) = replace(id) { it.copy(muted = mute) }
 
     /** Timers that just ran out; they are marked ringing, so each is handed over once. */
     fun due(): List<KitchenTimer> {
@@ -195,6 +238,44 @@ class TimerBoard(private val file: File?, private val clock: () -> Long = System
 
 /** Timer words shared by the island, the assistant and the memory graph. */
 object Timers {
+    /**
+     * When a timer of [seconds] says how long is left: every 10 minutes, then at 5, 3 and 1 minute
+     * and 30 seconds, never in its first [QUIET_START_S] seconds (it was just said when it was set).
+     */
+    fun marks(seconds: Int): List<Int> {
+        val tens = (seconds / 600 downTo 1).map { it * 600 }
+        return (tens + listOf(300, 180, 60, 30)).distinct().filter { it <= seconds - QUIET_START_S }.sortedDescending()
+    }
+
+    const val QUIET_START_S = 20
+
+    /** What is said at a countdown point: "Pasta, fem minuter kvar." */
+    fun countdownLine(label: String?, secondsLeft: Int, swedish: Boolean): String {
+        val name = label?.replaceFirstChar(Char::uppercase)
+        val amount = if (swedish) when {
+            secondsLeft < 60 -> "$secondsLeft sekunder"
+            secondsLeft < 120 -> "en minut"
+            else -> "${SpokenWords.swedish(secondsLeft / 60)} minuter"
+        } else when {
+            secondsLeft < 60 -> "$secondsLeft seconds"
+            secondsLeft < 120 -> "one minute"
+            else -> "${SpokenWords.english(secondsLeft / 60)} minutes"
+        }
+        return if (swedish) (name?.let { "$it, $amount kvar." } ?: "$amount kvar på timern.".replaceFirstChar(Char::uppercase))
+        else (name?.let { "$it, $amount left." } ?: "$amount left on the timer.".replaceFirstChar(Char::uppercase))
+    }
+
+    /** That [asker] told the timers to be quiet, counted like a habit. */
+    fun mutedHabit(asker: Asker?, at: ZonedDateTime): Fact = Fact(
+        who = asker?.id ?: Memory.HOUSE,
+        whoName = asker?.name.orEmpty(),
+        subject = asker?.name ?: "Someone in the house",
+        relation = "silences",
+        obj = "the spoken timer countdown",
+        kind = FactKind.Habit,
+        parts = mapOf(Memory.partOfDay(at) to 1),
+    )
+
     fun ordered(timers: List<KitchenTimer>, now: Long): List<KitchenTimer> =
         timers.sortedWith(compareBy<KitchenTimer>({ !it.ringing }, { it.paused }, { it.leftMs(now) }))
 
@@ -290,4 +371,15 @@ object Timers {
                 .replace(Regex("""(?<![\p{L}])(på|for|för|i|in|om)(?![\p{L}])""", RegexOption.IGNORE_CASE), " ").trim().replace(Regex("\\s+"), " ")
             realName(name).ifBlank { null }?.replaceFirstChar(Char::uppercase) to seconds
         }
+}
+
+/** Small numbers as words, so a countdown sounds the same in every voice. */
+object SpokenWords {
+    private val SV = listOf("noll", "en", "två", "tre", "fyra", "fem", "sex", "sju", "åtta", "nio", "tio", "elva", "tolv", "tretton", "fjorton", "femton",
+        "sexton", "sjutton", "arton", "nitton", "tjugo")
+    private val EN = listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+        "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
+
+    fun swedish(n: Int): String = SV.getOrNull(n) ?: n.toString()
+    fun english(n: Int): String = EN.getOrNull(n) ?: n.toString()
 }

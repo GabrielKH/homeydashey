@@ -82,6 +82,8 @@ object StepText {
                 "add" -> "Changing a timer"
                 "pause" -> "Pausing a timer"
                 "resume" -> "Starting the timer again"
+                "mute" -> "Muting the timer countdown"
+                "unmute" -> "Turning the timer countdown back on"
                 else -> "Checking the timers"
             }
             "recipe_timers" -> "Starting the recipe's timers"

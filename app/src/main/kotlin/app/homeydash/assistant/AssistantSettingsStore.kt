@@ -75,6 +75,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         classicRed = p[CLASSIC_RED] == "true",
         batteryReminders = p[BATTERY_REMINDERS] != "false",
         askTimerName = p[ASK_TIMER_NAME] != "false",
+        timerCountdown = p[TIMER_COUNTDOWN] != "false",
         phoneSharing = enumOr(p[PHONE_SHARING], app.homeydash.agent.PhoneSharing.Own),
         phoneOwners = p[PHONE_OWNERS]?.split('\n')?.mapNotNull { line -> line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }?.toMap().orEmpty(),
         useWhisper = p[USE_WHISPER] == "true",
@@ -130,6 +131,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[CLASSIC_RED] = s.classicRed.toString()
         p[BATTERY_REMINDERS] = s.batteryReminders.toString()
         p[ASK_TIMER_NAME] = s.askTimerName.toString()
+        p[TIMER_COUNTDOWN] = s.timerCountdown.toString()
         p[PHONE_SHARING] = s.phoneSharing.name
         p[PHONE_OWNERS] = s.phoneOwners.entries.joinToString("\n") { "${it.key}=${it.value}" }
         p[USE_WHISPER] = s.useWhisper.toString()
@@ -205,6 +207,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val BATTERY_REMINDERS = stringPreferencesKey("battery_reminders")
         val ASK_TIMER_NAME = stringPreferencesKey("ask_timer_name")
+        val TIMER_COUNTDOWN = stringPreferencesKey("timer_countdown")
         val PHONE_SHARING = stringPreferencesKey("phone_sharing")
         val PHONE_OWNERS = stringPreferencesKey("phone_owners")
         val USE_WHISPER = stringPreferencesKey("use_whisper")

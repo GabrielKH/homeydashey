@@ -1,8 +1,6 @@
 package app.homeydash.assistant
 
 import android.content.Context
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.SystemClock
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -152,12 +150,20 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     fun playWakeSound(sound: app.homeydash.agent.WakeSound, voiced: app.homeydash.agent.Pcm? = null): Long {
         val rate = voiced?.sampleRate ?: app.homeydash.agent.WakeSounds.RATE
         val pcm = voiced?.samples ?: synchronized(wakeSounds) { wakeSounds.getOrPut(sound) { app.homeydash.agent.WakeSounds.render(sound) } }
+        return playSound(pcm, rate, alarm = false)
+    }
+
+    /**
+     * Plays [pcm] once and returns how long it lasts, in milliseconds. [alarm] plays it as an
+     * alarm (the kitchen timers), heard even when the media volume is turned down.
+     */
+    fun playSound(pcm: ShortArray, rate: Int, alarm: Boolean): Long {
         if (pcm.isEmpty()) return 0
         val track = runCatching {
             android.media.AudioTrack.Builder()
                 .setAudioAttributes(
                     android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                        .setUsage(if (alarm) android.media.AudioAttributes.USAGE_ALARM else android.media.AudioAttributes.USAGE_ASSISTANT)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build(),
                 )
@@ -380,12 +386,14 @@ class Assistant(
                 }
             }
         }
-        // Timers are checked twice a second: one that ran out rings, and keeps beeping until stopped.
+        // Timers are checked twice a second: one that ran out rings until stopped, and the time
+        // left is said at 10-minute steps, then 5, 3 and 1 minute and 30 seconds.
         scope.launch {
             timers.load()
             while (true) {
                 timers.due().forEach { t -> scope.launch { ring(t) } }
                 timers.expired()
+                if (services.settings.value.timerCountdown) timers.dueMarks().forEach { (t, left) -> scope.launch { announce(t, left) } }
                 delay(TIMER_TICK_MS)
             }
         }
@@ -1329,7 +1337,9 @@ class Assistant(
     // Kitchen timers
 
     fun startTimer(seconds: Int, label: String?, group: String? = null) {
-        val timer = timers.start(seconds, label, group)
+        val s = settings
+        val here = services.faces.current()?.person?.takeIf { s.access(Secret.Faces) != Access.Off }?.id
+        val timer = timers.start(seconds, label, group, owner = s.asker?.id ?: here, character = s.persona.name)
         if (group == null) timer.label?.let { learnTimer(it, seconds) }
     }
 
@@ -1350,38 +1360,73 @@ class Assistant(
         scope.launch { runCatching { services.memory.learn(listOf(fact)) } }
     }
 
+    /**
+     * The settings of whoever set [timer], in the character they set it with, so the countdown
+     * and the alarm come in that voice; the house's character when nobody is known.
+     */
+    private fun voiceOf(timer: app.homeydash.agent.KitchenTimer): AgentSettings {
+        val base = services.settings.value
+        val person = services.faces.people.value.firstOrNull { it.id == timer.owner }
+        val persona = timer.character?.let { c -> app.homeydash.agent.Persona.entries.firstOrNull { it.name == c } } ?: base.characterOf(person)
+        return base.talkingAs(persona, person)
+    }
+
+    private fun swedish(s: AgentSettings) = when (s.answers) {
+        app.homeydash.agent.Language.Swedish -> true
+        app.homeydash.agent.Language.English -> false
+        app.homeydash.agent.Language.Auto -> lines.lastOrNull { it.fromUser }?.let { app.homeydash.agent.Confirmation.looksSwedish(it.text) } ?: true
+    }
+
+    /** Says how long is left on [timer], after a soft two-note bell; waits for a conversation to end first. */
+    private suspend fun announce(timer: app.homeydash.agent.KitchenTimer, left: Int) {
+        // Never over someone talking or an answer, but a mark that's gone by is dropped.
+        var waited = 0L
+        while (state != AssistantState.Idle || voiceActive) {
+            if (waited > ANNOUNCE_WAIT_MS) return
+            delay(TIMER_TICK_MS)
+            waited += TIMER_TICK_MS
+        }
+        val now = timers.timers.value.firstOrNull { it.id == timer.id } ?: return
+        if (now.muted || now.ringing || now.paused) return
+        val s = voiceOf(now)
+        val text = app.homeydash.agent.Timers.countdownLine(now.label, left, swedish(s))
+        services.onActive?.invoke()
+        chime(app.homeydash.agent.TimerSounds.notice())
+        lines += Line(false, text)
+        say(text, s)
+        if (state == AssistantState.Speaking) state = AssistantState.Idle
+    }
+
     private suspend fun ring(timer: app.homeydash.agent.KitchenTimer) {
         services.onActive?.invoke()
-        val swedish = when (settings.answers) {
-            app.homeydash.agent.Language.Swedish -> true
-            app.homeydash.agent.Language.English -> false
-            app.homeydash.agent.Language.Auto -> lines.lastOrNull { it.fromUser }?.let { app.homeydash.agent.Confirmation.looksSwedish(it.text) } ?: true
-        }
+        val s = voiceOf(timer)
         val name = timer.label?.replaceFirstChar(Char::uppercase)
         val text = when {
-            swedish -> name?.let { "$it är klar." } ?: "Timern är klar."
+            swedish(s) -> name?.let { "$it är klar." } ?: "Timern är klar."
             else -> name?.let { "$it is done." } ?: "The timer is done."
         }
         lines += Line(false, text)
-        beep()
-        say(text)
-        if (state == AssistantState.Speaking) state = AssistantState.Idle
-        // Beeps again every half minute until it is stopped, snoozed or gives up.
+        chime(app.homeydash.agent.TimerSounds.alarm(0))
+        // A muted timer still rings, but the character doesn't say it.
+        if (!timer.muted) {
+            say(text, s)
+            if (state == AssistantState.Speaking) state = AssistantState.Idle
+        }
+        // Rings again every half minute, a little louder, until it is stopped, snoozed or gives up.
+        var round = 1
         while (true) {
             delay(app.homeydash.agent.TimerBoard.RING_EVERY_MS)
             val now = timers.timers.value.firstOrNull { it.id == timer.id }
             if (now?.ringing != true) break
             services.onActive?.invoke()
-            beep()
+            chime(app.homeydash.agent.TimerSounds.alarm(round++))
         }
     }
 
-    private suspend fun beep() {
-        runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_ALARM, 90)
-            repeat(3) { tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 400); delay(700) }
-            tone.release()
-        }
+    /** Plays a timer sound as an alarm and waits for it to end. */
+    private suspend fun chime(pcm: ShortArray) {
+        val ms = services.playSound(pcm, app.homeydash.agent.TimerSounds.RATE, alarm = true)
+        delay(ms)
     }
 
     private companion object {
@@ -1389,6 +1434,8 @@ class Assistant(
         /** How often to check whether the local AI needs warming while it waits (see Agent.REWARM_AFTER_MS). */
         const val KEEP_WARM_MS = 2 * 60 * 1000L
         const val TIMER_TICK_MS = 500L
+        /** How long a countdown line waits for a conversation to end before it's dropped. */
+        const val ANNOUNCE_WAIT_MS = 20_000L
         const val BATTERY_CHECK_MS = 60 * 1000L
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */

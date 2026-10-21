@@ -142,8 +142,8 @@ class AgentTools(
             required("device", "keys")
         })
         if (!guest) add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})
-        add(tool("timer", "Kitchen timers on the tablet: start, list, cancel one or all, rename, add or take away time, pause or resume.") {
-            string("action", "start, list, cancel, cancel_all, rename, add, pause or resume")
+        add(tool("timer", "Kitchen timers on the tablet: start, list, cancel one or all, rename, add or take away time, pause or resume, mute or unmute the spoken countdown.") {
+            string("action", "start, list, cancel, cancel_all, rename, add, pause, resume, mute or unmute")
             number("minutes", "start: length (leave out for a named timer to use the usual length); add: minutes to add, negative to take away")
             string("label", "The timer's name, e.g. pasta; for rename the timer to rename (leave out for the newest)")
             string("new_label", "rename: the new name")
@@ -843,14 +843,14 @@ class AgentTools(
                     val started = many.map { (name, secs) ->
                         val s = secs ?: name?.let { memory?.usualTimerSeconds(it, view.settings.asker?.id) }
                         if (s == null || s <= 0 || s > 24 * 3600) "${name ?: "a timer"} (no length: ask how many minutes)"
-                        else board.start(s, name).also { learnTimer(it) }.let { "${it.label ?: "a timer"} for ${Timers.minutesText(s)}" }
+                        else board.start(s, name, owner = view.settings.asker?.id, character = view.settings.persona.name).also { learnTimer(it) }.let { "${it.label ?: "a timer"} for ${Timers.minutesText(s)}" }
                     }
                     return ok("Started: " + started.joinToString("; ") + ".")
                 }
                 val usual = if (minutes == null && label.isNotBlank()) memory?.usualTimerSeconds(label, view.settings.asker?.id) else null
                 val seconds = usual ?: ((minutes ?: 0.0) * 60).toInt()
                 if (seconds <= 0 || seconds > 24 * 3600) return ok("Ask how many minutes.")
-                learnTimer(board.start(seconds, label.ifBlank { null }))
+                learnTimer(board.start(seconds, label.ifBlank { null }, owner = view.settings.asker?.id, character = view.settings.persona.name))
                 val length = Timers.minutesText(seconds)
                 when {
                     usual != null -> ok("Timer ${label.trim()} started for $length, the usual length. Say that it's the usual.")
@@ -878,6 +878,13 @@ class AgentTools(
                 board.add(label, seconds)?.let { ok("${named(it)} now has ${Timers.clock(it.leftMs(System.currentTimeMillis()))} left.") }
                     ?: ok("No timer like that is running.")
             }
+            "mute", "quiet", "silence" -> {
+                val n = board.mute(label.ifBlank { null })
+                val s = view.settings
+                if (n > 0 && !s.guest && s.access(Secret.Memory) != Access.Off) memory?.learn(Timers.mutedHabit(s.asker, clock()))
+                ok(if (n == 0) "No timers are running." else "Muted: no more spoken countdown" + if (label.isBlank()) " for any timer." else " for that timer.")
+            }
+            "unmute" -> ok(if (board.mute(label.ifBlank { null }, mute = false) == 0) "No timers are running." else "The countdown is spoken again.")
             "pause" -> board.pause(label, true)?.let { ok("${named(it)} is paused.") } ?: ok("No timer like that is running.")
             "resume", "continue" -> board.pause(label, false)?.let { ok("${named(it)} is running again.") } ?: ok("No timer like that is running.")
             else -> ok(board.describe().joinToString("\n").ifBlank { "No timers are running." })

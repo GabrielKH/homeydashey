@@ -303,6 +303,8 @@ data class AgentSettings(
     val batteryReminders: Boolean = true,
     /** After a timer is started without a name, the assistant asks whether to give it one. */
     val askTimerName: Boolean = true,
+    /** Timers say how long is left (every 10 minutes, then 5, 3, 1 minute, 30 seconds) in the setter's character. */
+    val timerCountdown: Boolean = true,
     /** The little sound when the wake name is heard, before it listens. */
     val wakeSound: WakeSound = WakeSound.Voice,
     /** Who the assistant is, and for TARS how funny, 0–100 %. */
