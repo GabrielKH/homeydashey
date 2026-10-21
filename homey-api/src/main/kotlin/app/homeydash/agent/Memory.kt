@@ -210,7 +210,7 @@ object Memory {
         fun key(f: Fact) = listOf(f.who, node(f.subject), node(f.relation)) + when {
             // Each false wake is its own sound; a pause habit is one fact whose number moves.
             f.relation == FALSE_WAKE -> listOf(f.data)
-            many(f) && f.relation != PAUSES -> listOf(node(f.obj))
+            many(f) && f.relation !in MEANS -> listOf(node(f.obj))
             else -> emptyList()
         }
         val k = key(fact)
@@ -222,12 +222,17 @@ object Memory {
             facts += fact.copy(first = fact.first.takeIf { it > 0 } ?: now, last = now)
         } else {
             val old = facts[i]
-            // A pause habit keeps a running mean of the pauses measured, in its data.
-            val data = if (fact.relation == PAUSES && old.data.toLongOrNull() != null && fact.data.toLongOrNull() != null) {
+            // A pause habit or answer wait keeps a running mean of what was measured, in its data.
+            val mean = fact.relation in MEANS && old.data.toLongOrNull() != null && fact.data.toLongOrNull() != null
+            val data = if (mean) {
                 ((old.data.toLong() * 3 + fact.data.toLong()) / 4).toString()
             } else fact.data.ifBlank { old.data }
             facts[i] = old.copy(
-                obj = if (fact.relation == PAUSES) "%.1f s between thoughts".format(data.toLong() / 1000.0) else fact.obj,
+                obj = when {
+                    !mean -> fact.obj
+                    fact.relation == PAUSES -> "%.1f s between thoughts".format(data.toLong() / 1000.0)
+                    else -> waitWords(data.toLong())
+                },
                 data = data,
                 count = old.count + 1,
                 last = now,
@@ -380,6 +385,9 @@ object Memory {
     const val LISTENING = "Listening"
     private const val FALSE_WAKE = "woke falsely to"
     private const val PAUSES = "pauses about"
+    private const val WAITS = "start about"
+    /** Relations whose one fact holds a running mean in [Fact.data] instead of a new object each time. */
+    private val MEANS = setOf(PAUSES, WAITS)
     private const val MAX_FALSE_WAKES = 60
 
     /**
@@ -443,6 +451,28 @@ object Memory {
         if (mine.isEmpty() || house <= 0) return 1.0
         return (mine.average() / house).coerceIn(0.6, 1.6)
     }
+
+    private fun waitWords(ms: Long) = "%.1f s after someone stops talking".format(ms / 1000.0)
+
+    private fun waitSubject(brain: String) = "Answers from the ${brain.lowercase()} AI"
+
+    /**
+     * How long a spoken answer took to be ready ([ms] from the end of speech to its first
+     * sentence) on the [brain] ("local", "internet", "smart"), for the house: a running mean, so
+     * the assistant knows whether a quick "ja" is needed to cover the wait, and can say why it's slow.
+     */
+    fun answerWait(ms: Long, brain: String): Fact = Fact(
+        who = HOUSE,
+        subject = waitSubject(brain),
+        relation = WAITS,
+        obj = waitWords(ms),
+        kind = FactKind.Learned,
+        data = ms.toString(),
+    )
+
+    /** How long answers from [brain] usually take after the question, in ms; null until measured. */
+    fun usualWait(facts: List<Fact>, brain: String): Long? =
+        facts.firstOrNull { it.relation == WAITS && it.subject == waitSubject(brain) }?.data?.toLongOrNull()
 
     /**
      * How usual a wake at this hour is for the house, against an even spread: 1.0 with too few

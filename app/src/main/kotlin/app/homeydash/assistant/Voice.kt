@@ -29,6 +29,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import okhttp3.MediaType.Companion.toMediaType
@@ -356,6 +357,8 @@ class SpeechOutput(
         player?.let { runCatching { it.stop() } }
         track?.let { runCatching { it.pause(); it.flush() } }
         track = null
+        quick?.let { runCatching { it.stop() } }
+        quickUntil = 0L
     }
 
     @Volatile private var track: AudioTrack? = null
@@ -391,39 +394,139 @@ class SpeechOutput(
             for (piece in pieces) app.homeydash.agent.Sentences.split(spoken(piece, swedish)).forEach { send(it) }
         }
         val live = File(appContext.cacheDir, "live.wav")
-        stream(sentences, { sentence -> phrase(sentence, swedish, voice) ?: pcmOf(sentence, swedish, voice, live) }, onFrame, onStart, onSentence)
+        stream(sentences, { sentence -> phrase(sentence, swedish, voice) ?: pcmOf(sentence, swedish, voice, live) { learnPhrase(sentence, swedish, voice, it) } }, onFrame, onStart, onSentence)
     }
 
-    /** Short sounds made ahead of time, like the "hmm" while it thinks, per voice and language. */
+    /**
+     * Short sounds made ahead of time, like the "ja" when you stop talking and the "hmm" while it
+     * thinks, per voice and language. Each is also kept as a file, so it is made once per voice
+     * and stays instant after a restart, and even while the computer's voice server is off.
+     */
     private val phrases = java.util.concurrent.ConcurrentHashMap<String, Pcm>()
+    private val phraseDir by lazy { File(appContext.filesDir, "phrases").apply { mkdirs() } }
 
     private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) =
         "${voice.name}|${if (voice.local) settings().serverVoice() else ""}|${settings().pace}|$swedish|$text"
 
-    private fun phrase(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrases[phraseKey(text, swedish, voice)]
+    private fun phraseFile(key: String): File {
+        val hash = java.security.MessageDigest.getInstance("SHA-1").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+        return File(phraseDir, "$hash.wav")
+    }
+
+    private fun phrase(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? {
+        val key = phraseKey(text, swedish, voice)
+        phrases[key]?.let { return it }
+        val file = phraseFile(key).takeIf { it.exists() } ?: return null
+        val pcm = runCatching { VoiceFx.readWav(file.readBytes()) }.getOrNull() ?: return null
+        file.setLastModified(System.currentTimeMillis())
+        phrases[key] = pcm
+        return pcm
+    }
+
+    private fun keep(key: String, pcm: Pcm) {
+        phrases[key] = pcm
+        runCatching {
+            // Written aside first, so a sound read while it is written is never half of one.
+            val file = phraseFile(key)
+            val temp = File(phraseDir, file.name + "." + UUID.randomUUID() + ".tmp")
+            temp.writeBytes(VoiceFx.writeWav(pcm))
+            if (!temp.renameTo(file)) temp.delete()
+        }
+    }
+
+    /**
+     * A short sentence it just made for an answer ("Klart.", "Lampan är tänd."), kept like the
+     * sounds made ahead of time: the answers it gives often become instant too. The least
+     * recently heard go when more than [MAX_PHRASES] are kept.
+     */
+    private fun learnPhrase(sentence: String, swedish: Boolean, voice: VoiceStyle, pcm: Pcm) {
+        if (sentence.length > LEARN_UP_TO) return
+        val key = phraseKey(sentence, swedish, voice)
+        if (phrases.containsKey(key)) return
+        scope.launch(Dispatchers.IO) {
+            keep(key, pcm)
+            val files = phraseDir.listFiles().orEmpty().filter { it.name.endsWith(".wav") }
+            if (files.size > MAX_PHRASES) files.sortedBy { it.lastModified() }.take(files.size - MAX_PHRASES).forEach { it.delete() }
+        }
+    }
 
     /** [text] in [voice] as made ahead of time by [prepareSounds]; null until then. */
     fun prepared(text: String, swedish: Boolean, voice: VoiceStyle): Pcm? = phrase(text, swedish, voice)
 
     /** Whether [text] is made ahead of time in [voice], so it can be said without waiting. */
-    fun hasSound(text: String, swedish: Boolean, voice: VoiceStyle): Boolean = phrases.containsKey(phraseKey(text, swedish, voice))
+    fun hasSound(text: String, swedish: Boolean, voice: VoiceStyle): Boolean {
+        val key = phraseKey(text, swedish, voice)
+        return phrases.containsKey(key) || phraseFile(key).exists()
+    }
 
     /** Makes [texts] in [voice] ahead of time, so saying them later is instant. */
     fun prepareSounds(texts: List<String>, swedish: Boolean, voice: VoiceStyle) {
         scope.launch(Dispatchers.Default) {
-            val file = File(appContext.cacheDir, "phrase.wav")
-            for (t in texts) {
-                val key = phraseKey(t, swedish, voice)
-                if (phrases.containsKey(key)) continue
-                pcmOf(t, swedish, voice, file)?.let { phrases[key] = it }
+            // One at a time, so a voice server isn't asked for many sounds at once.
+            making.withLock {
+                val file = File(appContext.cacheDir, "phrase.wav")
+                for (t in texts) {
+                    if (hasSound(t, swedish, voice)) continue
+                    ownPcm(t, swedish, voice, file)?.let { keep(phraseKey(t, swedish, voice), it) }
+                }
             }
         }
     }
 
-    /** [text] in [voice] as sound, from whichever voice can make it; null when none can. */
-    private suspend fun pcmOf(text: String, swedish: Boolean, voice: VoiceStyle, scratch: File): Pcm? {
-        piper(voice)?.takeIf { it.isReady }?.speak(text, swedish, pace())?.let { return it }
-        if (voice.local) localPcm(text, swedish)?.let { return it }
+    private val making = kotlinx.coroutines.sync.Mutex()
+
+    /** Until when a quick sound ([playNow]) still plays; an answer starting meanwhile waits for it. */
+    @Volatile private var quickUntil = 0L
+    @Volatile private var quick: AudioTrack? = null
+
+    /**
+     * Plays [pcm] at once, without waiting for anything (the quick "ja" when someone stops
+     * talking); an answer that starts while it plays begins right after it. Returns its length in ms.
+     */
+    fun playNow(pcm: Pcm): Long {
+        if (pcm.samples.isEmpty()) return 0
+        val t = runCatching {
+            AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(pcm.sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+                .setBufferSizeInBytes(pcm.samples.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+                .also { it.write(pcm.samples, 0, pcm.samples.size); it.play() }
+        }.getOrNull() ?: return 0
+        quick?.let { old -> runCatching { old.stop() }; old.release() }
+        quick = t
+        val ms = pcm.samples.size * 1000L / pcm.sampleRate
+        quickUntil = android.os.SystemClock.elapsedRealtime() + ms
+        scope.launch {
+            delay(ms + 300)
+            if (quick === t) quick = null
+            runCatching { t.release() }
+        }
+        return ms
+    }
+
+    /** Lets a quick sound that is still playing finish before an answer starts on top of it. */
+    private suspend fun afterQuick() {
+        val left = quickUntil - android.os.SystemClock.elapsedRealtime()
+        if (left > 0) delay(left + QUICK_GAP_MS)
+    }
+
+    /**
+     * [text] in [voice] as sound, from whichever voice can make it; null when none can. [own]
+     * gets it only when [voice] itself made it, not the tablet's voice standing in, so only
+     * the real voice is ever kept.
+     */
+    private suspend fun pcmOf(text: String, swedish: Boolean, voice: VoiceStyle, scratch: File, own: (Pcm) -> Unit = {}): Pcm? {
+        ownPcm(text, swedish, voice, scratch)?.let { own(it); return it }
+        if (piper(voice) == null && !voice.local) return null
+        return tabletPcm(text, if (swedish) Language.Swedish else Language.English, voice, scratch)
+    }
+
+    /** [text] made by [voice] itself; null when it can't right now. */
+    private suspend fun ownPcm(text: String, swedish: Boolean, voice: VoiceStyle, scratch: File): Pcm? {
+        piper(voice)?.let { p -> return if (p.isReady) p.speak(text, swedish, pace()) else null }
+        if (voice.local) return localPcm(text, swedish)
         return tabletPcm(text, if (swedish) Language.Swedish else Language.English, voice, scratch)
     }
 
@@ -472,6 +575,7 @@ class SpeechOutput(
         val made = produce(Dispatchers.Default, capacity = 1) { for (s in sentences) make(s)?.let { send(s to it) } }
         val firstMade = made.receiveCatching().getOrNull() ?: return@coroutineScope false
         val first = firstMade.second
+        afterQuick()
         onStart()
         val rate = first.sampleRate
         val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -621,6 +725,12 @@ class SpeechOutput(
     private companion object {
         val SWEDISH: Locale = Locale.forLanguageTag("sv-SE")
         const val SERVER_RETRY_MS = 120_000L
+        /** Sentences up to this long are kept as sound for next time; longer ones rarely repeat. */
+        const val LEARN_UP_TO = 40
+        /** How many short sounds are kept on the tablet (about 50 KB each). */
+        const val MAX_PHRASES = 400
+        /** The breath between a quick "ja" and the answer after it. */
+        const val QUICK_GAP_MS = 120L
     }
 }
 
