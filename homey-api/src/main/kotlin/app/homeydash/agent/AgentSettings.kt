@@ -245,6 +245,9 @@ fun Persona.intro(name: String, swedish: Boolean, humor: Int = 75): String = whe
 const val DEFAULT_VOICE_MODEL = "mlx-community/chatterbox-multilingual-v3"
 const val VOICE_SERVER_PORT = 8090
 
+/** The ending of a Warm voice recording made in Swedish ("nova-sv" next to "nova"). */
+const val SWEDISH_RECORDING = "-sv"
+
 /** How fast the voice talks by default, in %: a touch slower than the voices' own speed. */
 const val DEFAULT_PACE = 90
 val PACE_RANGE = 70..130
@@ -367,6 +370,16 @@ data class AgentSettings(
 
     /** The voice server's voice for the character speaking now. */
     fun serverVoice(): String = warmVoices[persona]?.trim()?.takeIf { it.isNotEmpty() } ?: voiceServerVoice.trim()
+
+    /**
+     * The recording to copy for a [swedish] or English answer: "nova-sv" for Swedish when the
+     * server [has] it, since Chatterbox speaks with the accent of the recording it copies.
+     */
+    fun serverVoice(swedish: Boolean, has: (String) -> Boolean): String {
+        val voice = serverVoice()
+        if (voice.isEmpty() || voice.endsWith(SWEDISH_RECORDING)) return voice
+        return if (swedish && has(voice + SWEDISH_RECORDING)) voice + SWEDISH_RECORDING else voice
+    }
 
     fun voiceServerUrlOrGuess(): String = voiceServerUrl.trim().ifBlank {
         val host = local?.baseUrl?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: return@ifBlank ""
