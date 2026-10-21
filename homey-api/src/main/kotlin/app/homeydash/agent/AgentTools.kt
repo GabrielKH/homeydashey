@@ -107,6 +107,11 @@ class AgentTools(
             string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), radio for a station (\"P1\", \"radio P3\"), or omit for a favourite")
             required("player")
         })
+        if (!guest) add(tool("save_favourite", "Add music to the Sonos favourites: what was just played, or a playlist, album or song by name.") {
+            string("player", "Player alias")
+            string("query", "Its name, e.g. the playlist play_music just played; empty for the last thing played on the player")
+            required("player")
+        })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
             string("device", DEVICE)
             required("device")
@@ -257,6 +262,7 @@ class AgentTools(
             "list_flows" -> ToolResult(home.flows().joinToString("\n") { it.name }.ifBlank { "No Flows can be started." })
             "run_flow" -> runFlow(a.str("name"))
             "play_music" -> playMusic(a.str("player"), a.str("query"), a.str("kind").ifBlank { null })
+            "save_favourite" -> saveFavourite(a.str("player"), a.str("query"))
             "device_actions" -> deviceActions(a.str("device"))
             "run_device_action" -> runDeviceAction(a.str("device"), a.str("action"), a.str("value").ifBlank { null })
             "open_page" -> openPage(a.str("page"))
@@ -525,6 +531,26 @@ class AgentTools(
         )
         val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         return ok("Playing $played on ${d.name}.")
+    }
+
+    /**
+     * Adds what [query] names (or what was played last) to the household's Sonos favourites
+     * through a Sonos speaker's "Add to Sonos favourites"; favourites belong to every speaker,
+     * so any speaker that has the card will do, the one asked for first.
+     */
+    private suspend fun saveFavourite(alias: String, query: String): ToolResult {
+        val asked = view.device(alias) ?: return unknown(alias)
+        val first = listOfNotNull(musicPlayer(asked), asked) + view.devices
+        val holder = first.firstOrNull { dev -> home.deviceActions(dev.id).any { it.cardId == app.homeydash.sonos.SonosCards.SAVE } }
+            ?: return ok("No Sonos speaker was found on the Wi-Fi, so nothing can be added to the Sonos favourites." + (home.missingActions(asked.id)?.let { " ($it)" }.orEmpty()))
+        val card = home.deviceActions(holder.id).first { it.cardId == app.homeydash.sonos.SonosCards.SAVE }
+        val arg = card.inputArgs.first()
+        val q = query.trim()
+        val items = home.choices(card, arg, q)
+        val item = (if (q.isEmpty()) items.firstOrNull() else NameMatch.best(q, items) { NameMatch.score(q, it.name) } ?: items.firstOrNull())
+            ?: return ok(if (q.isEmpty()) "Nothing has been played from here yet; ask what to add." else "Couldn't find \"$q\" to add.")
+        home.runAction(card, JsonObject(mapOf(arg.name to FlowCards.argValue(arg, item))))
+        return ok("Added ${item.name}" + (item.description?.let { " ($it)" }.orEmpty()) + " to the Sonos favourites.")
     }
 
     private fun sources(deviceId: String) = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }

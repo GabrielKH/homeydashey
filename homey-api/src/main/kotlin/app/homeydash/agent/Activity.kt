@@ -66,6 +66,7 @@ object StepText {
             "list_flows" -> "Looking through your Flows"
             "run_flow" -> "Starting the Flow ${str("name")}"
             "play_music" -> str("query").let { q -> if (q.isEmpty()) "Picking music for ${device("player")}" else "Finding \"$q\" for ${device("player")}" }
+            "save_favourite" -> str("query").let { q -> if (q.isEmpty()) "Adding it to the Sonos favourites" else "Adding \"$q\" to the Sonos favourites" }
             "device_actions" -> "Looking at what ${device()} can do"
             "run_device_action" -> "${device()}: ${str("action")}" + (str("value").takeIf { it.isNotEmpty() }?.let { " $it" } ?: "")
             "press_remote" -> "Pressing ${str("keys")} on ${device()}"

@@ -94,6 +94,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
         spotifyClientId = p[SPOTIFY_ID].orEmpty(),
         spotifySecret = p[SPOTIFY_SECRET]?.let(KeystoreCipher::decrypt).orEmpty(),
+        spotifyUser = p[SPOTIFY_USER]?.let(KeystoreCipher::decrypt).orEmpty(),
+        spotifyUserName = p[SPOTIFY_USER_NAME].orEmpty(),
     )
 
     private fun write(p: MutablePreferences, s: AgentSettings) {
@@ -154,6 +156,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[LOG_REPO] = s.logRepo.trim()
         p[SPOTIFY_ID] = s.spotifyClientId.trim()
         p[SPOTIFY_SECRET] = KeystoreCipher.encrypt(s.spotifySecret.trim())
+        p[SPOTIFY_USER] = KeystoreCipher.encrypt(s.spotifyUser.trim())
+        p[SPOTIFY_USER_NAME] = s.spotifyUserName
     }
 
     private fun connection(p: Preferences, slot: String): Connection? {
@@ -222,6 +226,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val OPENAI_SPEECH_KEY = stringPreferencesKey("openai_speech_key")
         val SPOTIFY_ID = stringPreferencesKey("spotify_client_id")
         val SPOTIFY_SECRET = stringPreferencesKey("spotify_secret")
+        val SPOTIFY_USER = stringPreferencesKey("spotify_user")
+        val SPOTIFY_USER_NAME = stringPreferencesKey("spotify_user_name")
         val SEND_LOGS = stringPreferencesKey("send_logs")
         val COMPACT_TOOLS = stringPreferencesKey("compact_tools")
         val KNOW_HOW = stringPreferencesKey("know_how")

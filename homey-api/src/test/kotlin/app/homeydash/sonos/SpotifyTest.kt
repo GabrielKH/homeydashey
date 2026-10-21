@@ -39,6 +39,8 @@ class SpotifyTest {
         assertEquals(SpotifyHit.Kind.Artist to "Kent", SpotifySearch.parse("låtar med Kent"))
         assertEquals(SpotifyHit.Kind.Playlist to "Lugna favoriter", SpotifySearch.parse("spellistan Lugna favoriter på Spotify"))
         assertEquals(null to "Dancing Queen ABBA", SpotifySearch.parse("Dancing Queen by ABBA"))
+        assertEquals(SpotifyHit.Kind.Playlist to "Sommar", SpotifySearch.parse("spela min spellista Sommar"))
+        assertEquals(SpotifyHit.Kind.Playlist to "chill", SpotifySearch.parse("playlist my own chill"))
     }
 
     @Test fun `reads search results, skipping empty playlists`() {
@@ -161,6 +163,95 @@ class SpotifyTest {
         assertEquals("GetPositionInfo", actions.last().first)
         // Straight to the first new song, not on with what the speaker was playing.
         assertTrue(actions.single { it.first == "Seek" }.second.contains("<Unit>TRACK_NR</Unit><Target>1</Target>"))
+        spotifyServer.shutdown()
+        sonosServer.shutdown()
+    }
+
+    @Test fun `finds your own playlists when signed in, plays one and adds it to the Sonos favourites`() = runTest {
+        val spotifyServer = MockWebServer()
+        val tokenForms = Collections.synchronizedList(mutableListOf<String>())
+        spotifyServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path == "/api/token" -> {
+                    tokenForms += request.body.readUtf8()
+                    MockResponse().setBody("""{"access_token": "tok", "expires_in": 3600, "refresh_token": "new"}""")
+                }
+                request.path!!.startsWith("/v1/me/playlists") -> {
+                    assertEquals("Bearer tok", request.getHeader("Authorization"))
+                    MockResponse().setBody(
+                        """{"items": [
+                            {"id": "p9", "name": "Sommar i köket", "owner": {"display_name": "Gabriel"}, "images": []},
+                            {"id": "p8", "name": "Träning", "owner": {"display_name": "Gabriel"}, "images": []}], "next": null}""",
+                    )
+                }
+                request.path!!.startsWith("/v1/search") -> MockResponse().setBody(searchJson)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        spotifyServer.start()
+        val sonosServer = MockWebServer().apply { start() }
+        val host = sonosServer.hostName
+        val actions = Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val topology = """<ZoneGroupState><ZoneGroups><ZoneGroup Coordinator="RINCON_K" ID="RINCON_K:1">""" +
+            """<ZoneGroupMember UUID="RINCON_K" Location="http://$host:1400/xml/device_description.xml" ZoneName="Kök"/>""" +
+            """</ZoneGroup></ZoneGroups></ZoneGroupState>"""
+        sonosServer.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val action = request.getHeader("SOAPACTION")!!.substringAfter('#').trimEnd('"')
+                actions += action to request.body.readUtf8()
+                val inner = when (action) {
+                    "GetZoneGroupState" -> "<ZoneGroupState>${esc(topology)}</ZoneGroupState>"
+                    "Browse" -> "<Result></Result>"
+                    "GetTransportInfo" -> "<CurrentTransportState>PLAYING</CurrentTransportState>"
+                    "CreateObject" -> "<ObjectID>FV:2/40</ObjectID>"
+                    else -> ""
+                }
+                return MockResponse().setBody(
+                    """<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:${action}Response xmlns:u="urn:x">$inner</u:${action}Response></s:Body></s:Envelope>""",
+                )
+            }
+        }
+        val base = spotifyServer.url("/").toString().trimEnd('/')
+        var kept: String? = null
+        val search = SpotifySearch(OkHttpClient(), { SpotifyApp("id", "secret") }, accounts = base, api = base, user = { "old" }, onUser = { kept = it })
+        assertTrue(search.signedIn)
+        // "min spellista" looks only among your own.
+        assertEquals(listOf("Sommar i köket"), search.search("min spellista sommar").map { it.name })
+        assertEquals("Your playlist · Gabriel", search.search("min spellista sommar").single().description)
+        // Without "my", your own match comes before the catalogue's.
+        assertEquals("Sommar i köket", search.search("playlist sommar").first().name)
+        assertTrue(tokenForms.first().contains("grant_type=refresh_token") && tokenForms.first().contains("refresh_token=old"))
+        assertEquals("new", kept)
+
+        val cards = SonosCards(SonosClient(OkHttpClient(), sonosServer.port), { listOf(host) }, search)
+        val snapshot = HomeySnapshot(
+            zones = mapOf("z" to Zone("z", "Kök")),
+            devices = mapOf("k" to Device("k", "Kök", zone = "z", deviceClass = "speaker")),
+        )
+        val all = cards.cards(snapshot).getValue("k")
+        val play = all.single { it.cardId == SonosCards.SPOTIFY }
+        val save = all.single { it.cardId == SonosCards.SAVE }
+        // Adding to the favourites never counts as a way to play music.
+        assertEquals(listOf(SonosCards.SPOTIFY, "play_favorite", "play_playlist").sorted(), app.homeydash.homey.FlowCards.musicSources(all).flatMap { it.all }.map { it.card.cardId }.sorted())
+        assertEquals(emptyList<Any>(), cards.autocomplete(save, "item", ""))
+
+        val mine = cards.autocomplete(play, "item", "min spellista sommar").single()
+        cards.run(play, JsonObject(mapOf("item" to mine.raw)))
+        assertTrue(actions.single { it.first == "AddURIToQueue" }.second.contains("x-rincon-cpcontainer:1006206cspotify%3aplaylist%3ap9"))
+
+        // "Add it to my favourites": what was just played is offered first.
+        val offered = cards.autocomplete(save, "item", "")
+        assertEquals(listOf("Sommar i köket"), offered.map { it.name })
+        cards.run(save, JsonObject(mapOf("item" to offered.single().raw)))
+        val created = actions.single { it.first == "CreateObject" }.second
+        assertTrue(created.contains("<ContainerID>FV:2</ContainerID>"))
+        // The favourite, written once more inside the SOAP body.
+        val elements = created.substringAfter("<Elements>").substringBefore("</Elements>")
+            .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+        assertTrue(elements.contains("<r:type>instantPlay</r:type>"))
+        assertTrue(elements.contains("""<res protocolInfo="x-rincon-cpcontainer:*:*:*">x-rincon-cpcontainer:1006206cspotify%3aplaylist%3ap9</res>"""))
+        assertTrue(elements.contains("<r:resMD>&lt;DIDL-Lite"))
+        assertTrue(elements.contains("<dc:title>Sommar i köket</dc:title>"))
         spotifyServer.shutdown()
         sonosServer.shutdown()
     }

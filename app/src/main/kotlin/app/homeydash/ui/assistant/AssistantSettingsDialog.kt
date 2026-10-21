@@ -205,7 +205,7 @@ internal fun AssistantPage(
         "listen" -> ListenPage(services, settings, update)
         "brain" -> BrainPage(services, settings, update, preview)
         "privacy" -> PrivacyPage(settings, update, onDevices = { nav.page = "devices" }, onPreview = { nav.page = "preview" }, onFaces = onFaces)
-        "spotify" -> Spotify(settings, update)
+        "spotify" -> Spotify(services, settings, update)
         "logs" -> Logs(services, settings, update)
         "memory" -> MemoryPage(services, settings, update)
         else -> Main(services, settings, update, onPage = { nav.page = it }, onRoutines = { nav.page = "routines" }, menu = menu)
@@ -701,7 +701,7 @@ private fun PhonesPage(services: AssistantServices, devices: Map<String, Device>
 
 /** A Spotify developer app's keys, so any song can be searched for and played on the Sonos speakers. */
 @Composable
-private fun Spotify(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+private fun Spotify(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
     Hint(
         "Play any song, album, artist or playlist on Sonos: say \"spela Dancing Queen i köket\", or use the Spotify tab under Play music. " +
@@ -714,6 +714,142 @@ private fun Spotify(settings: AgentSettings, update: ((AgentSettings) -> AgentSe
             "Make an app at developer.spotify.com/dashboard (any name, redirect URI http://127.0.0.1:8888/callback, Web API ticked) " +
                 "with a Spotify Premium account, then copy its Client ID and Client secret here.",
         )
+    }
+    if (settings.spotifyClientId.isNotBlank() && settings.spotifySecret.isNotBlank()) SpotifyAccount(services, settings, update)
+}
+
+/**
+ * Signing in to the Spotify account, so its own playlists (private ones too) are found: the
+ * catalogue search only finds public playlists, and seldom your own.
+ */
+@Composable
+private fun SpotifyAccount(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    val state = remember { java.util.UUID.randomUUID().toString() }
+    var page by remember { mutableStateOf<String?>(null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    val signedIn = settings.spotifyUser.isNotBlank()
+    SettingsBox("Your playlists") {
+        Hint(
+            "Sign in with the Spotify account that's added in the Sonos app, so Nova and Play music find your own playlists, private ones too. " +
+                "The developer app above needs the redirect URI ${app.homeydash.sonos.SpotifySearch.REDIRECT}.",
+        )
+        LaunchedEffect(signedIn) {
+            if (signedIn && status == null) {
+                val spotify = services.spotify ?: return@LaunchedEffect
+                val count = spotify.myPlaylists().size
+                status = spotify.ownTrouble?.let { "Couldn't read your playlists: $it" } ?: "$count playlists found."
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                if (signedIn) "Sign in again" else "Sign in to Spotify",
+                style = MaterialTheme.typography.labelLarge,
+                color = g.fg,
+                modifier = Modifier.pressable({
+                    page = services.spotify?.signInUrl(state)
+                    if (page == null) status = "Add the client ID and secret first."
+                }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+            if (signedIn) {
+                Text(
+                    "Sign out",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = g.fg,
+                    modifier = Modifier.pressable({
+                        update { it.copy(spotifyUser = "", spotifyUserName = "") }
+                        status = null
+                    }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+                )
+            }
+            Text(
+                listOfNotNull(
+                    if (signedIn) "Signed in" + settings.spotifyUserName.ifBlank { null }?.let { " as $it" }.orEmpty() + "." else "Not signed in.",
+                    status,
+                ).joinToString(" "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (status?.startsWith("Couldn't") == true) g.danger else g.muted,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+    page?.let { url ->
+        SpotifySignIn(url, onDismiss = { page = null }) { back ->
+            page = null
+            val code = back.getQueryParameter("code")
+            status = when {
+                back.getQueryParameter("state") != state -> "Couldn't sign in: the answer wasn't for this sign-in."
+                code == null -> "Couldn't sign in: " + (back.getQueryParameter("error") ?: "Spotify sent no code") + "."
+                else -> "Signing in…"
+            }
+            if (code != null && back.getQueryParameter("state") == state) scope.launch {
+                status = try {
+                    val spotify = services.spotify ?: throw java.io.IOException("Spotify isn't ready yet")
+                    val (refresh, name) = spotify.finishSignIn(code)
+                    update { it.copy(spotifyUser = refresh, spotifyUserName = name.orEmpty()) }
+                    val count = spotify.myPlaylists().size
+                    spotify.ownTrouble?.let { "Couldn't read your playlists: $it" } ?: "$count playlists found."
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    "Couldn't sign in: ${e.message}"
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Spotify's sign-in page inside the app (the kiosk keeps other apps out), closed as soon as
+ * Spotify sends the browser back to the redirect address with the code.
+ */
+@android.annotation.SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun SpotifySignIn(url: String, onDismiss: () -> Unit, onBack: (android.net.Uri) -> Unit) {
+    val g = GlassTheme.colors
+    AppDialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.dialogSize(720.dp, tall = true).glass(PanelShape).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Sign in to Spotify", style = MaterialTheme.typography.titleMedium, color = g.fg, modifier = Modifier.weight(1f))
+                Text(
+                    "Cancel",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = g.fg,
+                    modifier = Modifier.pressable(onDismiss).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+                )
+            }
+            androidx.compose.ui.viewinterop.AndroidView(
+                modifier = Modifier.fillMaxWidth().height(560.dp),
+                factory = { context ->
+                    android.webkit.WebView(context).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        var done = false
+                        fun caught(target: String?): Boolean {
+                            if (target == null || !target.startsWith(app.homeydash.sonos.SpotifySearch.REDIRECT)) return false
+                            if (!done) {
+                                done = true
+                                stopLoading()
+                                onBack(android.net.Uri.parse(target))
+                            }
+                            return true
+                        }
+                        webViewClient = object : android.webkit.WebViewClient() {
+                            override fun shouldOverrideUrlLoading(view: android.webkit.WebView, request: android.webkit.WebResourceRequest): Boolean =
+                                caught(request.url.toString())
+
+                            override fun onPageStarted(view: android.webkit.WebView, started: String?, favicon: android.graphics.Bitmap?) {
+                                if (!caught(started)) super.onPageStarted(view, started, favicon)
+                            }
+                        }
+                        loadUrl(url)
+                    }
+                },
+            )
+        }
     }
 }
 

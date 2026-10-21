@@ -285,6 +285,8 @@ object Memory {
         fun name(alias: String) = view.named(alias).trim()
         val (relation, obj) = when (call.name) {
             "play_music" -> "plays" to listOf(arg("query").ifBlank { "music" }, "on " + name(arg("player"))).joinToString(" ")
+            // What someone keeps as a favourite is music they like; "it" alone says nothing.
+            "save_favourite" -> "likes the music" to arg("query")
             "set_scene" -> "sets the lights" to "${arg("look")} in ${arg("room")}"
             "set_mood" -> "turns on the mood" to name(arg("mood"))
             "run_flow" -> "starts the Flow" to arg("name")

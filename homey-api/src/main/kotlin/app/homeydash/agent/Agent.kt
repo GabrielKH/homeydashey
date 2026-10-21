@@ -952,9 +952,9 @@ class Agent(
         const val MAX_REPEATS = 2
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines", KnowHow.GUIDE)
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
-        val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "run_device_action", "press_remote")
+        val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "save_favourite", "run_device_action", "press_remote")
         /** How tool results that changed something begin. */
-        val CHANGED = listOf("Done", "Changed", "Started", "Playing")
+        val CHANGED = listOf("Done", "Changed", "Started", "Playing", "Added")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
             "Call the right tool now, or tell the user plainly what went wrong.)"
         const val TOOLS_LAST = "Whatever the character, the home only changes through your tools: call the tool first, then say what it did; " +

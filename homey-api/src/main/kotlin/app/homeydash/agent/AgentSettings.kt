@@ -369,6 +369,10 @@ data class AgentSettings(
     /** A Spotify developer app, so any song, album, artist or playlist can be found and played on Sonos. */
     val spotifyClientId: String = "",
     val spotifySecret: String = "",
+    /** The Spotify sign-in (a refresh token), so the account's own playlists are found too; empty when nobody signed in. */
+    val spotifyUser: String = "",
+    /** The signed-in Spotify account's name, shown in the settings. */
+    val spotifyUserName: String = "",
 ) {
     /** Who hears questions, in order; empty means Android's own speech recognition. */
     fun hearers(): List<Hearer> = listOfNotNull(Hearer.Whisper.takeIf { useWhisper }, Hearer.OpenAI.takeIf { useOpenAiSpeech })

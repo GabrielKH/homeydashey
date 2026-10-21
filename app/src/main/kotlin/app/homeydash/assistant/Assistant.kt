@@ -86,6 +86,8 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     var busy: () -> Boolean = { false }
     /** The recipes and the one being cooked, so the assistant can follow along. */
     var kitchen: app.homeydash.data.Kitchen? = null
+    /** Spotify search, for signing in to Spotify from the settings. */
+    var spotify: app.homeydash.sonos.SpotifySearch? = null
 
     /** What the assistant heard, thought and did, kept until it is sent (Settings → Assistant → Send logs). */
     val log = AgentLog(File(appContext.filesDir, "assistant/log.jsonl"))
