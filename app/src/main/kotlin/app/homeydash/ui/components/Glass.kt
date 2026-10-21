@@ -92,6 +92,18 @@ fun Modifier.glass(shape: Shape = PanelShape): Modifier = composed {
         .border(1.dp, edge, shape)
 }
 
+/**
+ * The assistant's side window look: the wall's own dark (or light) colour, a little
+ * see-through, under the glass. The kitchen timers wear it too, so they match.
+ */
+fun Modifier.windowGlass(shape: Shape = PanelShape): Modifier = composed {
+    val g = GlassTheme.colors
+    this
+        .clip(shape)
+        .background(g.wallBase.copy(alpha = if (g.isDark) 0.88f else 0.9f), shape)
+        .glass(shape)
+}
+
 private fun glassFill(g: GlassColors) = Brush.linearGradient(listOf(g.glassTop, g.glassBottom), Offset.Zero, Offset.Infinite)
 
 /** The warm fill of something that is on: the active mood, a lit bubble. */

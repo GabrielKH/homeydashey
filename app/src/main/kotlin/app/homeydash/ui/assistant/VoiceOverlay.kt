@@ -83,6 +83,7 @@ import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.AssistantState
 import app.homeydash.ui.components.PillShape
 import app.homeydash.ui.components.glass
+import app.homeydash.ui.components.windowGlass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 
@@ -431,9 +432,7 @@ private fun BoxScope.SideVoice(assistant: Assistant, settings: AgentSettings, vi
         Column(
             Modifier
                 .widthIn(max = 380.dp)
-                .clip(RoundedCornerShape(28.dp))
-                .background(g.wallBase.copy(alpha = if (g.isDark) 0.88f else 0.9f), RoundedCornerShape(28.dp))
-                .glass(RoundedCornerShape(28.dp))
+                .windowGlass(RoundedCornerShape(28.dp))
                 .pressable({ assistant.compact = false }),
         ) {
             Box {
