@@ -406,7 +406,7 @@ class SpeechOutput(
     private val phraseDir by lazy { File(appContext.filesDir, "phrases").apply { mkdirs() } }
 
     private fun phraseKey(text: String, swedish: Boolean, voice: VoiceStyle) =
-        "${voice.name}|${if (voice.local) settings().serverVoice() else ""}|${settings().pace}|$swedish|$text"
+        "${voice.name}|${if (voice.local) recording(swedish) else ""}|${settings().pace}|$swedish|$text"
 
     private fun phraseFile(key: String): File {
         val hash = java.security.MessageDigest.getInstance("SHA-1").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -659,6 +659,25 @@ class SpeechOutput(
         }
     }
 
+    /** The recordings in the voice server's voices folder, as its voice list read them; null until read. */
+    @Volatile private var recordings: String? = null
+    @Volatile private var recordingsReadAt = 0L
+
+    /** The recording Chatterbox copies for a [swedish] or English answer ("nova-sv" for Swedish when there is one). */
+    private fun recording(swedish: Boolean): String =
+        settings().serverVoice(swedish) { name -> recordings?.let { "\"$name\"" in it || "$name.wav" in it } == true }
+
+    /** Reads the voice server's list of recordings again when it is older than [RECORDINGS_FOR_MS]. */
+    private fun readRecordings(url: String) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (recordings != null && now - recordingsReadAt < RECORDINGS_FOR_MS) return
+        recordingsReadAt = now
+        runCatching {
+            val request = okhttp3.Request.Builder().url("$url/v1/voices").build()
+            http.newCall(request).execute().use { r -> if (r.isSuccessful) recordings = r.body?.string().orEmpty() }
+        }
+    }
+
     /** Until when the voice server is left alone after it didn't answer, so answers aren't held up. */
     @Volatile private var serverDownUntil = 0L
 
@@ -685,11 +704,12 @@ class SpeechOutput(
         val url = s.voiceServerUrlOrGuess().trimEnd('/')
         if (url.isEmpty() || android.os.SystemClock.elapsedRealtime() < serverDownUntil) return null
         return withContext(Dispatchers.IO) {
+            readRecordings(url)
             val made = runCatching {
                 val body = kotlinx.serialization.json.buildJsonObject {
                     put("model", kotlinx.serialization.json.JsonPrimitive(s.voiceServerModel.trim().ifBlank { app.homeydash.agent.DEFAULT_VOICE_MODEL }))
                     put("input", kotlinx.serialization.json.JsonPrimitive(text))
-                    s.serverVoice().takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
+                    recording(swedish).takeIf { it.isNotEmpty() }?.let { put("voice", kotlinx.serialization.json.JsonPrimitive(it)) }
                     put("lang_code", kotlinx.serialization.json.JsonPrimitive(if (swedish) "sv" else "en"))
                     put("speed", kotlinx.serialization.json.JsonPrimitive(pace()))
                     put("response_format", kotlinx.serialization.json.JsonPrimitive("wav"))
@@ -725,6 +745,8 @@ class SpeechOutput(
     private companion object {
         val SWEDISH: Locale = Locale.forLanguageTag("sv-SE")
         const val SERVER_RETRY_MS = 120_000L
+        /** How long the voice server's list of recordings is trusted before it is read again. */
+        const val RECORDINGS_FOR_MS = 600_000L
         /** Sentences up to this long are kept as sound for next time; longer ones rarely repeat. */
         const val LEARN_UP_TO = 40
         /** How many short sounds are kept on the tablet (about 50 KB each). */
