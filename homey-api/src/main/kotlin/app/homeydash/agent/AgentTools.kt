@@ -104,7 +104,7 @@ class AgentTools(
         add(tool("play_music", "Play a song, album, artist, playlist, favourite or radio station on a player (e.g. a Sonos); finds anything on Spotify when set up.") {
             string("player", "Player alias")
             string("query", "What they asked for in their words: a title with the artist if said (\"Dancing Queen ABBA\"), or a genre, mood or chart (\"swedish top 50\", \"calm female vocals\"); empty only when they let you choose")
-            string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), radio for a station (\"P1\", \"radio P3\"), or omit for a favourite")
+            string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), podcast (plays its newest episode), episode, radio for a station (\"P1\", \"radio P3\"), or omit for a favourite")
             required("player")
         })
         if (!guest) add(tool("save_favourite", "Add music to the Sonos favourites: what was just played, or a playlist, album or song by name.") {

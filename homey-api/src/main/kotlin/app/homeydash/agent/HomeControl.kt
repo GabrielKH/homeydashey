@@ -204,7 +204,8 @@ class StoreHomeControl(
         }
         // The artist is often only in the description ("Abbey Road" · "The Beatles").
         fun score(item: AutocompleteItem): Double =
-            maxOf(NameMatch.score(query, item.name), NameMatch.score(query, listOfNotNull(item.name, item.description).joinToString(" ")))
+            // A chart asked for by its everyday name ("topplistan") is what was meant, whatever else is called alike.
+            if ((item.raw["chart"] as? JsonPrimitive)?.content == "true") 2.0 else maxOf(NameMatch.score(query, item.name), NameMatch.score(query, listOfNotNull(item.name, item.description).joinToString(" ")))
         val found = look(own)
         val ownBest: Pair<MusicSource, AutocompleteItem>? = NameMatch.best(query, found) { score(it.second) }
         var best: Pair<MusicSource, AutocompleteItem>? = ownBest?.takeIf { catalogues.isEmpty() || radio || score(it.second) >= OWN_IS_ENOUGH }
@@ -247,6 +248,7 @@ class StoreHomeControl(
         /** play_music's kinds, as the words Spotify search knows them by. */
         private val KIND_WORDS = mapOf(
             "playlist" to "playlist", "album" to "album", "song" to "song", "track" to "song", "artist" to "artist",
+            "podcast" to "podcast", "show" to "podcast", "episode" to "episode",
         )
 
         /** Words that make a request a radio station. */

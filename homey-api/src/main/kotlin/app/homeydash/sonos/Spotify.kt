@@ -28,7 +28,12 @@ data class SpotifyHit(
     /** One of the signed-in account's own playlists (made or followed), not something found in the catalogue. */
     val mine: Boolean = false,
 ) {
-    enum class Kind(val label: String) { Track("Song"), Album("Album"), Playlist("Playlist"), Artist("Artist") }
+    enum class Kind(val label: String, val type: String) {
+        Track("Song", "track"), Album("Album", "album"), Playlist("Playlist", "playlist"), Artist("Artist", "artist"),
+        /** A podcast; it plays its newest episode. */
+        Show("Podcast", "show"),
+        Episode("Episode", "episode"),
+    }
 
     /** "Song · ABBA", or "Your playlist · Gabriel", shown under the name. */
     val description: String get() = listOfNotNull(if (mine) "Your playlist" else kind.label, by).joinToString(" · ")
@@ -141,16 +146,27 @@ class SpotifySearch(
         val onlyMine = signedIn && kind == SpotifyHit.Kind.Playlist && MINE.containsMatchIn(text)
         val mine = if (kind == null || kind == SpotifyHit.Kind.Playlist) myPlaylists(query) else emptyList()
         if (onlyMine && mine.isNotEmpty()) return mine
+        // "Topplistan", "top 50 Sweden": Spotify's own charts, which its search no longer finds.
+        val charts = if (kind == null || kind == SpotifyHit.Kind.Playlist) chartsFor(query, market) else emptyList()
         if (query.isBlank()) return mine
-        val kinds = kind?.let(::listOf) ?: SpotifyHit.Kind.entries
+        // Podcasts and episodes only when asked for, so a song search isn't crowded by them.
+        val kinds = kind?.let(::listOf) ?: listOf(SpotifyHit.Kind.Track, SpotifyHit.Kind.Album, SpotifyHit.Kind.Artist, SpotifyHit.Kind.Playlist)
         val json = get(
             "/v1/search",
-            "q" to query, "type" to kinds.joinToString(",") { it.name.lowercase() },
+            "q" to query, "type" to kinds.joinToString(",") { it.type },
             // Apps in development mode get at most 10 a kind.
             "limit" to (if (kind == null) "6" else "10"), "market" to market,
         )
         // The account's own playlists that match come first: the catalogue search rarely finds them.
-        return mine + order(query, parseSearch(json), kind).filterNot { hit -> mine.any { it.id == hit.id } }
+        val first = charts + mine
+        return first + order(query, parseSearch(json), kind).filterNot { hit -> first.any { it.id == hit.id } }
+    }
+
+    /** The podcast [showId]'s newest episode, to play when someone asks for the podcast; null when Spotify lists none. */
+    suspend fun newestEpisode(showId: String): SpotifyHit? {
+        val json = get("/v1/shows/$showId/episodes", "limit" to "1", "market" to market) as? JsonObject ?: return null
+        val episode = (json["items"] as? JsonArray)?.filterIsInstance<JsonObject>()?.firstOrNull() ?: return null
+        return hit(SpotifyHit.Kind.Episode, episode, null, image(episode["images"]))
     }
 
     /** Popular songs by the artist called [name], to play when someone asks for the artist. */
@@ -241,11 +257,38 @@ class SpotifySearch(
         /** "my", "min", "mina", "egna": the account's own playlists are meant. */
         private val MINE = Regex("(?<!\\S)(my|mine|own|min|mina|mitt|egna)(?!\\S)", RegexOption.IGNORE_CASE)
 
+        /**
+         * Spotify's own chart playlists. Apps in development mode don't find Spotify's playlists
+         * by search any more, but the speakers play them with the household's own Spotify.
+         */
+        private class Chart(val id: String, val name: String, val words: Regex)
+
+        private const val TOP = "(top ?50|topp ?50|top ?list\\w*|topplist\\w*|charts?|mest spelade|most played|most streamed|top songs|topplatser)"
+        private val CHARTS = listOf(
+            Chart("37i9dQZEVXbLoATJ81JYXz", "Top 50 – Sverige", Regex("$TOP.*(sverige|sweden|svensk\\w*|swedish)|(sverige|sweden|svensk\\w*|swedish).*$TOP")),
+            Chart("37i9dQZEVXbMDoHDwVN2tF", "Top 50 – Global", Regex("$TOP.*(global|world|varlden|internationell\\w*)|(global|world|varlden|internationell\\w*).*$TOP")),
+            Chart("37i9dQZF1DXcBWIGoYBM5M", "Today's Top Hits", Regex("today ?s top hits|top hits|dagens hits|hits just nu|hottest hits")),
+        )
+
+        /** The charts [query] asks for; a bare "topplistan" or "top 50" is the home country's (Sweden's outside it). */
+        fun chartsFor(query: String, market: String = "SE"): List<SpotifyHit> {
+            val q = NameMatch.normalize(query)
+            if (q.isBlank()) return emptyList()
+            val named = CHARTS.filter { it.words.containsMatchIn(q) }
+            val charts = named.ifEmpty {
+                if (Regex("(^| )$TOP( |$)").containsMatchIn(q)) listOf(CHARTS[if (market == "SE") 0 else 1]) else emptyList()
+            }
+            return charts.map { SpotifyHit(SpotifyHit.Kind.Playlist, it.id, it.name, "Spotify") }
+        }
+
         private val KIND_WORDS = listOf(
             SpotifyHit.Kind.Artist to "(songs by|music by|something by|låtar (med|av)|musik (med|av)|nå(go)?t (med|av)|the artist|the band|artisten|artist|bandet)",
             SpotifyHit.Kind.Album to "(the album|albumet|album|skivan|plattan)",
             SpotifyHit.Kind.Playlist to "(the playlist|playlist|spellistan|spellista)",
             SpotifyHit.Kind.Track to "(the song|song|the track|track|låten|låt|singeln)",
+            // "Senaste avsnittet av X" is the podcast X, which plays its newest episode.
+            SpotifyHit.Kind.Show to "((the )?(latest|newest|new) episode of|(det )?(senaste|nya|nyaste) avsnittet( av| med| i)?|the podcast|podcast|poddcasten|poddcast|podden|podd)",
+            SpotifyHit.Kind.Episode to "(the episode|episode|avsnittet|avsnitt)",
         ).map { (kind, words) -> kind to Regex("(^|\\s)$words(\\s|$)", RegexOption.IGNORE_CASE) }
         private val SPACES = Regex("\\s+")
         private val LEAD = Regex("^(play|spela( upp)?|put on|sätt på|starta)\\s+", RegexOption.IGNORE_CASE)
@@ -297,7 +340,9 @@ class SpotifySearch(
             val playlists = items("playlists").mapNotNull { p ->
                 hit(SpotifyHit.Kind.Playlist, p, (p["owner"] as? JsonObject)?.str("display_name"), image(p["images"]))
             }
-            return tracks + albums + artists + playlists
+            val shows = items("shows").mapNotNull { sh -> hit(SpotifyHit.Kind.Show, sh, null, image(sh["images"])) }
+            val episodes = items("episodes").mapNotNull { e -> hit(SpotifyHit.Kind.Episode, e, null, image(e["images"])) }
+            return tracks + albums + artists + playlists + shows + episodes
         }
 
         private fun hit(kind: SpotifyHit.Kind, o: JsonObject, by: String?, art: String?): SpotifyHit? {
@@ -356,7 +401,9 @@ object SpotifyOnSonos {
     fun item(hit: SpotifyHit, service: Int = EUROPE, account: Account? = null): SonosItem {
         val encoded = "spotify%3a${hit.kind.name.lowercase()}%3a${hit.id}"
         val (key, prefix, upnpClass) = when (hit.kind) {
-            SpotifyHit.Kind.Track -> Triple("00032020", "", "object.item.audioItem.musicTrack")
+            SpotifyHit.Kind.Track, SpotifyHit.Kind.Episode -> Triple("00032020", "", "object.item.audioItem.musicTrack")
+            // A podcast queues like a playlist, the way the Sonos app shares one.
+            SpotifyHit.Kind.Show -> Triple("1006206c", "x-rincon-cpcontainer:1006206c", "object.container.playlistContainer")
             SpotifyHit.Kind.Album -> Triple("1004206c", "x-rincon-cpcontainer:1004206c", "object.container.album.musicAlbum")
             SpotifyHit.Kind.Playlist -> Triple("1006206c", "x-rincon-cpcontainer:1006206c", "object.container.playlistContainer")
             SpotifyHit.Kind.Artist -> throw IllegalArgumentException("An artist is played as its songs")

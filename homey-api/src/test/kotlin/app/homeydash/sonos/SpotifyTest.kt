@@ -43,6 +43,25 @@ class SpotifyTest {
         assertEquals(SpotifyHit.Kind.Playlist to "chill", SpotifySearch.parse("playlist my own chill"))
     }
 
+    @Test fun `knows Spotify's charts and podcasts by their everyday names`() {
+        assertEquals(listOf("Top 50 – Sverige"), SpotifySearch.chartsFor("topplistan").map { it.name })
+        assertEquals(listOf("Top 50 – Sverige"), SpotifySearch.chartsFor("top 50 sweden").map { it.name })
+        assertEquals(listOf("Top 50 – Global"), SpotifySearch.chartsFor("global top 50").map { it.name })
+        assertEquals(listOf("Top 50 – Global"), SpotifySearch.chartsFor("top 50", market = "US").map { it.name })
+        assertEquals(listOf("Today's Top Hits"), SpotifySearch.chartsFor("today's top hits").map { it.name })
+        assertEquals(emptyList<String>(), SpotifySearch.chartsFor("chill jazz").map { it.name })
+        assertEquals(SpotifyHit.Kind.Show to "Alex och Sigge", SpotifySearch.parse("spela podden Alex och Sigge"))
+        assertEquals(SpotifyHit.Kind.Show to "Sommar i P1", SpotifySearch.parse("senaste avsnittet av Sommar i P1"))
+        assertEquals(SpotifyHit.Kind.Episode to "Naturen", SpotifySearch.parse("avsnittet Naturen"))
+        val show = SpotifyOnSonos.item(SpotifyHit(SpotifyHit.Kind.Show, "s1", "Alex och Sigge"))
+        assertEquals("x-rincon-cpcontainer:1006206cspotify%3ashow%3as1", show.uri)
+        val episode = SpotifyOnSonos.item(SpotifyHit(SpotifyHit.Kind.Episode, "e1", "Avsnitt 1"))
+        assertEquals("spotify%3aepisode%3ae1", episode.uri)
+        val parsed = SpotifySearch.parseSearch(Json.parseToJsonElement("""{"shows": {"items": [{"id": "s1", "name": "Alex och Sigge", "images": []}]}}"""))
+        assertEquals(SpotifyHit.Kind.Show, parsed.single().kind)
+        assertEquals("Podcast", parsed.single().description)
+    }
+
     @Test fun `reads search results, skipping empty playlists`() {
         val hits = SpotifySearch.parseSearch(Json.parseToJsonElement(searchJson))
         assertEquals(listOf("Dancing Queen", "Arrival", "ABBA", "ABBA Gold"), hits.map { it.name })

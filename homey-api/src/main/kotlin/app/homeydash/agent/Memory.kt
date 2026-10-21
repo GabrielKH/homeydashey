@@ -284,7 +284,9 @@ object Memory {
         fun arg(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
         fun name(alias: String) = view.named(alias).trim()
         val (relation, obj) = when (call.name) {
-            "play_music" -> "plays" to listOf(arg("query").ifBlank { "music" }, "on " + name(arg("player"))).joinToString(" ")
+            // "listens to the podcast Alex och Sigge on Kök": what kind it was says more than the words alone.
+            "play_music" -> (if (arg("kind").lowercase() in setOf("podcast", "episode")) "listens to the podcast" else "plays") to
+                listOf(arg("query").ifBlank { "music" }, "on " + name(arg("player")).ifBlank { "a speaker" }).joinToString(" ")
             // What someone keeps as a favourite is music they like; "it" alone says nothing.
             "save_favourite" -> "likes the music" to arg("query")
             "set_scene" -> "sets the lights" to "${arg("look")} in ${arg("room")}"

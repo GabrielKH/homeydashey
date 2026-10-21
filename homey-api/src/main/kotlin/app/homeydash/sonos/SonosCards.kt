@@ -151,10 +151,12 @@ class SonosCards(
 
         val search = spotify ?: throw IOException("Spotify isn't set up")
         val kind = SpotifyHit.Kind.entries.firstOrNull { it.name == field("kind") } ?: throw IOException("Nothing was picked to play")
-        val hits = if (kind == SpotifyHit.Kind.Artist) {
-            search.songsBy(field("name")).ifEmpty { throw IOException("Spotify has no songs by ${field("name")}") }
-        } else {
-            listOf(SpotifyHit(kind, field("id"), field("name"), art = field("art").ifEmpty { null }, mine = field("mine") == "true"))
+        val asked = SpotifyHit(kind, field("id"), field("name"), art = field("art").ifEmpty { null }, mine = field("mine") == "true")
+        val hits = when (kind) {
+            SpotifyHit.Kind.Artist -> search.songsBy(field("name")).ifEmpty { throw IOException("Spotify has no songs by ${field("name")}") }
+            // A podcast plays its newest episode, as "spela podden X" means; the whole show if Spotify lists none.
+            SpotifyHit.Kind.Show -> listOf(runCatching { search.newestEpisode(asked.id) }.getOrNull() ?: asked)
+            else -> listOf(asked)
         }
         val items = hits.map { spotifyItem(speaker.host, it) }
         try {
@@ -163,7 +165,8 @@ class SonosCards(
             throw IOException("Sonos couldn't play that from Spotify. Is Spotify added in the Sonos app? (${e.message})", e)
         }
         // An artist plays as a pile of songs, which isn't one thing to keep.
-        if (kind != SpotifyHit.Kind.Artist) remember(deviceId, items.single())
+        // A podcast is kept as the show, so "save it" saves the podcast, not tonight's episode.
+        if (kind != SpotifyHit.Kind.Artist) remember(deviceId, if (kind == SpotifyHit.Kind.Show) spotifyItem(speaker.host, asked) else items.single())
     }
 
     /** How the speakers play [hit], with Sonos's numbers for the household's Spotify account read from its favourites and playlists. */
@@ -220,6 +223,8 @@ class SonosCards(
                         put("description", JsonPrimitive(hit.description))
                         hit.art?.let { put("art", JsonPrimitive(it)) }
                         if (hit.mine) put("mine", JsonPrimitive("true"))
+                        // One of Spotify's own charts, asked for by its everyday name ("topplistan").
+                        if (hit.by == "Spotify" && SpotifySearch.chartsFor(query).any { it.id == hit.id }) put("chart", JsonPrimitive("true"))
                     },
                 ),
             )
