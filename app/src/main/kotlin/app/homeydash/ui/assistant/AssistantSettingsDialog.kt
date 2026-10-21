@@ -1117,7 +1117,8 @@ private fun Voice(services: AssistantServices, settings: AgentSettings, update: 
             Hint(
                 "Chatterbox on the Mac copies a voice from a 15-20 second recording in the voices folder: type its name " +
                     "(\"anna\" for anna.wav) for each character, or leave it empty for the model's own voice. People can pick " +
-                    "their own under People. Everything stays in the house. Tap Hear it to try it; if the computer doesn't " +
+                    "their own under People. Chatterbox speaks with the accent of the recording, so put a Swedish recording " +
+                    "next to it with -sv at the end (\"anna-sv\" for anna-sv.wav): Swedish answers copy that one. Everything stays in the house. Tap Hear it to try it; if the computer doesn't " +
                     "answer, the tablet's voice speaks and it tries the computer again two minutes later. " +
                     "The voice server's address is under AI and servers.",
                 short = "Each character can copy a recording of a real voice, made on your Mac.",
