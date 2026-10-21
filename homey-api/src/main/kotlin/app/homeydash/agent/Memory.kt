@@ -651,6 +651,9 @@ class MemoryTools(private val book: MemoryBook, private val clock: () -> Long = 
     /** How long [asker] usually sets the timer called [label]; see [Timers.usualSeconds]. */
     fun usualTimerSeconds(label: String, asker: String?): Int? = Timers.usualSeconds(book.data.value.facts, label, asker)
 
+    /** The time, length and calendar [asker] usually gives an event called [title]; see [CalendarBook.usual]. */
+    fun usualEvent(title: String, asker: String?): CalendarBook.Usual? = CalendarBook.usual(book.data.value.facts, title, asker)
+
     suspend fun learn(fact: Fact) {
         runCatching { book.learn(listOf(fact)) }
     }

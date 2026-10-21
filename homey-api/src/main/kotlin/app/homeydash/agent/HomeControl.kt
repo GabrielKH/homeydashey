@@ -102,6 +102,14 @@ interface DashboardControl {
     fun goodnight()
     suspend fun weather(): String?
     suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent>
+    /** Events in the given calendars only (by [AgentCalendar.id]), shown on the dashboard or not. */
+    suspend fun calendarIn(ids: Set<String>, from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent> = emptyList()
+    /** The calendars on the tablet that events can be added to. */
+    suspend fun writableCalendars(): List<AgentCalendar> = emptyList()
+    /** Adds [event]; throws when the calendar refuses it. */
+    suspend fun addEvent(event: NewEvent) {
+        throw UnsupportedOperationException("Events can't be added from here.")
+    }
     /** The kitchen timers on the tablet. */
     val timers: TimerBoard
     fun setTheme(mode: String): Boolean

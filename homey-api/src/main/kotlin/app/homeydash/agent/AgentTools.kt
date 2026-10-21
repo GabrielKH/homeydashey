@@ -156,9 +156,22 @@ class AgentTools(
             string("mode", "light, dark or auto")
             required("mode")
         })
-        if (view.allows(Secret.Calendar)) add(tool("calendar", "Events from the family calendar.") {
+        if (view.allows(Secret.Calendar)) add(tool("calendar", "Events from the family calendar, or from one person's own calendar.") {
             string("start_date", "First day, yyyy-mm-dd; default today")
             number("days", "How many days, 1-31; default 1")
+            string("calendar", "Leave out for the calendars on the dashboard; \"mine\" for the asker's own, \"family\", or a person's name")
+        })
+        if (!guest && view.allows(Secret.AddEvents)) add(tool(
+            "add_event",
+            "Add an event to a calendar: the asker's own (\"min kalender\"), the family calendar, or someone else's by name. Asks for a yes first.",
+        ) {
+            string("title", "What it is, short, e.g. Tandläkare or Padel with Erik")
+            string("date", "The day, yyyy-mm-dd, worked out from today in the note")
+            string("time", "Start, HH:mm 24-hour; \"all day\" for an all-day event; leave out when not said")
+            number("minutes", "How long; leave out when not said")
+            string("in_calendar", "\"mine\", \"family\", or a person's name; leave out when not said")
+            string("location", "Where, only if said")
+            required("title", "date")
         })
         if (view.allows(Secret.Presence)) add(tool("who_is_home", "Which Homey users are home or asleep, and since when.") {})
         if (!guest && view.allows(Secret.Presence)) add(tool(
@@ -255,7 +268,8 @@ class AgentTools(
             "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
-            "calendar" -> calendar(a.str("start_date"), a.num("days"))
+            "calendar" -> calendar(a.str("start_date"), a.num("days"), a.str("calendar"))
+            "add_event" -> addEvent(a.str("title"), a.str("date"), a.str("time"), a.num("minutes"), a.str("in_calendar"), a.str("location"), "time" in a)
             "who_is_home" -> whoIsHome()
             "set_presence" -> setPresence(a.str("person"), a.str("state"))
             "alarms" -> alarms(a.str("action"), a.str("time"), a.str("days"), a.str("name"))
@@ -898,15 +912,54 @@ class AgentTools(
         return ok("Started: " + timers.joinToString { (step, t) -> "step $step ${t.label}" } + ".")
     }
 
-    private suspend fun calendar(start: String, days: Double?): ToolResult {
+    private suspend fun calendar(start: String, days: Double?, whose: String): ToolResult {
         if (!view.allows(Secret.Calendar)) return ok("Reading the calendar is switched off.")
         val from = runCatching { LocalDate.parse(start.trim()) }.getOrNull() ?: today()
         val count = (days ?: 1.0).toInt().coerceIn(1, 31)
-        val events = dashboard.calendar(from, count, withLocations = view.allows(Secret.CalendarDetails))
+        val details = view.allows(Secret.CalendarDetails)
+        val events = if (whose.isBlank()) {
+            dashboard.calendar(from, count, withLocations = details)
+        } else {
+            when (val pick = CalendarBook.pick(whose, dashboard.writableCalendars(), view.settings)) {
+                is CalendarBook.Pick.Problem -> return ok(pick.text)
+                is CalendarBook.Pick.Found -> dashboard.calendarIn(setOf(pick.calendar.id), from, count, withLocations = details)
+            }
+        }
         val text = if (events.isEmpty()) "No events." else events.joinToString("\n") { e ->
             listOfNotNull(e.start + (e.end?.let { " to $it" } ?: ""), e.title, e.location).joinToString(" · ")
         }
         return ToolResult(text, localOnly(Secret.Calendar) || localOnly(Secret.CalendarDetails))
+    }
+
+    /**
+     * Puts an event in a calendar after a yes: the asker's own, the family's or someone's by
+     * name. What isn't said (time, length, calendar) is what this asker usually gives an event
+     * of that name, from the memory; the yes question says it all back so it can be corrected.
+     */
+    private suspend fun addEvent(title: String, date: String, time: String, minutes: Double?, whose: String, location: String, timeSaid: Boolean): ToolResult {
+        if (!view.allows(Secret.AddEvents)) return ok("Adding calendar events is switched off under the assistant's Privacy and security settings.")
+        val name = title.trim().ifEmpty { return ok("What should the event be called?") }
+        val day = runCatching { LocalDate.parse(date.trim()) }.getOrNull() ?: return ok("Give the day as yyyy-mm-dd, worked out from today in the note.")
+        val s = view.settings
+        val usual = memory?.takeIf { s.access(Secret.Memory) != Access.Off }?.usualEvent(name, s.asker?.id)
+        val at = if (timeSaid && time.isNotBlank()) CalendarBook.time(time).getOrElse { return ok(it.message.orEmpty()) } else usual?.time
+        val length = minutes?.toInt()?.takeIf { it in 5..(24 * 60) } ?: usual?.minutes ?: CalendarBook.DEFAULT_MINUTES
+        val calendars = dashboard.writableCalendars()
+        val calendar = when (val pick = CalendarBook.pick(whose, calendars, s, usual?.calendarId)) {
+            is CalendarBook.Pick.Problem -> return ok(pick.text)
+            is CalendarBook.Pick.Found -> pick.calendar
+        }
+        val event = NewEvent(calendar.id, name, day, at, length, location.trim().ifEmpty { null })
+        val where = CalendarBook.label(calendar, calendars, s)
+        val said = CalendarBook.describe(event, today())
+        return ToolResult(
+            "Would add $said to $where. Say it back in a short sentence and ask the user to confirm.",
+            pending = PendingAction("Add $said to $where?", tapOnly = false) {
+                dashboard.addEvent(event)
+                if (s.access(Secret.Memory) != Access.Off) memory?.learn(CalendarBook.habit(event, where, s.asker, clock()))
+                "Added to $where."
+            },
+        )
     }
 
     private suspend fun whoIsHome(): ToolResult {
@@ -1154,7 +1207,7 @@ class AgentTools(
         /** When each robot was last given a command (device id to time). */
         private val lastCommand = java.util.concurrent.ConcurrentHashMap<String, Long>()
         private val ROOM_WORDS = setOf("room", "rum", "segment", "zone", "area", "location", "position")
-        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "who_is_home", "variables", "find_phone", "set_presence", "alarms")
+        private val GUEST_BLOCKED = setOf("vacuum", "list_flows", "run_flow", "goodnight", "set_theme", "calendar", "add_event", "who_is_home", "variables", "find_phone", "set_presence", "alarms")
 
         /** Flows whose names sound like locks, alarms or doors need a yes first. */
         private val SENSITIVE = Regex("""\b(un)?lock\w*|\blås\w*|\b(dis)?arm\w*|\b(av)?larm\w*|\balarm\w*|\bgarage\w*|\bdoor\w*|\bdörr\w*""", RegexOption.IGNORE_CASE)

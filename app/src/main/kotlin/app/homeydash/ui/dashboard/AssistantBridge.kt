@@ -1,6 +1,8 @@
 package app.homeydash.ui.dashboard
 
+import app.homeydash.agent.AgentCalendar
 import app.homeydash.agent.AgentEvent
+import app.homeydash.agent.NewEvent
 import app.homeydash.assistant.Assistant
 import app.homeydash.assistant.DashboardBridge
 import app.homeydash.assistant.Scene
@@ -95,10 +97,21 @@ class AssistantBridge(
 
     override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent> {
         if (!calendar.hasPermission.value) return emptyList()
+        return spoken(calendar.events(from, from.plusDays(days.toLong())), withLocations)
+    }
+
+    override suspend fun calendarIn(ids: Set<String>, from: LocalDate, days: Int, withLocations: Boolean): List<AgentEvent> =
+        spoken(calendar.eventsIn(ids.mapNotNull { it.toLongOrNull() }.toSet(), from, from.plusDays(days.toLong())), withLocations)
+
+    override suspend fun writableCalendars(): List<AgentCalendar> = calendar.writable()
+
+    override suspend fun addEvent(event: NewEvent) = calendar.add(event)
+
+    private fun spoken(events: List<app.homeydash.data.CalendarEvent>, withLocations: Boolean): List<AgentEvent> {
         // All-day events are stored at midnight UTC, timed ones in local time.
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now()
-        return calendar.events(from, from.plusDays(days.toLong())).map { e ->
+        return events.map { e ->
             val at = if (e.allDay) ZoneOffset.UTC else zone
             val start = Instant.ofEpochMilli(e.begin).atZone(at).toLocalDateTime()
             val end = Instant.ofEpochMilli(e.end).atZone(at).toLocalDateTime()

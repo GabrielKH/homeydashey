@@ -77,6 +77,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         askTimerName = p[ASK_TIMER_NAME] != "false",
         timerCountdown = p[TIMER_COUNTDOWN] != "false",
         phoneSharing = enumOr(p[PHONE_SHARING], app.homeydash.agent.PhoneSharing.Own),
+        familyCalendar = p[FAMILY_CALENDAR].orEmpty(),
         phoneOwners = p[PHONE_OWNERS]?.split('\n')?.mapNotNull { line -> line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }?.toMap().orEmpty(),
         useWhisper = p[USE_WHISPER] == "true",
         whisperUrl = p[WHISPER_URL].orEmpty(),
@@ -133,6 +134,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[ASK_TIMER_NAME] = s.askTimerName.toString()
         p[TIMER_COUNTDOWN] = s.timerCountdown.toString()
         p[PHONE_SHARING] = s.phoneSharing.name
+        p[FAMILY_CALENDAR] = s.familyCalendar
         p[PHONE_OWNERS] = s.phoneOwners.entries.joinToString("\n") { "${it.key}=${it.value}" }
         p[USE_WHISPER] = s.useWhisper.toString()
         p[WHISPER_URL] = s.whisperUrl.trim()
@@ -210,6 +212,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val TIMER_COUNTDOWN = stringPreferencesKey("timer_countdown")
         val PHONE_SHARING = stringPreferencesKey("phone_sharing")
         val PHONE_OWNERS = stringPreferencesKey("phone_owners")
+        val FAMILY_CALENDAR = stringPreferencesKey("family_calendar")
         val USE_WHISPER = stringPreferencesKey("use_whisper")
         val WHISPER_URL = stringPreferencesKey("whisper_url")
         val VOICE_SERVER_URL = stringPreferencesKey("voice_server_url")

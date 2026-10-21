@@ -161,9 +161,12 @@ object KnowHow {
                 "schema*", "schedule*", "imorgon", "tomorrow", "idag", "today", "ikväll", "tonight", "helg*", "weekend*", "vecka*", "week*",
                 "måndag*", "tisdag*", "onsdag*", "torsdag*", "fredag*", "lördag*", "söndag*", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
                 "födelsedag*", "birthday*", "kalas*", "party", "tid", "appointment*", "upptagen", "busy", "ledig*",
+                "boka*", "lägg in", "skriv in", "tandläkar*", "dentist", "läkar*", "doctor", "träning*", "padel",
             ),
-            tools = listOf("calendar"),
+            tools = listOf("calendar", "add_event"),
             rules = listOf(
+                "To put something in a calendar (\"lägg in tandläkaren på torsdag klockan två i min kalender\", \"boka padel i familjekalendern\"), call add_event with the title, the date worked out from today in the note, and the time, length and calendar only when said: \"min/my\" is in_calendar mine, \"familjen/family\" is family, a name is that person's. Then say back what it would add, with the day in words, and ask for a yes; add it only after the yes.",
+                "\"Vad har jag i min kalender\" or \"what's in Anna's calendar\" reads that one calendar: call calendar with calendar mine or the person's name.",
                 "Questions about plans, events, appointments or what is happening on a day or week (\"what's happening next week\", \"vad händer\", \"kalendern\") are about the family calendar: call calendar with start_date and days worked out from today in the note (next week is next Monday and 7 days), then tell what it found.",
                 "If you have no calendar tool, say the calendar is switched off under the assistant's Privacy and security settings. Never answer a calendar question with the weather.",
             ),

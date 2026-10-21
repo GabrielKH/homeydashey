@@ -190,6 +190,7 @@ enum class Access(val label: String) { Off("Off"), LocalOnly("Local AI only"), O
 enum class Secret(val title: String, val detail: String, val default: Access = Access.Off) {
     Calendar("Calendar", "Read event titles and times."),
     CalendarDetails("Calendar details", "Also read where events are."),
+    AddEvents("Add calendar events", "Put events in your own calendar or the family calendar. It says the event back and waits for a yes first.", Access.On),
     Presence("Who is home", "Read whether each Homey user is home or asleep, and mark people home, away or asleep."),
     WakeAlarms("Wake-up alarms", "Read, set and switch off Homey's wake-up alarms (\"väck mig 6:15\").", Access.On),
     Locks("Locks", "Read whether doors are locked, and lock them."),
@@ -326,6 +327,10 @@ data class AgentSettings(
     val phoneSharing: PhoneSharing = PhoneSharing.Own,
     /** Each phone's owner chosen in Settings, device id to person id or [SHARED_PHONE]; others go by the name in the phone's. */
     val phoneOwners: Map<String, String> = emptyMap(),
+    /** The tablet calendar the family shares, by id; [CalendarBook.GUESS] for the one called family. */
+    val familyCalendar: String = CalendarBook.GUESS,
+    /** Set per question: each person's account email, id to email, so "my calendar" is theirs. */
+    val calendarAccounts: Map<String, String> = emptyMap(),
     /** Questions are heard by Whisper on your own computer (whisper.cpp's server) instead of Google. */
     val useWhisper: Boolean = false,
     /** Whisper's address; empty means the Ollama computer on port 8080. */
