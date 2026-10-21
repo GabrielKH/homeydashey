@@ -2,12 +2,15 @@ package app.homeydash.data
 
 import android.Manifest
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.CalendarContract
+import app.homeydash.agent.AgentCalendar
+import app.homeydash.agent.NewEvent
 import app.homeydash.homey.HomeyCalendarEvent
 import androidx.core.content.ContextCompat
 import java.time.LocalDate
@@ -241,6 +244,79 @@ class CalendarRepository(
             }
         }
         return result.sortedWith(compareBy({ it.account.lowercase() }, { it.name.lowercase() }))
+    }
+
+    /** Whether events may be added to the tablet's calendars. */
+    fun canWrite() =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * The tablet's calendars events can be added to (the person's own Google calendar, a shared
+     * family calendar), whether shown on the dashboard or not; never holidays or birthdays.
+     */
+    suspend fun writable(): List<AgentCalendar> {
+        if (!granted() || !canWrite()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val projection = arrayOf(
+                    CalendarContract.Calendars._ID,
+                    CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+                    CalendarContract.Calendars.ACCOUNT_NAME,
+                    CalendarContract.Calendars.OWNER_ACCOUNT,
+                    CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+                    CalendarContract.Calendars.SYNC_EVENTS,
+                )
+                val result = mutableListOf<AgentCalendar>()
+                context.contentResolver.query(CalendarContract.Calendars.CONTENT_URI, projection, null, null, null)?.use { c ->
+                    while (c.moveToNext()) {
+                        if (c.getInt(4) < CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR || c.getInt(5) != 1) continue
+                        result += AgentCalendar(
+                            id = c.getLong(0).toString(),
+                            name = c.getString(1) ?: "Calendar",
+                            account = c.getString(2).orEmpty(),
+                            owner = c.getString(3).orEmpty(),
+                        )
+                    }
+                }
+                result.sortedWith(compareBy({ it.account.lowercase() }, { it.name.lowercase() }))
+            }.getOrDefault(emptyList())
+        }
+    }
+
+    /** Puts [event] in its calendar; the account syncs it to Google (or wherever it lives) on its own. */
+    suspend fun add(event: NewEvent) {
+        check(canWrite()) { "The dashboard may not add to the calendar. Allow it under Settings → Assistant → People." }
+        val zone = ZoneId.systemDefault()
+        val time = event.time
+        val values = ContentValues().apply {
+            put(CalendarContract.Events.CALENDAR_ID, event.calendarId.toLong())
+            put(CalendarContract.Events.TITLE, event.title)
+            event.location?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
+            if (time == null) {
+                // All-day events sit at UTC midnight and end at the next one.
+                val start = event.date.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+                put(CalendarContract.Events.DTSTART, start)
+                put(CalendarContract.Events.DTEND, start + DAY)
+                put(CalendarContract.Events.ALL_DAY, 1)
+                put(CalendarContract.Events.EVENT_TIMEZONE, "UTC")
+            } else {
+                val start = event.date.atTime(time).atZone(zone).toInstant().toEpochMilli()
+                put(CalendarContract.Events.DTSTART, start)
+                put(CalendarContract.Events.DTEND, start + event.minutes * 60_000L)
+                put(CalendarContract.Events.EVENT_TIMEZONE, zone.id)
+            }
+        }
+        withContext(Dispatchers.IO) {
+            context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+                ?: error("The calendar didn't take the event.")
+        }
+        refresh()
+    }
+
+    /** Events in the calendars [ids] only, whether the dashboard shows them or not. */
+    suspend fun eventsIn(ids: Set<Long>, from: LocalDate, until: LocalDate): List<CalendarEvent> {
+        if (!granted()) return emptyList()
+        return withContext(Dispatchers.IO) { runCatching { queryEvents(ids, from, until) }.getOrDefault(emptyList()) }
     }
 
     /** Events from [from] up to [until] (exclusive) in the chosen calendars, for the calendar page. */

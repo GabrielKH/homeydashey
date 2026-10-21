@@ -1066,14 +1066,34 @@ object Confirmation {
     private val SWEDISH_WORD = Regex("""\b(och|jag|du|det|är|inte|på|av|ja|nej|tänd|släck|hur|vad)\b""", RegexOption.IGNORE_CASE)
     private val YES = Regex("""^\s*(ja|japp|jajamän|jo|absolut|visst|kör|gör det|okej|ok|yes|yeah|yep|sure|do it|go ahead|please do|confirm)\b.*""", RegexOption.IGNORE_CASE)
     private val NO = Regex("""^\s*(nej|nä|nää|avbryt|stopp|låt bli|no|nope|cancel|stop|don'?t)\b.*""", RegexOption.IGNORE_CASE)
+    /** A yes somewhere in a short answer: "Sounds great! Yes!", "Perfekt, lägg in den". */
+    private val YES_ANYWHERE = Regex(
+        """(?<![\p{L}\d])(ja|japp|jo|absolut|visst|kör|okej|ok|yes|yeah|yep|yup|sure|perfekt|perfect|great|toppen|bra|good|gärna|precis|stämmer|correct|exactly|gör det|do it|go ahead|add it|lägg in|lägg till)(?![\p{L}\d])""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val NO_ANYWHERE = Regex("""(?<![\p{L}\d])(nej|nä|no|not|inte|cancel|avbryt|don'?t)(?![\p{L}\d])""", RegexOption.IGNORE_CASE)
+    /** Words that change what was asked ("no, on Monday instead"), so the AI has to hear them. */
+    private val CHANGE = Regex(
+        """(?<![\p{L}\d])(instead|istället|stället|utan|but|men|change|ändra|byt|move|flytta|""" +
+            """monday|tuesday|wednesday|thursday|friday|saturday|sunday|måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|""" +
+            """tomorrow|imorgon|morgon|today|idag|klockan|o'?clock|am|pm|\d+)(?![\p{L}\d])""",
+        RegexOption.IGNORE_CASE,
+    )
 
-    /** true for yes, false for no, null when the text is about something else. */
+    /**
+     * true for yes, false for no, null when the text is about something else or changes what
+     * was asked ("nej, på måndag istället"), which the AI then hears and asks again about.
+     */
     fun parse(text: String): Boolean? {
         val t = text.trim().trimEnd('.', '!')
-        if (t.split(SPACES).size > 5) return null
+        val words = t.split(SPACES).filter { it.isNotEmpty() }
+        if (words.isEmpty() || words.size > 8) return null
+        val changes = CHANGE.containsMatchIn(t)
         return when {
-            NO.matches(t) -> false
-            YES.matches(t) -> true
+            NO.matches(t) -> if (changes) null else false
+            changes -> null
+            YES.matches(t) && words.size <= 5 -> true
+            YES_ANYWHERE.containsMatchIn(t) && !NO_ANYWHERE.containsMatchIn(t) -> true
             else -> null
         }
     }

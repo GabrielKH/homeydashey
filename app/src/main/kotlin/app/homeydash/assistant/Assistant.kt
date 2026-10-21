@@ -1193,9 +1193,16 @@ class Assistant(
      */
     private fun forWhoIsHere(settings: AgentSettings): Pair<AgentSettings, String?> {
         // Who has which phone is told by the people the tablet knows, whoever is asking.
-        val s = settings.copy(people = services.faces.people.value.associate { it.id to it.name })
+        val known = services.faces.people.value
+        val s = settings.copy(
+            people = known.associate { it.id to it.name },
+            // Whose calendar is whose, so "min kalender" is the asker's own.
+            calendarAccounts = known.filter { it.calendar.isNotBlank() }.associate { it.id to it.calendar },
+        )
         if (s.access(Secret.Faces) == Access.Off) return s to null
-        val byVoice = voice?.takeIf { it.person != null && SystemClock.elapsedRealtime() - it.at < 60_000 }
+        // The voice that woke it speaks for the whole conversation, follow-ups too, so "min kalender"
+        // a minute and a half in is still theirs.
+        val byVoice = voice?.takeIf { it.person != null && (conversing || SystemClock.elapsedRealtime() - it.at < 60_000) }
         val seen = byVoice ?: services.faces.current() ?: return s to null
         val person = seen.person
         return when {

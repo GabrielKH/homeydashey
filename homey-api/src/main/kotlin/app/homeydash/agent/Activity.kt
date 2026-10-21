@@ -90,6 +90,7 @@ object StepText {
             "weather" -> "Checking the weather"
             "set_theme" -> "Switching to ${str("mode")}"
             "calendar" -> "Reading the calendar"
+            "add_event" -> "Adding ${str("title").ifBlank { "an event" }} to the calendar"
             "who_is_home" -> "Checking who's home"
             "set_presence" -> "Marking ${str("person").ifBlank { "you" }} ${str("state").lowercase()}"
             "alarms" -> when (str("action").lowercase()) {

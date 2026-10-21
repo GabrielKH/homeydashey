@@ -33,6 +33,8 @@ data class KnownPerson(
     val saidNames: Map<String, List<String>> = emptyMap(),
     /** How sure the wake judge must be before waking for them (see [WakeJudge.upper]), by the name's key; missing for the usual. */
     val strictness: Map<String, Int> = emptyMap(),
+    /** Their own account's email (a Google account on the tablet), whose calendar is "my calendar" for them. */
+    val calendar: String = "",
 ) {
     /** Their first character, null for the house's. */
     val character: Persona? get() = characters.firstOrNull()

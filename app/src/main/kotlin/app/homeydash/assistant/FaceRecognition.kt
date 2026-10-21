@@ -301,6 +301,12 @@ class FaceService(private val context: Context) {
         save()
     }
 
+    /** The email of someone's own account on the tablet, whose calendar is theirs; blank for none. */
+    fun setCalendar(id: String, email: String) {
+        _people.update { list -> list.map { if (it.id == id) it.copy(calendar = email.trim()) else it } }
+        save()
+    }
+
     fun setRole(id: String, role: Role) {
         _people.update { list -> list.map { if (it.id == id) it.copy(role = role) else it } }
         save()
@@ -327,6 +333,7 @@ class FaceService(private val context: Context) {
                     put("warmVoices", buildJsonObject { p.warmVoices.forEach { (c, v) -> put(c.name, v) } })
                     put("saidNames", buildJsonObject { p.saidNames.forEach { (wake, list) -> put(wake, buildJsonArray { list.forEach { add(JsonPrimitive(it)) } }) } })
                     put("strictness", buildJsonObject { p.strictness.forEach { (wake, v) -> put(wake, v) } })
+                    put("calendar", p.calendar)
                 })
             }
         }
@@ -373,6 +380,7 @@ class FaceService(private val context: Context) {
                 warmVoices = (o["warmVoices"] as? JsonObject)?.mapNotNull { (c, v) -> persona(c)?.let { p -> v.jsonPrimitive.contentOrNull?.takeIf { it.isNotBlank() }?.let { p to it } } }?.toMap().orEmpty(),
                 saidNames = (o["saidNames"] as? JsonObject)?.mapValues { (_, v) -> (v as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty() }.orEmpty(),
                 strictness = (o["strictness"] as? JsonObject)?.mapNotNull { (k, v) -> v.jsonPrimitive.intOrNull?.let { k to it } }?.toMap().orEmpty(),
+                calendar = o["calendar"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 prints = if (o["printsBy"]?.jsonPrimitive?.contentOrNull == PRINTS_BY) (o["prints"] as? JsonObject)?.mapValues { vectors(it.value) }.orEmpty() else emptyMap(),
             )
         }

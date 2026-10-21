@@ -150,6 +150,7 @@ fun FacesDialog(services: AssistantServices, settings: AgentSettings, onDismiss:
                         }
                         Toggle(settings.strangersAreGuests, onClick = { services.settingsStore.update { it.copy(strangersAreGuests = !it.strangersAreGuests) } })
                     }
+                    FamilyCalendar(services, settings)
                 }
             }
         }
@@ -202,6 +203,7 @@ private fun PersonCard(
         }
         RoleChoice(person.role, onRole)
         PersonCharacter(services, settings, person)
+        PersonCalendar(services, person)
         AboutPerson(services, person.id, person.name)
     }
 }
