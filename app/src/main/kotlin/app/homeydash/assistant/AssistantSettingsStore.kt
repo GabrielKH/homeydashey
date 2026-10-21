@@ -53,6 +53,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         speakerVolume = p[VOLUME]?.toIntOrNull() ?: 35,
         speak = p[SPEAK] != "false",
         liveSpeech = p[LIVE_SPEECH] != "false",
+        quickYes = p[QUICK_YES] != "false",
         // Before the levels, talking over was a plain switch.
         interrupt = enumOr(p[INTERRUPT], if (p[TALK_OVER] == "false") app.homeydash.agent.Interrupt.Off else app.homeydash.agent.Interrupt.Clear),
         strangersAreGuests = p[STRANGERS] == "true",
@@ -73,6 +74,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         novaName = p[NOVA_NAME] ?: AgentSettings().novaName,
         classicRed = p[CLASSIC_RED] == "true",
         batteryReminders = p[BATTERY_REMINDERS] != "false",
+        askTimerName = p[ASK_TIMER_NAME] != "false",
+        timerCountdown = p[TIMER_COUNTDOWN] != "false",
         phoneSharing = enumOr(p[PHONE_SHARING], app.homeydash.agent.PhoneSharing.Own),
         phoneOwners = p[PHONE_OWNERS]?.split('\n')?.mapNotNull { line -> line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }?.toMap().orEmpty(),
         useWhisper = p[USE_WHISPER] == "true",
@@ -85,6 +88,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         openAiSpeechKey = p[OPENAI_SPEECH_KEY]?.let(KeystoreCipher::decrypt).orEmpty(),
         sendLogs = p[SEND_LOGS] == "true",
         compactTools = p[COMPACT_TOOLS] != "false",
+        knowHow = p[KNOW_HOW] != "false",
         logToken = p[LOG_TOKEN]?.let(KeystoreCipher::decrypt).orEmpty(),
         logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
         spotifyClientId = p[SPOTIFY_ID].orEmpty(),
@@ -103,6 +107,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[VOLUME] = s.speakerVolume.toString()
         p[SPEAK] = s.speak.toString()
         p[LIVE_SPEECH] = s.liveSpeech.toString()
+        p[QUICK_YES] = s.quickYes.toString()
         p[INTERRUPT] = s.interrupt.name
         p[STRANGERS] = s.strangersAreGuests.toString()
         p[WAKE] = s.wake.toString()
@@ -125,6 +130,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[NOVA_NAME] = s.novaName
         p[CLASSIC_RED] = s.classicRed.toString()
         p[BATTERY_REMINDERS] = s.batteryReminders.toString()
+        p[ASK_TIMER_NAME] = s.askTimerName.toString()
+        p[TIMER_COUNTDOWN] = s.timerCountdown.toString()
         p[PHONE_SHARING] = s.phoneSharing.name
         p[PHONE_OWNERS] = s.phoneOwners.entries.joinToString("\n") { "${it.key}=${it.value}" }
         p[USE_WHISPER] = s.useWhisper.toString()
@@ -140,6 +147,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[OPENAI_SPEECH_KEY] = KeystoreCipher.encrypt(s.openAiSpeechKey.trim())
         p[SEND_LOGS] = s.sendLogs.toString()
         p[COMPACT_TOOLS] = s.compactTools.toString()
+        p[KNOW_HOW] = s.knowHow.toString()
         p[LOG_TOKEN] = KeystoreCipher.encrypt(s.logToken.trim())
         p[LOG_REPO] = s.logRepo.trim()
         p[SPOTIFY_ID] = s.spotifyClientId.trim()
@@ -180,6 +188,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WAKE_NAME = stringPreferencesKey("wake_name")
         val KNOWN_VOICES = stringPreferencesKey("known_voices")
         val LIVE_SPEECH = stringPreferencesKey("live_speech")
+        val QUICK_YES = stringPreferencesKey("quick_yes")
         val TALK_OVER = stringPreferencesKey("talk_over")
         val INTERRUPT = stringPreferencesKey("interrupt")
         val FOLLOW_UP = stringPreferencesKey("follow_up")
@@ -197,6 +206,8 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         fun warmVoiceKey(p: app.homeydash.agent.Persona) = stringPreferencesKey("warm_voice_" + p.name.lowercase())
         val CLASSIC_RED = stringPreferencesKey("classic_red")
         val BATTERY_REMINDERS = stringPreferencesKey("battery_reminders")
+        val ASK_TIMER_NAME = stringPreferencesKey("ask_timer_name")
+        val TIMER_COUNTDOWN = stringPreferencesKey("timer_countdown")
         val PHONE_SHARING = stringPreferencesKey("phone_sharing")
         val PHONE_OWNERS = stringPreferencesKey("phone_owners")
         val USE_WHISPER = stringPreferencesKey("use_whisper")
@@ -210,6 +221,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val SPOTIFY_SECRET = stringPreferencesKey("spotify_secret")
         val SEND_LOGS = stringPreferencesKey("send_logs")
         val COMPACT_TOOLS = stringPreferencesKey("compact_tools")
+        val KNOW_HOW = stringPreferencesKey("know_how")
         val LOG_TOKEN = stringPreferencesKey("log_token")
         val LOG_REPO = stringPreferencesKey("log_repo")
 

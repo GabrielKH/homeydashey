@@ -63,6 +63,7 @@ import app.homeydash.recipes.Cooking
 import app.homeydash.recipes.CookingState
 import app.homeydash.recipes.Recipe
 import app.homeydash.recipes.Text as RecipeTextUtil
+import app.homeydash.ui.assistant.LocalTimerChip
 import app.homeydash.ui.components.PillShape
 import app.homeydash.ui.components.RoundButton
 import app.homeydash.ui.components.SectionLabel
@@ -295,6 +296,7 @@ private fun RecipeView(kitchen: Kitchen, r: Recipe, state: CookingState, onEdit:
                 Text(r.sourceName ?: "Recipe", style = MaterialTheme.typography.bodyLarge, color = g.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(r.title, style = MaterialTheme.typography.headlineLarge, color = g.fg, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            LocalTimerChip.current()
             RoundButton(Sym.heart, { scope.launch { kitchen.book.setFavourite(r.id, !r.favourite) } }, size = 48.dp, filledIcon = r.favourite, contentDescription = "Favourite")
             RoundButton(Sym.edit, onEdit, size = 48.dp, filledIcon = false, contentDescription = "Edit")
             if (r.steps.isNotEmpty()) {
@@ -423,6 +425,7 @@ private fun CookView(kitchen: Kitchen, r: Recipe, state: CookingState, onTimer: 
                 Text(r.title, style = MaterialTheme.typography.bodyLarge, color = g.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (count == 0) "No steps" else "Step ${index + 1} of $count", style = MaterialTheme.typography.headlineLarge, color = g.fg)
             }
+            LocalTimerChip.current()
         }
         // One segment per step; tap one to jump there.
         Row(Modifier.fillMaxWidth().height(10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -468,7 +471,7 @@ private fun CookView(kitchen: Kitchen, r: Recipe, state: CookingState, onTimer: 
                 }
                 if (timers.isNotEmpty()) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        timers.forEach { t -> PillButton(Sym.timer, "Timer ${t.label}") { onTimer(t.seconds, r.title) } }
+                        timers.forEach { t -> PillButton(Sym.timer, "Timer ${t.label}") { onTimer(t.seconds, "Steg ${index + 1} · ${t.label}") } }
                     }
                 }
                 r.steps.getOrNull(index + 1)?.let { next ->

@@ -61,6 +61,7 @@ import app.homeydash.homey.Mood
 import app.homeydash.homey.RoomSummary
 import app.homeydash.homey.Zone
 import app.homeydash.homey.ZoneSection
+import app.homeydash.ui.assistant.LocalTimerChip
 import app.homeydash.ui.components.Bubble
 import app.homeydash.ui.components.GlassChip
 import app.homeydash.ui.components.HOME_BACKGROUND
@@ -143,7 +144,8 @@ fun OverviewScreen(
             OverviewClock(Modifier.weight(1f))
             if (actions.rearrange.editing) {
                 DoneChip(actions, Modifier.padding(bottom = 4.dp), onAutoArrange = autoArrange)
-            } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+            } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+                LocalTimerChip.current()
                 if (connection != ConnectionState.Connected) {
                     GlassChip(Sym.wifiOff, "Reconnecting", g.danger)
                 }
@@ -519,7 +521,10 @@ internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () ->
             Text(eyebrow, style = MaterialTheme.typography.bodyLarge, color = g.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(title, style = MaterialTheme.typography.headlineLarge, color = g.fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 4.dp)) { chips() }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+            LocalTimerChip.current()
+            chips()
+        }
     }
 }
 

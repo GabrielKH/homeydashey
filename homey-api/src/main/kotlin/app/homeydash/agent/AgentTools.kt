@@ -3,6 +3,7 @@ package app.homeydash.agent
 import app.homeydash.homey.FlowCardAction
 import app.homeydash.homey.FlowCards
 import app.homeydash.homey.RemoteAction
+import app.homeydash.homey.RemoteKey
 import app.homeydash.homey.Remotes
 import app.homeydash.homey.VacuumCommand
 import app.homeydash.homey.VacuumRoom
@@ -54,6 +55,8 @@ class AgentTools(
     private val routines: RoutineTools? = null,
     /** What the assistant remembers from earlier conversations; null when it remembers nothing. */
     private val memory: MemoryTools? = null,
+    /** Teaching the topics' know-how by voice; null when the dashboard keeps none. */
+    private val knowHow: KnowHowTools? = null,
     private val clock: () -> ZonedDateTime = { ZonedDateTime.now() },
 ) {
     /**
@@ -139,10 +142,12 @@ class AgentTools(
             required("device", "keys")
         })
         if (!guest) add(tool("goodnight", "Goodnight: turn off everything that is on and pause what plays, except the exceptions the owner chose. Asks for a yes first.") {})
-        add(tool("timer", "Kitchen timers on the tablet: start, cancel or list.") {
-            string("action", "start, cancel or list")
-            number("minutes", "Length for start; may have decimals")
-            string("label", "Optional name, e.g. pasta")
+        add(tool("timer", "Kitchen timers on the tablet: start, list, cancel one or all, rename, add or take away time, pause or resume, mute or unmute the spoken countdown.") {
+            string("action", "start, list, cancel, cancel_all, rename, add, pause, resume, mute or unmute")
+            number("minutes", "start: length (leave out for a named timer to use the usual length); add: minutes to add, negative to take away")
+            string("label", "The timer's name, e.g. pasta; for rename the timer to rename (leave out for the newest)")
+            string("new_label", "rename: the new name")
+            string("several", "start: several timers at once, each a name and minutes, e.g. \"pasta 10, ris 12, ägg 7\"")
             required("action")
         })
         if (recipes != null) add(tool("recipe_timers", "Start a kitchen timer for every step of the open recipe that names a time, all at once.") {})
@@ -201,6 +206,7 @@ class AgentTools(
             if (!guest) addAll(r.specs())
         }
         memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) }?.let { addAll(it.specs()) }
+        knowHow?.takeIf { !guest }?.let { addAll(it.specs()) }
     }
 
     /** "Next step" and the like while a recipe is open, answered without the AI; null otherwise. */
@@ -245,7 +251,7 @@ class AgentTools(
             "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
             "vacuum" -> vacuum(a.str("device"), a.str("action"), a.list("rooms"))
             "goodnight" -> goodnight()
-            "timer" -> timer(a.str("action"), a.num("minutes"), a.str("label"))
+            "timer" -> timer(a.str("action"), a.num("minutes"), Timers.realName(a.str("label")), a.str("new_label"), a.str("several"))
             "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
@@ -262,6 +268,7 @@ class AgentTools(
                 ?: recipes?.run(call) ?: fridge?.run(call)
                 ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
                 ?: memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) && call.name in it.names }?.run(call, view.settings.asker, view.local)
+                ?: knowHow?.takeIf { !guest && call.name in it.names }?.run(call)
                 ?: ok("There is no tool called ${call.name}.")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -298,10 +305,15 @@ class AgentTools(
         if (device.unreachable) {
             return ToolResult("Homey can't reach ${device.name} right now, so it can't be changed. Tell the user it may be unplugged, switched off at the wall or out of range.", lo)
         }
+        // A TV's own power key is what its remote sends; switching onoff often fails or shows an error on the TV.
+        if (capabilityId == "onoff" && device.deviceClass in TV_CLASSES) {
+            val power = actionsOf(device)?.let { cards -> Remotes.buttons(device.capabilities.map { it.id }, cards) { c, a -> home.choices(c, a, "") } }?.get(RemoteKey.Power)
+            if (power is RemoteAction.Card) return tvPower(device, power, (value as? JsonPrimitive)?.booleanOrNull == true, lo)
+        }
         home.setCapability(device.id, capabilityId, value)
         // Homey sometimes accepts a change the device never makes; check before saying it's done.
-        val now = home.readBack(device.id, capabilityId)
-        if (now != null && !same(now, value)) {
+        val now = stillReports(device, capabilityId, value, tries = if (device.deviceClass in TV_CLASSES) TV_TRIES else 2)
+        if (now != null) {
             return ToolResult(
                 "Homey accepted it, but ${device.name} still reports $capabilityId = ${text(now)}, so it didn't change. " +
                     "Tell the user plainly; it may be out of range or switched off at the wall.",
@@ -310,6 +322,55 @@ class AgentTools(
         }
         return ToolResult("Done: ${device.name} $capabilityId = ${text(value)}.", lo)
     }
+
+    /**
+     * Switches a TV with its own power key, only when it isn't already as asked (the key
+     * flips it), then waits for Homey to show it on or off before saying so.
+     */
+    private suspend fun tvPower(d: AgentDevice, power: RemoteAction.Card, on: Boolean, lo: Boolean): ToolResult {
+        val word = if (on) "on" else "off"
+        val was = (home.readBack(d.id, "onoff") as? JsonPrimitive)?.booleanOrNull
+        if (was == on) return ToolResult("Done: ${d.name} was already $word.", lo)
+        home.runAction(power.card, power.args)
+        val now = stillReports(d, "onoff", JsonPrimitive(on), TV_TRIES)
+            ?: return ToolResult("Done: ${d.name} onoff = $on (Homey shows it $word).", lo)
+        return ToolResult(
+            "Pressed ${d.name}'s power key, but Homey still reports onoff = ${text(now)}, so it isn't $word yet. Tell the user plainly; it may need a moment or the TV may not be reachable.",
+            lo,
+        )
+    }
+
+    /**
+     * Asks Homey up to [tries] times whether [capabilityId] now reads [value]: null when it does
+     * or Homey can't tell, else the value it still reports. Slow devices like TVs get more tries.
+     */
+    private suspend fun stillReports(d: AgentDevice, capabilityId: String, value: JsonElement, tries: Int): JsonElement? {
+        var now: JsonElement? = null
+        repeat(tries) {
+            val read = home.readBack(d.id, capabilityId) ?: return null
+            if (same(read, value)) return null
+            now = read
+        }
+        return now
+    }
+
+    /**
+     * What Homey reports about [d] after an action, compared with [before]: the capabilities
+     * that changed, or a note that nothing did yet, so the AI says "sent" rather than "done".
+     */
+    private suspend fun afterwards(d: AgentDevice, before: Map<String, JsonElement?>): String {
+        val after = home.readDevice(d.id) ?: return ""
+        val changed = after.capabilitiesObj.mapNotNull { (id, c) ->
+            val was = before[id]
+            val now = c.value ?: return@mapNotNull null
+            if (was != null && same(was, now)) null else "$id ${text(now)}" + (was?.let { " (was ${text(it)})" } ?: "")
+        }
+        return if (changed.isEmpty()) " Homey shows no change on ${d.name} yet, so tell the user it was sent, not that it is done."
+        else " Homey now reports: ${changed.take(6).joinToString()}."
+    }
+
+    private fun valuesOf(d: AgentDevice): Map<String, JsonElement?> =
+        home.device(d.id)?.capabilitiesObj?.mapValues { it.value.value } ?: d.capabilities.associate { it.id to it.value }
 
     /** [lightsOnly]: the user said lights ("släck lamporna"), so only lights change, hidden ones still left alone. */
     private suspend fun setRoom(room: String, capabilityId: String, raw: JsonElement?, cls: String, lightsOnly: Boolean = false): ToolResult {
@@ -553,8 +614,9 @@ class AgentTools(
                 put(arg.name, element)
             }
         }
+        val before = valuesOf(d)
         home.runAction(card, JsonObject(args))
-        return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}.")
+        return ok("Done: $title" + (picked?.let { " ($it)" } ?: "") + " on ${d.name}." + afterwards(d, before))
     }
 
     /**
@@ -699,13 +761,8 @@ class AgentTools(
         val d = view.device(alias) ?: return unknown(alias)
         val cards = actionsOf(d) ?: return ok("${d.name}'s remote can't be used here.")
         val presses = RemoteKeys.parse(keys) ?: return ok("Name the buttons: ${RemoteKeys.NAMES}.")
-        val keyCard = Remotes.keyCard(cards)
-        val items = when (keyCard?.arg?.type) {
-            "dropdown" -> FlowCards.dropdownItems(keyCard.arg)
-            "autocomplete" -> home.choices(keyCard.card, keyCard.arg, "")
-            else -> emptyList()
-        }
-        val buttons = Remotes.actions(d.capabilities.map { it.id }, cards, keyCard, Remotes.keyItems(items))
+        val buttons = Remotes.buttons(d.capabilities.map { it.id }, cards) { c, a -> home.choices(c, a, "") }
+        val before = valuesOf(d)
         val missing = presses.distinct().filter { it !in buttons }
         if (missing.isNotEmpty()) {
             return ok("${d.name} has no button for ${missing.joinToString { RemoteKeys.name(it) }}" +
@@ -724,7 +781,16 @@ class AgentTools(
                 }
             }
         }
-        return ok("Done: pressed ${presses.joinToString { RemoteKeys.name(it) }} on ${d.name}.")
+        val pressed = "pressed ${presses.joinToString { RemoteKeys.name(it) }} on ${d.name}"
+        // Power flips it: say what Homey shows once it has had time to switch.
+        val wasOn = (before["onoff"] as? JsonPrimitive)?.booleanOrNull
+        if (RemoteKey.Power in presses && wasOn != null) {
+            val wanted = if (presses.count { it == RemoteKey.Power } % 2 == 1) !wasOn else wasOn
+            val now = stillReports(d, "onoff", JsonPrimitive(wanted), TV_TRIES)
+                ?: return ok("Done: $pressed; Homey shows it ${if (wanted) "on" else "off"}.")
+            return ok("Pressed: $pressed, but Homey still reports onoff = ${text(now)}. Tell the user plainly; it may need a moment.")
+        }
+        return ok("Done: $pressed.")
     }
 
     private fun openPage(page: String): ToolResult {
@@ -760,23 +826,75 @@ class AgentTools(
         )
     }
 
-    private fun timer(action: String, minutes: Double?, label: String): ToolResult = when (action.lowercase()) {
-        "start" -> {
-            val seconds = ((minutes ?: 0.0) * 60).toInt()
-            if (seconds <= 0 || seconds > 24 * 3600) ok("Say how many minutes.")
-            else {
-                dashboard.startTimer(seconds, label.ifBlank { null })
-                ok("Timer started.")
+    /** A named timer counted for whoever asked, so "the usual" pasta timer is known next time. */
+    private suspend fun learnTimer(t: KitchenTimer) {
+        val s = view.settings
+        if (t.label == null || t.group != null || s.guest || s.access(Secret.Memory) == Access.Off) return
+        memory?.learnTimer(t.label, t.seconds, s.asker, clock())
+    }
+
+    private suspend fun timer(action: String, minutes: Double?, label: String, newLabel: String, several: String = ""): ToolResult {
+        val board = dashboard.timers
+        fun named(t: KitchenTimer) = t.label ?: "The timer"
+        return when (action.lowercase().replace(' ', '_')) {
+            "start", "set" -> {
+                val many = Timers.parseSeveral(several)
+                if (many.isNotEmpty()) {
+                    val started = many.map { (name, secs) ->
+                        val s = secs ?: name?.let { memory?.usualTimerSeconds(it, view.settings.asker?.id) }
+                        if (s == null || s <= 0 || s > 24 * 3600) "${name ?: "a timer"} (no length: ask how many minutes)"
+                        else board.start(s, name, owner = view.settings.asker?.id, character = view.settings.persona.name).also { learnTimer(it) }.let { "${it.label ?: "a timer"} for ${Timers.minutesText(s)}" }
+                    }
+                    return ok("Started: " + started.joinToString("; ") + ".")
+                }
+                val usual = if (minutes == null && label.isNotBlank()) memory?.usualTimerSeconds(label, view.settings.asker?.id) else null
+                val seconds = usual ?: ((minutes ?: 0.0) * 60).toInt()
+                if (seconds <= 0 || seconds > 24 * 3600) return ok("Ask how many minutes.")
+                learnTimer(board.start(seconds, label.ifBlank { null }, owner = view.settings.asker?.id, character = view.settings.persona.name))
+                val length = Timers.minutesText(seconds)
+                when {
+                    usual != null -> ok("Timer ${label.trim()} started for $length, the usual length. Say that it's the usual.")
+                    label.isNotBlank() -> ok("Timer ${label.trim()} started for $length.")
+                    view.settings.askTimerName -> ok(
+                        "Timer started for $length. In the same short answer, ask whether they want to give it a name. " +
+                            "If they answer with a name, call timer with action rename and new_label; if they say no, leave it.",
+                    )
+                    else -> ok("Timer started for $length.")
+                }
             }
+            "cancel", "stop", "remove", "delete" -> board.cancel(label)?.let { ok("${named(it)} is stopped.") }
+                ?: ok(if (board.timers.value.isEmpty()) "No timers are running." else "No timer like that. Running: " + board.describe().joinToString("; "))
+            "cancel_all", "stop_all" -> {
+                val n = board.cancelAll(label.ifBlank { null })
+                ok(if (n == 0) "No timers were running." else "Stopped $n timer${if (n == 1) "" else "s"}.")
+            }
+            "rename", "name" -> {
+                if (newLabel.isBlank()) return ok("Ask what to call it.")
+                board.rename(label, newLabel)?.let { learnTimer(it); ok("The timer is now called ${it.label}.") } ?: ok("No timers are running.")
+            }
+            "add", "extend", "snooze" -> {
+                val seconds = ((minutes ?: 1.0) * 60).toInt()
+                if (seconds == 0) return ok("Ask how many minutes.")
+                board.add(label, seconds)?.let { ok("${named(it)} now has ${Timers.clock(it.leftMs(System.currentTimeMillis()))} left.") }
+                    ?: ok("No timer like that is running.")
+            }
+            "mute", "quiet", "silence" -> {
+                val n = board.mute(label.ifBlank { null })
+                val s = view.settings
+                if (n > 0 && !s.guest && s.access(Secret.Memory) != Access.Off) memory?.learn(Timers.mutedHabit(s.asker, clock()))
+                ok(if (n == 0) "No timers are running." else "Muted: no more spoken countdown" + if (label.isBlank()) " for any timer." else " for that timer.")
+            }
+            "unmute" -> ok(if (board.mute(label.ifBlank { null }, mute = false) == 0) "No timers are running." else "The countdown is spoken again.")
+            "pause" -> board.pause(label, true)?.let { ok("${named(it)} is paused.") } ?: ok("No timer like that is running.")
+            "resume", "continue" -> board.pause(label, false)?.let { ok("${named(it)} is running again.") } ?: ok("No timer like that is running.")
+            else -> ok(board.describe().joinToString("\n").ifBlank { "No timers are running." })
         }
-        "cancel", "stop" -> ok(if (dashboard.cancelTimer(label.ifBlank { null })) "Timer cancelled." else "No timer like that is running.")
-        else -> ok(dashboard.timers().joinToString("\n").ifBlank { "No timers are running." })
     }
 
     private fun recipeTimers(): ToolResult {
         val timers = recipes?.stepTimers().orEmpty()
         if (timers.isEmpty()) return ok("No recipe is open, or its steps name no times.")
-        timers.forEach { (step, t) -> dashboard.startTimer(t.seconds, "Steg $step · ${t.label}") }
+        timers.forEach { (step, t) -> dashboard.timers.start(t.seconds, "Steg $step · ${t.label}", recipes?.openName()) }
         return ok("Started: " + timers.joinToString { (step, t) -> "step $step ${t.label}" } + ".")
     }
 
@@ -941,7 +1059,8 @@ class AgentTools(
                     val card = home.deviceActions(p.id).let(Phones::ringCard)
                         ?: return@map "${p.name} can't ring: its Homey app has no \"Play sound\" card."
                     home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
-                    "Ringing ${p.name}" + if (right == Phones.Right.All) " (${Phones.status(fresh(p))})." else "."
+                    // Ringing never asks Apple where the phone is: that is what wakes its GPS and drains it.
+                    "Ringing ${p.name}" + if (right == Phones.Right.All) " (last known: ${Phones.status(p)})." else "."
                 }
             }
         }
@@ -1024,6 +1143,9 @@ class AgentTools(
         private const val MAX_ACTIONS = 40
 
         private const val REMOTE_GAP_MS = 350L
+        private val TV_CLASSES = setOf("tv", "settopbox")
+        /** Reads of a TV's state after switching it, about 1.5 s apart: TVs take a few seconds. */
+        private const val TV_TRIES = 5
         private const val DOCK = "its dock"
         private const val VACUUM_GAP_MS = 4_000L
         private const val VACUUM_CHECK_MS = 6_000L

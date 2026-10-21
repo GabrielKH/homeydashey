@@ -69,13 +69,11 @@ internal fun MemoryPage(services: AssistantServices, settings: AgentSettings, up
     val data by services.memory.data.collectAsState()
     SettingsBox("Memory") {
         Segmented(Access.entries, settings.access(Secret.Memory), { it.label }) { a -> update { it.copy(secrets = it.secrets + (Secret.Memory to a)) } }
-        Text(
+        Hint(
             "${settings.persona.label} counts what each person asks for (music, lights, moods), and once a conversation has been quiet for 20 minutes " +
                 "the AI squeezes it into a few short facts. People can also write about themselves under People: birthday, likes, dislikes and more. \"Local AI only\" keeps all of it away from the internet AI, which then neither learns nor hears any of it. None of it is in the prompt: only a question that needs it (\"som vanligt\", \"min favorit\", " +
                 "\"igår\") gets the few facts it touches, so answers stay fast. What someone said or keeps private is only used for them; " +
                 "without voice or face recognition only the house's facts are used. Say \"kom ihåg att…\" or \"glöm…\" to change it by voice.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
     }
     if (data.facts.isEmpty() && data.recalls.isEmpty()) {
@@ -155,10 +153,8 @@ private fun GraphTab(services: AssistantServices, data: MemoryData) {
     var selected by remember { mutableStateOf<String?>(null) }
     val weekAgo = System.currentTimeMillis() - 7 * 86_400_000L
     val usedThisWeek = data.recalls.filter { it.at >= weekAgo }.sumOf { it.facts.size }
-    Text(
+    Hint(
         "${facts.size} facts · used $usedThisWeek times this week · ${facts.count { it.used == 0 }} never used",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val wide = maxWidth > 760.dp
@@ -216,10 +212,8 @@ private fun NodeDetail(services: AssistantServices, data: MemoryData, graph: Mem
             RoundButton(Sym.close, { onSelect(null) }, size = 40.dp, filledIcon = false, contentDescription = "Close")
         }
         val last = facts.maxOfOrNull { it.lastUsed } ?: 0
-        Text(
+        Hint(
             "${facts.size} fact${if (facts.size == 1) "" else "s"} · used ${facts.sumOf { it.used }} times" + if (last > 0) " · last used ${whenText(last)}" else "",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
         facts.forEach { FactRow(services, it) }
         val near = graph.neighbours(i).map { graph.nodes[it] }
@@ -247,10 +241,8 @@ private fun FactRow(services: AssistantServices, f: Fact) {
             Box(Modifier.size(10.dp).background(kindColor(f.kind, g), CircleShape))
             Text(Memory.line(f), style = MaterialTheme.typography.bodyLarge, color = g.fg, modifier = Modifier.weight(1f))
         }
-        Text(
+        Hint(
             "${f.kind.label.replaceFirstChar { it.uppercase() }} · ${whose(f)}${if (f.localOnly) " · local AI only" else ""} · ${usedText(f)}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
         if (editing) {
             TextBox(text, hint = "What it says") { text = it }
@@ -290,10 +282,8 @@ private fun ListTab(services: AssistantServices, data: MemoryData) {
 private fun RecentTab(services: AssistantServices, data: MemoryData) {
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
-    Text(
+    Hint(
         "Every time the assistant pulled something out of memory, newest first. If an answer went wrong, forget or fix the fact it used.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     if (data.recalls.isEmpty()) {
         Text("Nothing has been looked up yet.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
@@ -310,7 +300,7 @@ private fun RecentTab(services: AssistantServices, data: MemoryData) {
                     color = g.fg,
                     modifier = Modifier.weight(1f),
                 )
-                Text(if (r.via == RecallVia.Tool) "recall tool" else "cue word", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+                Text(when (r.via) { RecallVia.Tool -> "recall tool"; RecallVia.Auto -> "named in the question"; RecallVia.Cue -> "cue word" }, style = MaterialTheme.typography.bodyMedium, color = g.muted)
             }
             if (r.facts.isEmpty()) Text("Nothing matched.", style = MaterialTheme.typography.bodyMedium, color = g.muted)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

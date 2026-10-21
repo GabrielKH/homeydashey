@@ -112,6 +112,12 @@ object ThinkingSounds {
     private val NOVA_EN = listOf("Um, let me see.", "One moment.", "Let me check.")
     private val TARS = listOf("Processing.", "Give me a second.", "Thinking. It happens.")
 
+    // Said the moment someone stops talking, while the question is written down and thought
+    // about: what a person says to show they heard. Neutral, since the question isn't known yet.
+    private val ACK_SV = listOf("Ja.", "Okej.", "Japp.", "Aha.")
+    private val ACK_EN = listOf("Okay.", "Sure.", "Right.", "Got it.")
+    private val ACK_TARS = listOf("Copy.", "Understood.", "On it.")
+
     private val ANSWER_SV = listOf("Ja?", "Japp?", "Ja, du?")
     private val ANSWER_EN = listOf("Yes?", "Yeah?", "I'm listening.")
     private val ANSWER_TARS = listOf("Yes?", "Go ahead.", "Listening.")
@@ -122,6 +128,24 @@ object ThinkingSounds {
         swedish -> ANSWER_SV
         else -> ANSWER_EN
     }
+
+    /** What it says the moment someone stops talking, to show it heard ([AgentSettings.quickYes]). */
+    fun acks(persona: Persona, swedish: Boolean): List<String> = when {
+        persona == Persona.Tars -> ACK_TARS
+        swedish -> ACK_SV
+        else -> ACK_EN
+    }
+
+    /** Every short sound [persona] says without waiting, so all of them can be made ahead of time. */
+    fun everything(persona: Persona, swedish: Boolean): List<String> =
+        (acks(persona, swedish) + all(persona, swedish) + answers(persona, swedish)).distinct()
+
+    /**
+     * Whether a quick "ja" is worth saying: not when the answer usually starts sooner than
+     * [ACK_SKIP_MS] after someone stops talking ([usualWaitMs], from the memory), since a "ja"
+     * right before the answer only sounds like a stutter.
+     */
+    fun wantsAck(usualWaitMs: Long?): Boolean = usualWaitMs == null || usualWaitMs > ACK_SKIP_MS
 
     private val HUMS = Regex("""(?i)(?<![\p{L}])(h+m+|m{2,})(?![\p{L}])""")
 
@@ -142,4 +166,10 @@ object ThinkingSounds {
 
     /** How long the answer may take before a thinking sound fills the silence. */
     const val AFTER_MS = 900L
+
+    /** The same, after a quick "ja" was said: a second sound so soon would be chatty. */
+    const val AFTER_ACK_MS = 2_500L
+
+    /** Answers that usually start sooner than this after the question get no quick "ja". */
+    const val ACK_SKIP_MS = 800L
 }

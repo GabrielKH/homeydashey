@@ -23,7 +23,7 @@ object TurnEnd {
         // Only the name ("Hey TARS"): the question comes next.
         if (wakeName.isNotBlank() && WakeName.heard(raw, wakeName)) return false
         val last = words.last()
-        if (last in FILLERS) return false
+        if (filler(last)) return false
         if (last in OPEN_ENDINGS) return false
         return true
     }
@@ -32,7 +32,7 @@ object TurnEnd {
     fun clean(text: String): String {
         val kept = ArrayList<String>()
         for (w in text.trim().split(SPACES)) {
-            if (NameMatch.normalize(w) !in FILLERS) {
+            if (!filler(NameMatch.normalize(w))) {
                 kept += w
                 continue
             }
@@ -46,10 +46,21 @@ object TurnEnd {
         return kept.joinToString(" ")
     }
 
+    /**
+     * Whether a word (as [NameMatch.normalize] writes it) is a hesitation sound: one of
+     * [FILLERS], or a drawn-out vowel with or without a hum, as Whisper writes "ööö", "äää",
+     * "eeeh" or "mmmm" ("ooo", "aaa", "eeeh", "mmmm").
+     */
+    fun filler(word: String): Boolean = word in FILLERS || (word.length >= 2 && word !in WORDS && DRAWN.matches(word))
+
+    /** Real words a drawn-out sound could be mistaken for. */
+    private val WORDS = setOf("am", "om")
+    private val DRAWN = Regex("(a+|e+|o+|u+|y+)h*m*|h*m+|n{2,}")
+
     /** Hesitation sounds in Swedish and English, as [NameMatch.normalize] writes them. */
     val FILLERS = setOf(
         "oh", "ohm", "ohh", "ohhm", "ah", "ahm", "ahh", "eh", "ehm", "ehh", "em", "hm", "hmm", "hmmm",
-        "mm", "mmm", "um", "umm", "uh", "uhm", "uhh", "er", "erm", "oeh", "aeh",
+        "mm", "mmm", "um", "umm", "uh", "uhm", "uhh", "er", "erm", "oeh", "aeh", "o",
     )
 
     /**

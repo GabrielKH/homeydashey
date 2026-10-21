@@ -82,12 +82,16 @@ object MemoryGraph {
      * apart, lines pull their ends together. Gives x, y pairs in -1..1. Starts from spots fixed
      * by each dot's name, so the same memory draws the same way every time.
      */
-    fun layout(graph: Graph, iterations: Int = defaultIterations(graph.nodes.size)): FloatArray {
-        val n = graph.nodes.size
+    fun layout(graph: Graph, iterations: Int = defaultIterations(graph.nodes.size)): FloatArray =
+        layout(graph.nodes.map { it.key }, graph.edges.map { it.a to it.b }, iterations)
+
+    /** The same layout for any dots named by [keys] and joined by [edges] (index pairs), like the know-how graph's. */
+    fun layout(keys: List<String>, edges: List<Pair<Int, Int>>, iterations: Int = defaultIterations(keys.size)): FloatArray {
+        val n = keys.size
         val pos = FloatArray(n * 2)
         if (n == 0) return pos
         for (i in 0 until n) {
-            val r = Random(graph.nodes[i].key.hashCode())
+            val r = Random(keys[i].hashCode())
             pos[i * 2] = r.nextFloat() * 2 - 1
             pos[i * 2 + 1] = r.nextFloat() * 2 - 1
         }
@@ -105,14 +109,14 @@ object MemoryGraph {
                 disp[i * 2] += dx * f; disp[i * 2 + 1] += dy * f
                 disp[j * 2] -= dx * f; disp[j * 2 + 1] -= dy * f
             }
-            for (e in graph.edges) {
-                if (e.a == e.b) continue
-                val dx = pos[e.a * 2] - pos[e.b * 2]
-                val dy = pos[e.a * 2 + 1] - pos[e.b * 2 + 1]
+            for ((a, b) in edges) {
+                if (a == b) continue
+                val dx = pos[a * 2] - pos[b * 2]
+                val dy = pos[a * 2 + 1] - pos[b * 2 + 1]
                 val d = max(sqrt(dx * dx + dy * dy), 1e-3f)
                 val f = d / k
-                disp[e.a * 2] -= dx * f; disp[e.a * 2 + 1] -= dy * f
-                disp[e.b * 2] += dx * f; disp[e.b * 2 + 1] += dy * f
+                disp[a * 2] -= dx * f; disp[a * 2 + 1] -= dy * f
+                disp[b * 2] += dx * f; disp[b * 2 + 1] += dy * f
             }
             for (i in 0 until n) {
                 // A little pull to the middle keeps loose parts of the graph on screen.

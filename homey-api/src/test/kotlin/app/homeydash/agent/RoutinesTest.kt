@@ -66,9 +66,7 @@ class RoutinesTest {
             asked = from
             return listOf(AgentEvent("Tandläkaren", "09:00", "10:00", false, null))
         }
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 

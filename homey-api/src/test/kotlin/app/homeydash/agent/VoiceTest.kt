@@ -167,6 +167,18 @@ class VoiceTest {
     }
 
     @Test
+    fun `Swedish answers copy the Swedish recording when the server has one`() {
+        val nova = AgentSettings(voice = VoiceStyle.Warm, warmVoices = mapOf(Persona.Nova to "nova"))
+        val has = setOf("nova", "nova-sv")::contains
+        assertEquals("nova-sv", nova.serverVoice(swedish = true, has = has))
+        assertEquals("nova", nova.serverVoice(swedish = false, has = has))
+        assertEquals("nova", nova.serverVoice(swedish = true) { false })
+        // A recording picked as Swedish already, or none at all, stays as it is.
+        assertEquals("anna-sv", AgentSettings(voiceServerVoice = "anna-sv").serverVoice(true, has))
+        assertEquals("", AgentSettings().serverVoice(true, has))
+    }
+
+    @Test
     fun `a character someone picked wakes the assistant too`() {
         val house = AgentSettings(wakeName = "Kim")
         assertEquals(listOf("Kim"), house.wakeNames(listOf(person("a"), person("b", Persona.Nova))))

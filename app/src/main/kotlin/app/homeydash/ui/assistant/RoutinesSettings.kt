@@ -49,11 +49,9 @@ internal fun RoutineList(services: AssistantServices, onEdit: (Routine) -> Unit,
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
     val data by services.routines.data.collectAsState()
-    Text(
+    Hint(
         "Say a routine's phrase, like \"God morgon\", and the assistant does its steps in order and answers the way its instructions say. " +
             "You can also make them by voice: \"när jag säger filmkväll, dimma vardagsrummet och starta Apple TV\".",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     data.routines.forEach { r ->
         Row(
@@ -77,10 +75,8 @@ internal fun RoutineList(services: AssistantServices, onEdit: (Routine) -> Unit,
     NavRow(Sym.add, "New routine", { onEdit(Routine(name = "", phrases = emptyList(), steps = listOf(RoutineStep(StepKind.Answer)))) })
 
     SettingsBox("Standing instructions") {
-        Text(
+        Hint(
             "Followed in every answer, one per line, e.g. \"Kalla mig Gabbe\" or \"Svara alltid kort\". Say \"kom ihåg att…\" to add one by voice.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
         var text by remember(data.instructions.isEmpty()) { mutableStateOf(data.instructions) }
         LaunchedEffect(text) {
@@ -130,11 +126,9 @@ internal fun RoutineEditor(
         edit { it.copy(phrases = v.split(',', ';').map(String::trim).filter(String::isNotEmpty)) }
     }
     Label("Instructions for the assistant")
-    Text(
+    Hint(
         "How to answer and anything else to do, in your own words. The assistant can use all its tools here, " +
             "e.g. \"om det regnar, påminn om paraply\".",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     TextBox(r.instructions, singleLine = false, hint = "Hälsa och säg vad som händer i dag") { v -> edit { it.copy(instructions = v) } }
 

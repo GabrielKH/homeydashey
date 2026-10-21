@@ -107,11 +107,7 @@ class AssistantBridge(
         }
     }
 
-    override fun startTimer(seconds: Int, label: String?) = assistant.startTimer(seconds, label)
-
-    override fun cancelTimer(label: String?) = assistant.cancelTimer(label)
-
-    override fun timers(): List<String> = assistant.describeTimers()
+    override val timers get() = assistant.timers
 
     override fun setTheme(mode: String): Boolean {
         display.setThemeMode(

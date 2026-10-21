@@ -26,7 +26,12 @@ data class ModuleSource(
     val detail: String,
     val kind: SourceKind,
     val app: HomeyAppRef? = null,
-)
+    /** Other Homey apps that do the same job, like Sonos (LocalAPI) for Sonos. */
+    val alternatives: List<HomeyAppRef> = emptyList(),
+) {
+    /** Every Homey app that can serve this source, the usual one first. */
+    val apps: List<HomeyAppRef> get() = listOfNotNull(app) + alternatives
+}
 
 enum class ModuleKind {
     /** A part of the app that can be turned on and off, with a choice of source. */
@@ -79,13 +84,20 @@ data class ModuleState(
     /** Every installed Homey app, so each source can say whether its app is there. */
     val installed: Set<String> = emptySet(),
 ) {
-    fun installed(source: ModuleSource): Boolean = source.app == null || source.app.id in installed
+    /**
+     * Whether [source] has what it needs: no app, one of its apps installed, or (for a device
+     * module) devices from any app, since another brand's vacuum or speaker app works just as well.
+     */
+    fun installed(source: ModuleSource): Boolean =
+        source.app == null || source.apps.any { it.id in installed } ||
+            (module.kind == ModuleKind.Devices && source.kind == SourceKind.HomeyApp && devices.isNotEmpty())
 }
 
 object AppModules {
     private val ICAL = HomeyAppRef("no.runely.calendar", "IcalCalendar")
     private val FIND_MY = HomeyAppRef("com.apple.findmy", "Apple Find My")
     private val SONOS = HomeyAppRef("com.sonos", "Sonos")
+    private val SONOS_LOCAL = HomeyAppRef("nl.xiut.sonoslocal", "Sonos (LocalAPI)")
     private val ROBOROCK = HomeyAppRef("be.functor.roborock", "Roborock Cloud")
     private val APPLE_TV = HomeyAppRef("com.appletv.native", "Apple TV")
     private val TIBBER = HomeyAppRef("com.tibber", "Tibber")
@@ -133,9 +145,9 @@ object AppModules {
             kind = ModuleKind.Devices,
             sources = listOf(
                 ModuleSource(
-                    "sonos", "Homey app: Sonos",
+                    "sonos", "Homey app: Sonos or Sonos (LocalAPI)",
                     "Brings the speakers into Homey. The dashboard then plays favourites, playlists and Spotify straight on the speakers.",
-                    SourceKind.HomeyApp, SONOS,
+                    SourceKind.HomeyApp, SONOS, alternatives = listOf(SONOS_LOCAL),
                 ),
             ),
             showsOn = listOf("Player card on the overview", "Media page", "Speaker cards in each room"),
@@ -150,7 +162,9 @@ object AppModules {
             sources = listOf(
                 ModuleSource(
                     "findmy", "Homey app: Apple Find My",
-                    "Adds the family's Apple devices to Homey, with their location and a play-sound action.",
+                    "Adds the family's Apple devices to Homey, with their location and a play-sound action. " +
+                        "The dashboard asks Find My for a fresh location only when someone asks, so you can turn off " +
+                        "the app's automatic updates in Homey and save the phones' battery.",
                     SourceKind.HomeyApp, FIND_MY,
                 ),
             ),
@@ -283,10 +297,22 @@ object AppModules {
         return devices.filter { d -> d.appId in apps || d.effectiveClass in module.deviceClasses }.sortedBy { it.name.lowercase() }
     }
 
-    fun state(module: AppModule, choice: ModuleChoice, installed: Set<String>, devices: Collection<Device>): ModuleState {
+    fun state(
+        module: AppModule,
+        choice: ModuleChoice,
+        installed: Set<String>,
+        devices: Collection<Device>,
+        names: Map<String, String> = emptyMap(),
+    ): ModuleState {
         val source = module.source(choice.source)
-        val apps = listOfNotNull(source.app).map { it to (it.id in installed) }
         val own = devicesOf(module, devices)
+        val known = (module.sources.flatMap { it.apps }).associateBy { it.id }
+        fun ref(id: String) = known[id] ?: HomeyAppRef(id, names[id] ?: id)
+        // The apps actually doing the job: the source's apps that are installed, and for a device
+        // module whichever apps its devices come from. Only when there are none is the usual app missing.
+        val serving = (source.apps.map { it.id }.filter { it in installed } + own.mapNotNull { it.appId }.takeIf { module.kind == ModuleKind.Devices }.orEmpty())
+            .distinct()
+        val apps = if (serving.isNotEmpty()) serving.map { ref(it) to true } else listOfNotNull(source.app).map { it to false }
         val status = when (module.kind) {
             ModuleKind.Planned -> ModuleStatus.Planned
             ModuleKind.Devices -> when {
@@ -307,7 +333,8 @@ object AppModules {
     /** Every module's state, in catalog order. */
     fun states(choices: Map<String, ModuleChoice>, apps: Map<String, HomeyApp>?, devices: Collection<Device>): List<ModuleState> {
         val installed = installed(apps, devices)
-        return all.map { state(it, choices[it.id] ?: ModuleChoice(), installed, devices) }
+        val names = apps.orEmpty().mapValues { it.value.name }
+        return all.map { state(it, choices[it.id] ?: ModuleChoice(), installed, devices, names) }
     }
 
     /** Whether a feature module is in use on this tablet; dashboard parts check this before showing. */

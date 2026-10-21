@@ -64,9 +64,11 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
-    // The face model is memory-mapped straight from the APK.
+    // The face model is memory-mapped straight from the APK; the wake-word spotter and the
+    // voice-activity model (under assets/ear) are read by sherpa-onnx the same way.
     androidResources {
         noCompress += "tflite"
+        noCompress += "onnx"
     }
 }
 

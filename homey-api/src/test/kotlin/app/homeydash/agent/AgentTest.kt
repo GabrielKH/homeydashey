@@ -87,9 +87,7 @@ class AgentTest {
         override suspend fun weather() = "Sunny, 18 °C"
         override suspend fun calendar(from: LocalDate, days: Int, withLocations: Boolean) =
             listOf(AgentEvent("Dentist", "09:00", "10:00", false, if (withLocations) "Main street 1" else null))
-        override fun startTimer(seconds: Int, label: String?) {}
-        override fun cancelTimer(label: String?) = false
-        override fun timers() = emptyList<String>()
+        override val timers = TimerBoard(null)
         override fun setTheme(mode: String) = true
     }
 
@@ -644,6 +642,37 @@ class AgentTest {
         assertFalse(FollowUp.ends("stoppa musiken"))
         assertFalse(FollowUp.ends("tack, släck lampan"))
         assertFalse(FollowUp.ends("då förstår jag"))
+    }
+
+    @Test
+    fun `every goodbye ends it, in Swedish and English, alone or after a request`() {
+        for (bye in listOf(
+            "Bye.", "God bye.", "Good bye!", "Bye bye", "Tack, hej då", "Hejdå", "Det är bra nu", "Det är bra nu, tack",
+            "You can go now", "You can go now, thanks", "Du kan gå nu", "Du kan gå nu tack. Bye.", "Vi ses", "Ha det så bra",
+            "No, that's okay. Thank you.", "Nej tack", "That's all for now", "I'm done", "Jag är klar", "Glöm det", "Never mind",
+            "See you later", "Sluta lyssna", "Okej, adjö Nova",
+        )) assertTrue(bye, FollowUp.ends(bye, "Nova"))
+        // A bare "no" ends it only after an offer of more.
+        assertFalse(FollowUp.ends("Nej"))
+        assertTrue(FollowUp.ends("Nej", offered = true))
+        assertTrue(FollowUp.ends("No.", offered = true))
+        assertTrue(FollowUp.offers("Done. Anything else you need right now?"))
+        assertTrue(FollowUp.offers("Klart! Något mer jag kan göra?"))
+        assertFalse(FollowUp.offers("The lights are on."))
+        // Requests are still requests.
+        assertFalse(FollowUp.ends("Nej, tänd lampan"))
+        assertFalse(FollowUp.ends("Du kan gå till köket"))
+        assertFalse(FollowUp.ends("Spela vi ses i Göteborg"))
+
+        assertEquals("Släck i köket", FollowUp.closing("Släck i köket, tack, hej då"))
+        assertEquals("Turn off the TV", FollowUp.closing("Turn off the TV, you can go now"))
+        assertEquals("Släck allt", FollowUp.closing("Släck allt, hej då"))
+        assertEquals("Men du har alltid stängt av alla…", FollowUp.closing("Men du har alltid stängt av alla… men du kan gå nu tack. Bye."))
+        assertEquals("Stäng av tv:n", FollowUp.closing("Stäng av tv:n, okej, det var allt Nova", "Nova"))
+        // A polite "tack" after a request isn't a goodbye; a goodbye alone has no request.
+        assertNull(FollowUp.closing("Tänd lampan tack"))
+        assertNull(FollowUp.closing("Hej då"))
+        assertNull(FollowUp.closing("Tänd lampan"))
     }
 
     @Test

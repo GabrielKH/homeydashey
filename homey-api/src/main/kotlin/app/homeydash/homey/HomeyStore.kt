@@ -173,10 +173,11 @@ class HomeyStore(
      * Asks Homey for [deviceId] again and shows what it says, so a change that was accepted
      * but didn't happen (a lamp out of reach) stops showing as done. Returns [capabilityId]'s value.
      */
-    suspend fun readBack(deviceId: String, capabilityId: String): JsonElement? = runCatching {
-        val device = client.device(deviceId)
-        apply(HomeyEvent.DeviceChanged(device))
-        device.capabilitiesObj[capabilityId]?.value
+    suspend fun readBack(deviceId: String, capabilityId: String): JsonElement? = readDevice(deviceId)?.capabilitiesObj?.get(capabilityId)?.value
+
+    /** Asks Homey for [deviceId] again and shows what it says; null when Homey can't be asked. */
+    suspend fun readDevice(deviceId: String): Device? = runCatching {
+        client.device(deviceId).also { apply(HomeyEvent.DeviceChanged(it)) }
     }.getOrNull()
 
     suspend fun setMood(mood: Mood) {
