@@ -36,10 +36,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HomeyDash">
 
+        <!-- Turning the tablet only re-lays out the Compose UI. Recreating the activity would rebuild
+             the assistant and drop a conversation that is listening. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:lockTaskMode="if_whitelisted"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
