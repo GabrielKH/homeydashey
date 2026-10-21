@@ -914,7 +914,7 @@ class AgentTools(
 
     private suspend fun calendar(start: String, days: Double?, whose: String): ToolResult {
         if (!view.allows(Secret.Calendar)) return ok("Reading the calendar is switched off.")
-        val from = runCatching { LocalDate.parse(start.trim()) }.getOrNull() ?: today()
+        val from = CalendarBook.day(start, today()) ?: today()
         val count = (days ?: 1.0).toInt().coerceIn(1, 31)
         val details = view.allows(Secret.CalendarDetails)
         val events = if (whose.isBlank()) {
@@ -938,7 +938,7 @@ class AgentTools(
      */
     private suspend fun addEvent(title: String, date: String, time: String, minutes: Double?, whose: String, location: String, timeSaid: Boolean): ToolResult {
         if (!view.allows(Secret.AddEvents)) return ok("Adding calendar events is switched off under the assistant's Privacy and security settings.")
-        val name = title.trim().ifEmpty { return ok("What should the event be called?") }
+        val name = title.trim().ifEmpty { return ok("Nothing was added. Ask only what the event should be called, then call add_event again with it.") }
         val day = CalendarBook.day(date, today()) ?: return ok("Which day? Give a weekday, today, tomorrow or yyyy-mm-dd.")
         val s = view.settings
         val usual = memory?.takeIf { s.access(Secret.Memory) != Access.Off }?.usualEvent(name, s.asker?.id)

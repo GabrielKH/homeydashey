@@ -411,6 +411,13 @@ class AgentTest {
         assertEquals(false, Confirmation.parse("no"))
         assertNull(Confirmation.parse("tänd lampan i köket"))
         assertNull(Confirmation.parse("japanese food recipes for dinner tonight please"))
+        // From Gabriel's logs: a yes that doesn't start the answer, and a no that changes the day.
+        assertEquals(true, Confirmation.parse("Sounds great! Yes!"))
+        assertEquals(true, Confirmation.parse("Perfekt, lägg in den"))
+        assertEquals(false, Confirmation.parse("No, thank you"))
+        assertNull(Confirmation.parse("No, I want it next Monday"))
+        assertNull(Confirmation.parse("Ja, men på tisdag"))
+        assertNull(Confirmation.parse("not good"))
     }
 
     @Test fun `announce prefers a play-URL card with volume`() {
