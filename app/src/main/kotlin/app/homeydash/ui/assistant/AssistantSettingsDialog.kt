@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -155,7 +156,6 @@ internal class AssistantNav(start: String) {
     fun title(): String = when (page) {
         "devices" -> "Hidden from the assistant"
         "preview" -> "What the assistant sees"
-        "phones" -> "Phones"
         "routines" -> "Routines"
         "routine" -> editing?.name?.ifBlank { null } ?: "New routine"
         in PAGES -> PAGES.getValue(page)
@@ -166,7 +166,7 @@ internal class AssistantNav(start: String) {
         /** The page a page opens from, for the pages that aren't in the menu. */
         fun parent(page: String): String? = when (page) {
             "routine" -> "routines"
-            "devices", "preview", "phones" -> "privacy"
+            "devices", "preview" -> "privacy"
             else -> null
         }
     }
@@ -204,7 +204,7 @@ internal fun AssistantPage(
         "voice" -> VoicePage(services, settings, update)
         "listen" -> ListenPage(services, settings, update)
         "brain" -> BrainPage(services, settings, update, preview)
-        "privacy" -> PrivacyPage(settings, update, onDevices = { nav.page = "devices" }, onPreview = { nav.page = "preview" }, onFaces = onFaces, onPhones = { nav.page = "phones" })
+        "privacy" -> PrivacyPage(settings, update, onDevices = { nav.page = "devices" }, onPreview = { nav.page = "preview" }, onFaces = onFaces)
         "spotify" -> Spotify(settings, update)
         "logs" -> Logs(services, settings, update)
         "memory" -> MemoryPage(services, settings, update)
@@ -214,16 +214,17 @@ internal fun AssistantPage(
 
 /** The settings pages behind the main page, with their titles. */
 private val PAGES = mapOf(
-    "voice" to "Voice and look",
+    "voice" to "Voice and character",
     "listen" to "Listening",
     "brain" to "AI and servers",
     "privacy" to "Privacy and security",
     "spotify" to "Spotify on Sonos",
     "logs" to "Logs for Claude",
     "memory" to "Memory",
+    "phones" to "Find my phone",
 )
 
-/** The main page: who the assistant is, its language, and the groups of settings. */
+/** The main page: how it looks, its reminders, and the groups of settings. */
 @Composable
 private fun Main(
     services: AssistantServices,
@@ -233,53 +234,44 @@ private fun Main(
     onRoutines: () -> Unit,
     menu: Boolean = true,
 ) {
-    val g = GlassTheme.colors
-    Text(
-        "Talk to the tablet (tap the orb in the corner) or type. The assistant controls the home through Homey and answers on the tablet or a speaker.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
+    Hint(
+        "Talk to the tablet (tap the orb in the corner) or type. The assistant controls the home through Homey and answers on the tablet or a speaker. " +
+            "Its character, language and voice are under Voice and character.",
+        short = "Talk to the tablet or type; it runs the home through Homey.",
     )
-    SettingsBox("Character") {
-        Character(services, settings, update)
-        Text(
-            "This is the house's character. Each person can pick their own, and its voice, under People; saying any character's name wakes it.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
-    }
-
-    SettingsBox("Language") {
-        Segmented(Language.entries, settings.language, { it.label }) { l ->
-            update { it.withLanguage(l) }
-            if (l == Language.Swedish && settings.persona == Persona.Nova) services.alma.download()
-        }
-        Text(
-            when {
-                settings.persona == Persona.Tars -> "TARS understands the language you pick here but always answers in English."
-                settings.language == Language.Swedish -> "Svenska gives Nova Alma's Swedish voice, made on the tablet. You can pick another voice under Voice and look."
-                else -> "Svenska + English hears both and answers in the language you spoke."
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
+    Look(settings, update)
+    SettingsBox("Reminders") {
+        SwitchRow(
+            "Battery reminders",
+            "Nags when the tablet needs charging. Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, " +
+                "${batteryVoice(services, settings)} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
+            settings.batteryReminders,
+        ) { on -> update { it.copy(batteryReminders = on) } }
+        SwitchRow(
+            "Ask for a timer's name",
+            "Offers to name a timer started without one. Named timers are remembered, so \"sätt en pastatimer\" uses your usual length.",
+            settings.askTimerName,
+        ) { on -> update { it.copy(askTimerName = on) } }
     }
 
     if (!menu) return
     SettingsBox("Settings") {
-        // Two to a row, so the eight pages take four rows instead of eight.
+        // Two to a row, so the nine pages take five rows instead of nine.
         val pages = listOf(
-            Triple(Sym.speaker, "Voice and look") { onPage("voice") },
+            Triple(Sym.speaker, "Voice and character") { onPage("voice") },
             Triple(Sym.mic, "Listening") { onPage("listen") },
             Triple(Sym.autoAwesome, "AI and servers: ${settings.mode.label}") { onPage("brain") },
             Triple(Sym.flow, "Routines (${services.routines.data.value.routines.size})", onRoutines),
             Triple(Sym.lightbulb, "Memory: " + if (settings.access(Secret.Memory) != Access.Off) "${services.memory.data.value.facts.size} facts" else "off") { onPage("memory") },
             Triple(Sym.shieldLock, "Privacy and security") { onPage("privacy") },
+            Triple(Sym.phone, "Find my phone") { onPage("phones") },
             Triple(Sym.musicNote, "Spotify on Sonos") { onPage("spotify") },
             Triple(Sym.send, "Logs for Claude") { onPage("logs") },
         )
         pages.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 pair.forEach { (icon, text, open) -> NavRow(icon, text, open, Modifier.weight(1f)) }
+                if (pair.size == 1) Box(Modifier.weight(1f))
             }
         }
     }
@@ -304,7 +296,7 @@ private fun Character(services: AssistantServices, settings: AgentSettings, upda
             }
         }
     }
-    Text(settings.persona.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+    Hint(settings.persona.detail)
     Traits(settings, update)
     // TARS's humor is the house's, also when only someone under People talks with him.
     val people by services.faces.people.collectAsState()
@@ -345,11 +337,9 @@ private fun Traits(settings: AgentSettings, update: ((AgentSettings) -> AgentSet
         update { s -> s.copy(traits = if (t.isBlank() || t.trim() == builtIn.trim()) s.traits - p else s.traits + (p to t)) }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
+        Hint(
             if (settings.traits[p].isNullOrBlank()) "This is the built-in personality. Change it and ${p.label} talks your way from the next question."
             else "Your own words for ${p.label}. " + if (p == Persona.Tars) "The humor slider still sets how funny he is." else "",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
             modifier = Modifier.weight(1f),
         )
         if (!settings.traits[p].isNullOrBlank()) Chip("Use the built-in", false) { text = builtIn; update { s -> s.copy(traits = s.traits - p) } }
@@ -382,17 +372,45 @@ private fun PiperVoiceState(voice: app.homeydash.assistant.PiperVoice, ready: St
         is app.homeydash.assistant.PiperVoice.State.Failed -> "Couldn't get the voice: ${s.message}"
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = g.muted, modifier = Modifier.weight(1f))
+        if (state is app.homeydash.assistant.PiperVoice.State.Failed) {
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = g.danger, modifier = Modifier.weight(1f))
+        } else {
+            Hint(text, modifier = Modifier.weight(1f))
+        }
         if (state is app.homeydash.assistant.PiperVoice.State.Missing || state is app.homeydash.assistant.PiperVoice.State.Failed) {
             Chip("Download", false) { voice.download() }
         }
     }
 }
 
-/** How it sounds and looks, and where answers are played. */
+/**
+ * Everything about how the assistant sounds in one place: the house's character, its voice,
+ * how it answers, and on which speaker. People's own picks are under People.
+ */
 @Composable
 private fun VoicePage(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
+    SettingsBox("Character") {
+        Character(services, settings, update)
+        Hint(
+            "This is the house's character. Each person can pick their own, and its voice, under People; saying any character's name wakes it.",
+            short = "The house's character. Each person can pick their own under People.",
+        )
+    }
+    SettingsBox("Language") {
+        Segmented(Language.entries, settings.language, { it.label }) { l ->
+            update { it.withLanguage(l) }
+            if (l == Language.Swedish && settings.persona == Persona.Nova) services.alma.download()
+        }
+        Hint(
+            when {
+                settings.persona == Persona.Tars -> "TARS understands the language you pick here but always answers in English."
+                settings.language == Language.Swedish -> "Svenska gives Nova Alma's Swedish voice, made on the tablet. You can pick another voice under Voice and character."
+                else -> "Svenska + English hears both and answers in the language you spoke."
+            },
+        )
+    }
+    Voice(services, settings, update)
     SettingsBox("Answers") {
         SwitchRow("Speak answers", "Off shows answers as text only.", settings.speak) { on -> update { it.copy(speak = on) } }
         SwitchRow(
@@ -410,18 +428,13 @@ private fun VoicePage(services: AssistantServices, settings: AgentSettings, upda
             ) { on -> update { it.copy(quickYes = on) } }
         }
     }
-    LookAndVoice(services, settings, update)
     SettingsBox("Speaker") {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Speaker volume", style = MaterialTheme.typography.labelLarge, color = g.fg)
             GlassSlider(settings.speakerVolume / 100f, { v -> update { it.copy(speakerVolume = (v * 100).toInt()) } }, Modifier.weight(1f))
             Text("${settings.speakerVolume}%", style = MaterialTheme.typography.labelLarge, color = g.fg)
         }
-        Text(
-            "Pick the speaker that answers in the assistant panel. Sonos speakers can't be used as microphones, so you speak to the tablet.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
+        Hint("Pick the speaker that answers in the assistant panel. Sonos speakers can't be used as microphones, so you speak to the tablet.")
     }
 }
 
@@ -435,27 +448,21 @@ private fun ListenPage(services: AssistantServices, settings: AgentSettings, upd
     SettingsBox("Conversation") {
         Text("Keep listening after an answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
         Segmented(FollowUp.entries, settings.followUp, { it.label }) { f -> update { it.copy(followUp = f) } }
-        Text(
+        Hint(
             settings.followUp.detail + " Say \"stop\", \"thanks\" or \"tack\" to end early.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
         Text("Talk over the answer", style = MaterialTheme.typography.labelLarge, color = g.fg)
         Segmented(app.homeydash.agent.Interrupt.entries, settings.interrupt, { it.label }) { i -> update { it.copy(interrupt = i) } }
-        Text(
+        Hint(
             settings.interrupt.detail + if (settings.interrupt != app.homeydash.agent.Interrupt.Off) " It stops and listens to what you say, like a person would." else "",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
     }
     SettingsBox("Who hears your questions") {
         Hearing(services, settings, update)
         val context = androidx.compose.ui.platform.LocalContext.current
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
+            Hint(
                 "The tablet's speech recognition needs Swedish and English. If it says a language is missing, add them in Android's speech settings.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
                 modifier = Modifier.weight(1f),
             )
             SpeechSettingsButton { app.homeydash.assistant.SpeechInput.openSettings(context) }
@@ -474,15 +481,13 @@ private fun BrainPage(
     val g = GlassTheme.colors
     SettingsBox("Which AI answers") {
         Segmented(BrainMode.entries, settings.mode, { it.label }) { m -> update { it.copy(mode = m) } }
-        Text(
+        Hint(
             when (settings.mode) {
                 BrainMode.Smart -> "Your computer first. When it's off or can't answer, the internet AI takes over. " +
                     "For things it doesn't know, like news or opening hours, your computer asks the internet AI with web search, sending only the question."
                 BrainMode.Local -> "Only the AI on your computer. Nothing leaves the house, except speech recognition when the tablet can't do it on its own."
                 BrainMode.Internet -> "Only Gemini or OpenAI, which can search the web."
             },
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
     }
     Servers(services, settings, update)
@@ -505,6 +510,7 @@ private fun Servers(services: AssistantServices, settings: AgentSettings, update
     SettingsBox("Local AI on your computer") {
         val local = settings.local ?: Connection(Provider.Ollama)
         ConnectionFields(services, local, keyHint = "Only if the server asks for one") { c -> update { it.copy(local = c) } }
+        SettingsDivider()
         SwitchRow(
             "Short tool list",
             "The local AI gets its tools as a few lines of text and writes its calls itself. A much shorter prompt, so faster answers, " +
@@ -527,10 +533,8 @@ private fun Servers(services: AssistantServices, settings: AgentSettings, update
     SettingsBox("Voice model (the Warm voice)") {
         Field("Address", settings.voiceServerUrl.ifBlank { settings.voiceServerUrlOrGuess() }, keyboard = KeyboardType.Uri) { url -> update { it.copy(voiceServerUrl = url) } }
         Field("Model", settings.voiceServerModel) { model -> update { it.copy(voiceServerModel = model) } }
-        Text(
-            "mlx-audio on the Mac speaks the Warm voice. Which recording each character copies is under Voice and look.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
+        Hint(
+            "mlx-audio on the Mac speaks the Warm voice. Which recording each character copies is under Voice and character.",
         )
     }
 }
@@ -546,11 +550,9 @@ private fun SpeedTest(services: AssistantServices, settings: AgentSettings, prev
     val scope = rememberCoroutineScope()
     var result by remember { mutableStateOf<String?>(null) }
     SettingsBox("Speed") {
-        Text(
+        Hint(
             "Asks each AI a short question with everything it normally reads, twice. \"First word\" is how long it read before answering; " +
                 "if the second time isn't much faster, the server reads the whole prompt again for every question.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
         Text(
             if (result == "Testing…") "Testing…" else "Speed test",
@@ -587,15 +589,13 @@ private fun PrivacyPage(
     onDevices: () -> Unit,
     onPreview: () -> Unit,
     onFaces: () -> Unit,
-    onPhones: () -> Unit,
 ) {
     val g = GlassTheme.colors
-    Text(
+    Hint(
         "The assistant reads ordinary things: rooms, lights, climate, sensors, players, moods, Flow names, weather. " +
             "Everything below is off until you turn it on. \"Local AI only\" keeps it away from the internet AI. " +
             "Keys, codes and camera pictures are never sent.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
+        short = "Everything below is off until you turn it on. Keys, codes and pictures are never sent.",
     )
     SettingsBox("People and devices") {
         NavRow(Sym.face, "People: faces and voices", onFaces)
@@ -603,28 +603,37 @@ private fun PrivacyPage(
         NavRow(Sym.search, "What the assistant sees", onPreview)
     }
     SettingsBox("What the assistant may use") {
+        Hint(
+            "Local AI only: just the AI on your computer, never the internet one.",
+        )
         Secret.entries.forEach { secret ->
-            val enabled = when (secret) {
-                Secret.Unlock -> settings.access(Secret.Locks) != Access.Off
-                Secret.CalendarDetails -> settings.access(Secret.Calendar) != Access.Off
-                else -> true
-            }
-            Column(
-                Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.45f },
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // Like an iOS settings row: what it is on the left, a small Off / Local / On switch on the right.
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(secret.title, style = MaterialTheme.typography.labelLarge, color = g.fg)
-                        Text(secret.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
-                    }
-                    Segmented(Access.entries, settings.access(secret), { it.label }, enabled = enabled, compact = true) { a ->
-                        update { it.copy(secrets = it.secrets + (secret to a)) }
-                    }
-                }
-                if (secret == Secret.Phones && settings.access(secret) != Access.Off) NavRow(Sym.phone, "Whose phone is whose", onPhones)
-            }
+            // A line between rows, like a phone's settings list, so each switch reads on its own.
+            SettingsDivider()
+            SecretRow(settings, secret, update)
+        }
+    }
+}
+
+/** One thing the assistant may use: what it is on the left, a small Off / Local / On switch on the right. */
+@Composable
+private fun SecretRow(settings: AgentSettings, secret: Secret, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val enabled = when (secret) {
+        Secret.Unlock -> settings.access(Secret.Locks) != Access.Off
+        Secret.CalendarDetails -> settings.access(Secret.Calendar) != Access.Off
+        else -> true
+    }
+    Row(
+        Modifier.fillMaxWidth().graphicsLayer { alpha = if (enabled) 1f else 0.45f }.padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(secret.title, style = MaterialTheme.typography.labelLarge, color = g.fg)
+            Hint(secret.detail)
+        }
+        Segmented(Access.entries, settings.access(secret), { it.label }, enabled = enabled, compact = true) { a ->
+            update { it.copy(secrets = it.secrets + (secret to a)) }
         }
     }
 }
@@ -636,15 +645,17 @@ private fun PhonesPage(services: AssistantServices, devices: Map<String, Device>
     val g = GlassTheme.colors
     val people by services.faces.people.collectAsState()
     val phones = devices.values.filter { Phones.isPhone(it) }.sortedBy { it.name.lowercase() }
-    Text(
+    Hint(
         "Say \"${settings.nameOf(settings.persona)}, where's my phone?\" and it rings yours through Homey's Apple Find My app, even on silent. " +
             "It knows whose phone to ring by your voice or face, so teach it under People and switch on Face and voice recognition.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
+    SettingsBox(null) {
+        SecretRow(settings, Secret.Phones, update)
+    }
+    if (settings.access(Secret.Phones) == Access.Off) return
     SettingsBox("Who may find a phone") {
         Segmented(PhoneSharing.entries, settings.phoneSharing, { it.label }) { p -> update { it.copy(phoneSharing = p) } }
-        Text(settings.phoneSharing.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        Hint(settings.phoneSharing.detail)
         if (settings.access(Secret.Faces) == Access.Off && settings.phoneSharing != PhoneSharing.Anyone) {
             Text(
                 "Face and voice recognition is off, so it can't tell who is asking: only phones set to Shared can be rung.",
@@ -655,11 +666,7 @@ private fun PhonesPage(services: AssistantServices, devices: Map<String, Device>
     }
     SettingsBox("Phones") {
         if (phones.isEmpty()) {
-            Text(
-                "No phones yet. Install Apple Find My on your Homey (Homey Pro), sign in with each person's Apple ID and add their iPhones as devices.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
-            )
+            Hint("No phones yet. Install Apple Find My on your Homey (Homey Pro), sign in with each person's Apple ID and add their iPhones as devices.")
         }
         val names = people.associate { it.id to it.name }
         phones.forEach { phone ->
@@ -667,15 +674,13 @@ private fun PhonesPage(services: AssistantServices, devices: Map<String, Device>
             val guessed = names.entries.firstOrNull { Phones.named(phone.name, it.value) }?.value
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(phone.name, style = MaterialTheme.typography.labelLarge, color = g.fg)
-                Text(
+                Hint(
                     when {
                         chosen == SHARED_PHONE -> "Shared: anyone at the tablet can ring and find it."
                         chosen != null -> "${names[chosen] ?: "Someone removed from People"}'s phone."
                         guessed != null -> "$guessed's phone, by its name."
                         else -> "Nobody's yet: pick whose it is."
                     },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = g.muted,
                 )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     fun pick(owner: String?) = update { s -> s.copy(phoneOwners = if (owner == null) s.phoneOwners - phone.id else s.phoneOwners + (phone.id to owner)) }
@@ -692,20 +697,16 @@ private fun PhonesPage(services: AssistantServices, devices: Map<String, Device>
 @Composable
 private fun Spotify(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
-    Text(
+    Hint(
         "Play any song, album, artist or playlist on Sonos: say \"spela Dancing Queen i köket\", or use the Spotify tab under Play music. " +
             "Spotify only finds the music; the speakers play it with the Spotify account already added in the Sonos app.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     SettingsBox("Spotify app") {
         Field("Client ID", settings.spotifyClientId) { id -> update { it.copy(spotifyClientId = id) } }
         Field("Client secret", settings.spotifySecret, secret = true) { secret -> update { it.copy(spotifySecret = secret) } }
-        Text(
+        Hint(
             "Make an app at developer.spotify.com/dashboard (any name, redirect URI http://127.0.0.1:8888/callback, Web API ticked) " +
                 "with a Spotify Premium account, then copy its Client ID and Client secret here.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
     }
 }
@@ -725,10 +726,8 @@ private fun Logs(services: AssistantServices, settings: AgentSettings, update: (
         if (settings.sendLogs) {
             Field("GitHub token", settings.logToken, secret = true) { token -> update { it.copy(logToken = token) } }
             Field("Repository", settings.logRepo) { repo -> update { it.copy(logRepo = repo) } }
-            Text(
+            Hint(
                 "Make a fine-grained token on github.com (Settings, Developer settings, Personal access tokens) for this repository only, with Issues set to Read and write.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
             )
             val status = services.logStatus
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -755,10 +754,8 @@ private fun Hearing(services: AssistantServices, settings: AgentSettings, update
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
     var result by remember { mutableStateOf<Pair<app.homeydash.agent.Hearer, String>?>(null) }
-    Text(
+    Hint(
         "With neither on, Android's speech recognition from Google hears your questions. With both on, Whisper is tried first and OpenAI when the computer doesn't answer.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     SwitchRow(
         "Whisper on your computer",
@@ -766,10 +763,8 @@ private fun Hearing(services: AssistantServices, settings: AgentSettings, update
         settings.useWhisper,
     ) { on -> update { it.copy(useWhisper = on) } }
     if (settings.useWhisper) {
-        Text(
+        Hint(
             "Whisper's address and its test are under AI and servers, with the other servers on your computer.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
     }
     SwitchRow(
@@ -807,12 +802,11 @@ private fun HearingTest(
             color = g.fg,
             modifier = Modifier.pressable({ onTest(hearer) }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
         )
-        Text(
-            text ?: hint,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (text?.startsWith("Didn't") == true) g.danger else g.muted,
-            modifier = Modifier.weight(1f),
-        )
+        if (text == null) {
+            Hint(hint, modifier = Modifier.weight(1f))
+        } else {
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = if (text.startsWith("Didn't")) g.danger else g.muted, modifier = Modifier.weight(1f))
+        }
     }
 }
 
@@ -845,26 +839,28 @@ private fun ConnectionFields(services: AssistantServices, connection: Connection
                 .glass(PillShape)
                 .padding(horizontal = 18.dp, vertical = 10.dp),
         )
-        Text(
-            result ?: when (connection.provider) {
-                Provider.Ollama -> "Any server on your computer that speaks the OpenAI format: oMLX, LM Studio or Ollama. Give its address with /v1 at the end and the model's name as the server shows it."
-                Provider.Gemini -> "Get a key at aistudio.google.com."
-                Provider.OpenAI -> "Get a key at platform.openai.com."
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (result?.startsWith("Didn't") == true) g.danger else g.muted,
-            modifier = Modifier.weight(1f),
-        )
+        val shown = result
+        if (shown == null) {
+            Hint(
+                when (connection.provider) {
+                    Provider.Ollama -> "Any server on your computer that speaks the OpenAI format: oMLX, LM Studio or Ollama. Give its address with /v1 at the end and the model's name as the server shows it."
+                    Provider.Gemini -> "Get a key at aistudio.google.com."
+                    Provider.OpenAI -> "Get a key at platform.openai.com."
+                },
+                short = if (connection.provider == Provider.Ollama) "Any OpenAI-style server on your computer." else null,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            Text(shown, style = MaterialTheme.typography.bodyMedium, color = if (shown.startsWith("Didn't")) g.danger else g.muted, modifier = Modifier.weight(1f))
+        }
     }
 }
 
 @Composable
 private fun HiddenDevices(services: AssistantServices, zones: Map<String, Zone>, devices: Map<String, Device>, hidden: Set<String>, settings: AgentSettings, onHide: (String, Boolean) -> Unit) {
     val g = GlassTheme.colors
-    Text(
+    Hint(
         "Turn off devices the assistant shouldn't know about. Locks, alarms and cameras are left out unless switched on under Security.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     SwitchRow(
         "Also devices hidden on the dashboard",
@@ -905,11 +901,9 @@ private fun Preview(services: AssistantServices, settings: AgentSettings, previe
         return
     }
     val prompt = remember(view) { services.agent.systemPrompt(settings, view, AskContext()) }
-    Text(
+    Hint(
         "This is everything the AI gets before your question, plus the answers of the tools it uses: " +
             tools.specs().joinToString { it.name } + ".",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     Box(Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp)).horizontalScroll(rememberScrollState()).padding(14.dp)) {
         Text(prompt, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp), color = g.fg)
@@ -980,10 +974,54 @@ internal fun SwitchRow(title: String, detail: String, on: Boolean, onChange: (Bo
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.labelLarge, color = g.fg)
-            Text(detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+            Hint(detail)
         }
         Toggle(on, onClick = { onChange(!on) })
     }
+}
+
+/**
+ * A setting's explanation, cut to its first sentence like a phone's settings: the info button
+ * beside it opens the rest underneath. [short] stands in for the first sentence when that is
+ * still too long, and the info then shows all of [text].
+ */
+@Composable
+internal fun Hint(text: String, short: String? = null, modifier: Modifier = Modifier.fillMaxWidth()) {
+    val g = GlassTheme.colors
+    val (head, rest) = if (short != null) short to text else splitHint(text)
+    var open by remember(text) { mutableStateOf(false) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(head, style = MaterialTheme.typography.bodyMedium, color = g.muted, modifier = Modifier.weight(1f, fill = false))
+            if (rest != null) {
+                Box(Modifier.size(32.dp).pressable({ open = !open }), contentAlignment = Alignment.Center) {
+                    SymIcon(Sym.info, filled = open, size = 20.dp, tint = if (open) g.fg else g.muted)
+                }
+            }
+        }
+        if (open && rest != null) {
+            Text(
+                rest,
+                style = MaterialTheme.typography.bodyMedium,
+                color = g.fg,
+                modifier = Modifier.fillMaxWidth().glass(RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+/** A hairline between settings in a box, like the lines in a phone's settings list. */
+@Composable
+internal fun SettingsDivider() {
+    Box(Modifier.fillMaxWidth().height(1.dp).background(GlassTheme.colors.glassLine))
+}
+
+/** The first sentence of a long explanation, and the rest; short ones stay whole. */
+internal fun splitHint(text: String): Pair<String, String?> {
+    if (text.length <= 100) return text to null
+    val end = Regex("""[.!?]["”)]?\s""").find(text) ?: return text to null
+    val rest = text.substring(end.range.last).trim()
+    return if (rest.isEmpty()) text to null else text.substring(0, end.range.last).trim() to rest
 }
 
 @Composable
@@ -999,12 +1037,11 @@ internal fun NavRow(icon: app.homeydash.ui.components.Ic, text: String, onClick:
     }
 }
 
-/** How the assistant looks while it talks, and how it sounds. */
+/** How the assistant looks while it talks, and how it starts. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+private fun Look(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
-    val scope = rememberCoroutineScope()
     var previewState by remember { mutableStateOf(AssistantState.Speaking) }
     SettingsBox("Look") {
         Box(Modifier.fillMaxWidth().height(150.dp).glass(RoundedCornerShape(22.dp))) {
@@ -1015,15 +1052,22 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
             FaceStyle.entries.forEach { f -> Chip(f.label, f == settings.face) { update { it.copy(face = f) } } }
             if (settings.face == FaceStyle.Scanner) Chip("Classic red", settings.classicRed) { update { it.copy(classicRed = !it.classicRed) } }
         }
-        Text(settings.face.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        Hint(settings.face.detail)
 
         Text("Starts as", style = MaterialTheme.typography.labelLarge, color = g.fg)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             app.homeydash.agent.AssistantView.entries.forEach { v -> Chip(v.label, v == settings.view) { update { it.copy(view = v) } } }
         }
-        Text(settings.view.detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        Hint(settings.view.detail)
     }
+}
 
+/** The house's voice, how fast it talks, and the voices made on the tablet or the Mac. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Voice(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
     SettingsBox("Voice") {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             VoiceStyle.entries.forEach { v ->
@@ -1045,11 +1089,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
                 }
             }
         }
-        Text(
-            settings.voice.detail + if (settings.voice.local) "" else " Made from the tablet's own voice with pitch, speed and a sound filter.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
+        Hint(settings.voice.detail + if (settings.voice.local) "" else " Made from the tablet's own voice with pitch, speed and a sound filter.")
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val range = app.homeydash.agent.PACE_RANGE
             Text("Speaking speed ${settings.pace} %", style = MaterialTheme.typography.labelLarge, color = g.fg)
@@ -1059,29 +1099,7 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
                 Modifier.weight(1f),
             )
         }
-    }
-    SettingsBox("Battery reminders") {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("Battery reminders", settings.batteryReminders) { update { it.copy(batteryReminders = !it.batteryReminders) } }
-        }
-        Text(
-            "Under ${app.homeydash.agent.BatteryNag.BELOW} % and not charging, ${batteryVoice(services, settings)} asks every 20 minutes to be charged, never from 21:00 to 07:00.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
-    }
-    SettingsBox("Kitchen timers") {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("Ask for a name", settings.askTimerName) { update { it.copy(askTimerName = !it.askTimerName) } }
-        }
-        Text(
-            "After a timer is started without a name, the assistant asks if you want to give it one. Named timers are remembered, so \"sätt en pastatimer\" uses your usual length.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
-        )
-    }
-    if (settings.voice == VoiceStyle.Alma) {
-        SettingsBox("Alma") {
+        if (settings.voice == VoiceStyle.Alma) {
             PiperVoiceState(
                 services.alma,
                 "Alma's voice is on the tablet, so Swedish answers need no computer and start straight away.",
@@ -1096,14 +1114,13 @@ private fun LookAndVoice(services: AssistantServices, settings: AgentSettings, u
                     update { it.copy(warmVoices = if (voice.isBlank()) it.warmVoices - p else it.warmVoices + (p to voice)) }
                 }
             }
-            Text(
+            Hint(
                 "Chatterbox on the Mac copies a voice from a 15-20 second recording in the voices folder: type its name " +
                     "(\"anna\" for anna.wav) for each character, or leave it empty for the model's own voice. People can pick " +
                     "their own under People. Everything stays in the house. Tap Hear it to try it; if the computer doesn't " +
                     "answer, the tablet's voice speaks and it tries the computer again two minutes later. " +
                     "The voice server's address is under AI and servers.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
+                short = "Each character can copy a recording of a real voice, made on your Mac.",
             )
         }
     }

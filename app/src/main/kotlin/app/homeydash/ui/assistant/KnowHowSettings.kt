@@ -83,10 +83,8 @@ internal fun KnowHowTopics(services: AssistantServices, settings: AgentSettings,
             var title by remember { mutableStateOf("") }
             var words by remember { mutableStateOf("") }
             var rule by remember { mutableStateOf("") }
-            Text(
+            Hint(
                 "Something new the assistant should know how to do, like watering the plants. It comes with a question when one of its words is said.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
             )
             Field("Name", "", hint = "Plant watering") { title = it }
             Field("Words", "", hint = "vattna, blommor, plants") { words = it }
@@ -122,15 +120,13 @@ private fun TopicBox(services: AssistantServices, skill: Skill, mine: List<Strin
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
     SettingsBox(skill.title + if (skill.own) " (yours)" else if (skill.fromHomey) " (from Homey)" else "") {
-        Text(
+        Hint(
             buildString {
                 append("Comes with a question about ").append(skill.about.ifBlank { skill.title.lowercase() })
                 if (skill.classes.isNotEmpty()) append(", or naming a device of its kind")
                 append(". ")
                 append(if (used == 0) "Not used yet." else "Used $used time${if (used == 1) "" else "s"}.")
             },
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
         val built = skill.words.filterNot { it in learned }
         if (built.isNotEmpty()) Text("Words: " + built.joinToString { it.trimEnd('*') }, style = MaterialTheme.typography.bodySmall, color = g.muted)

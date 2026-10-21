@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.homeydash.ui.assistant.Hint
 import app.homeydash.data.Modules
 import app.homeydash.homey.Device
 import app.homeydash.modules.AppModules
@@ -234,10 +235,8 @@ private fun ModulePage(
                 SettingsBox("Assistant") {
                     Text(module.assistant, style = MaterialTheme.typography.bodyLarge, color = g.fg)
                     if (module.kind != ModuleKind.Planned) {
-                        Text(
+                        Hint(
                             "The assistant remembers what you choose here, so it knows where this comes from.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = g.muted,
                         )
                     }
                 }
@@ -314,10 +313,8 @@ private fun NeedsBox(state: ModuleState, appsAllowed: Boolean) {
             }
         }
         if (!appsAllowed && state.apps.isNotEmpty()) {
-            Text(
+            Hint(
                 "Your API key can't list Homey's apps, so they are worked out from your devices. Give the key the \"View apps\" permission in Homey for a full list.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
             )
         }
     }
@@ -355,10 +352,8 @@ private fun MissingApp(app: HomeyAppRef, onCheckAgain: () -> Unit) {
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Install ${app.name} on Homey", style = MaterialTheme.typography.titleSmall, color = g.fg)
-            Text(
+            Hint(
                 "Install it from the Homey App Store and add your devices there. This module turns on by itself when it finds them.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
             )
         }
         Text(
@@ -404,10 +399,8 @@ private fun PermissionNote() {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         SymIcon(Sym.key, size = 22.dp, tint = g.muted)
-        Text(
+        Hint(
             "Your API key can't list Homey's apps, so they are worked out from your devices. Add the \"View apps\" permission to the key in Homey for a full list.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
             modifier = Modifier.weight(1f),
         )
     }
