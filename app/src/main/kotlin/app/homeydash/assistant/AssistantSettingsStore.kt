@@ -53,6 +53,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         speakerVolume = p[VOLUME]?.toIntOrNull() ?: 35,
         speak = p[SPEAK] != "false",
         liveSpeech = p[LIVE_SPEECH] != "false",
+        quickYes = p[QUICK_YES] != "false",
         // Before the levels, talking over was a plain switch.
         interrupt = enumOr(p[INTERRUPT], if (p[TALK_OVER] == "false") app.homeydash.agent.Interrupt.Off else app.homeydash.agent.Interrupt.Clear),
         strangersAreGuests = p[STRANGERS] == "true",
@@ -105,6 +106,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[VOLUME] = s.speakerVolume.toString()
         p[SPEAK] = s.speak.toString()
         p[LIVE_SPEECH] = s.liveSpeech.toString()
+        p[QUICK_YES] = s.quickYes.toString()
         p[INTERRUPT] = s.interrupt.name
         p[STRANGERS] = s.strangersAreGuests.toString()
         p[WAKE] = s.wake.toString()
@@ -184,6 +186,7 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val WAKE_NAME = stringPreferencesKey("wake_name")
         val KNOWN_VOICES = stringPreferencesKey("known_voices")
         val LIVE_SPEECH = stringPreferencesKey("live_speech")
+        val QUICK_YES = stringPreferencesKey("quick_yes")
         val TALK_OVER = stringPreferencesKey("talk_over")
         val INTERRUPT = stringPreferencesKey("interrupt")
         val FOLLOW_UP = stringPreferencesKey("follow_up")

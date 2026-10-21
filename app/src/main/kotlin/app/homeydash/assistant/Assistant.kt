@@ -376,6 +376,7 @@ class Assistant(
                     // A conversation that has gone quiet is squeezed into a few facts first, then the rules are read ahead again.
                     runCatching { services.agent.digest(settings) }.onFailure { if (it is CancellationException) throw it }
                     warmBrain(followUp = false)
+                    prepareQuickSounds()
                 }
             }
         }
@@ -459,6 +460,7 @@ class Assistant(
             if (start == null) start = services.wake.afterName()
         }
         job?.cancel()
+        ackAt = 0L
         services.onActive?.invoke()
         warmUp()
         showAsChosen()
@@ -563,7 +565,10 @@ class Assistant(
                 }
                 partial = "…"
                 job?.cancel()
+                // The question is over but still has to be written down: a quick "ja" now
+                // says it was heard, instead of seconds of silence.
                 val noticed = SystemClock.elapsedRealtime()
+                quickYes(null)
                 job = scope.launch {
                     val text = try {
                         services.transcriber.transcribe(s, wav, code, hint).text
@@ -643,6 +648,7 @@ class Assistant(
                 val ask = closing ?: text
                 if (closing != null) services.trace("listen", "\"$text\": answers \"$ask\", then ends the conversation.", false)
                 swedishUntil = if (app.homeydash.agent.Confirmation.looksSwedish(ask)) SystemClock.elapsedRealtime() + SWEDISH_FOR_MS else 0L
+                quickYes(ask)
                 send(ask, byVoice = true)
             }
         }
@@ -913,16 +919,19 @@ class Assistant(
         hearMs = null
         pauseMs = null
         timing = clock
+        // A quick "ja" already answered the end of the question: it is the first sound heard.
+        val acked = ackAt.also { ackAt = 0L }
+        if (acked != 0L && byVoice) {
+            clock.soundAt = acked
+            clock.filler = true
+        }
         job = scope.launch {
             state = AssistantState.Thinking
             // Talking like a person: the answer is spoken while the AI still writes it, and a
             // short "hmm" fills the silence when it takes a moment.
             val live = if (byVoice && talksLive(settings)) Channel<String>(Channel.UNLIMITED) else null
-            val swedish = when (settings.answers) {
-                app.homeydash.agent.Language.Swedish -> true
-                app.homeydash.agent.Language.English -> false
-                app.homeydash.agent.Language.Auto -> app.homeydash.agent.Confirmation.looksSwedish(text)
-            }
+            val swedish = answersSwedish(text)
+            lastSwedish = swedish
             val begun = java.util.concurrent.atomic.AtomicBoolean(false)
             var filler: String? = null
             caption = null
@@ -952,7 +961,7 @@ class Assistant(
             // Not for follow-ups: those may turn out to be people talking to each other.
             val hmm = live?.takeIf { !followUp }?.let { pieces ->
                 launch {
-                    delay(app.homeydash.agent.ThinkingSounds.AFTER_MS)
+                    delay(if (acked != 0L) app.homeydash.agent.ThinkingSounds.AFTER_ACK_MS else app.homeydash.agent.ThinkingSounds.AFTER_MS)
                     // Only one made ahead of time: making it now would come too late.
                     val ready = app.homeydash.agent.ThinkingSounds.all(settings.persona, swedish).filter { services.output.hasSound(it, swedish, settings.voice) }
                     val sound = app.homeydash.agent.ThinkingSounds.pick(ready, lastHmm)
@@ -990,7 +999,86 @@ class Assistant(
             show(reply)
             // The "hmm" sounds for next time, made in this voice once the answer is done, so making
             // them never holds up a question on the computer's voice server.
-            if (live != null) services.output.prepareSounds(app.homeydash.agent.ThinkingSounds.all(settings.persona, swedish), swedish, settings.voice)
+            if (live != null) services.output.prepareSounds(app.homeydash.agent.ThinkingSounds.everything(settings.persona, swedish), swedish, settings.voice)
+        }
+    }
+
+    /** Whether the answer to [text] is in Swedish, by the owner's choice or, on Auto, by its words. */
+    private fun answersSwedish(text: String?): Boolean = when (settings.answers) {
+        app.homeydash.agent.Language.Swedish -> true
+        app.homeydash.agent.Language.English -> false
+        app.homeydash.agent.Language.Auto -> text?.let { app.homeydash.agent.Confirmation.looksSwedish(it) }
+            ?: (lastSwedish || SystemClock.elapsedRealtime() < swedishUntil)
+    }
+
+    /** When the quick "ja" for the question being answered was said; 0 when none was. */
+    private var ackAt = 0L
+    private var lastAck: String? = null
+    /** The language of the last answer, for a quick "ja" said before the question is written down. */
+    private var lastSwedish = true
+
+    /**
+     * Says a quick "ja", "okej" or "japp" in the voice that talks now, the moment the question
+     * ends ([AgentSettings.quickYes]), like a person shows they heard before they think. [text]
+     * is the question when it is already written down, null when it isn't yet. Only sounds made
+     * ahead of time are said (making one now would come too late), and not for follow-ups (they may be
+     * people talking to each other) or when answers usually come sooner than a "ja" would help.
+     */
+    private fun quickYes(text: String?) {
+        val s = settings
+        if (ackAt != 0L || !s.quickYes || !talksLive(s) || conversing) return
+        val memory = s.access(Secret.Memory) != Access.Off
+        val usual = if (memory) app.homeydash.agent.Memory.usualWait(services.memory.data.value.facts, s.mode.name) else null
+        if (!app.homeydash.agent.ThinkingSounds.wantsAck(usual)) return
+        val swedish = answersSwedish(text)
+        val options = app.homeydash.agent.ThinkingSounds.acks(s.persona, swedish)
+        val ready = options.filter { services.output.hasSound(it, swedish, s.voice) }
+        if (ready.size < options.size) services.output.prepareSounds(app.homeydash.agent.ThinkingSounds.everything(s.persona, swedish), swedish, s.voice)
+        val said = app.homeydash.agent.ThinkingSounds.pick(ready, lastAck) ?: return
+        val pcm = services.output.prepared(said, swedish, s.voice) ?: return
+        if (services.output.playNow(pcm) <= 0) return
+        lastAck = said
+        ackAt = SystemClock.elapsedRealtime()
+        services.trace("voice", "Said \"$said\" as the question ended" + (usual?.let { " (answers usually start %.1f s after)".format(it / 1000.0) } ?: "") + ".", false)
+    }
+
+    /**
+     * Makes every quick sound ("ja", "hmm", "ja?") ahead of time, while nobody talks, for each
+     * character in use and each voice people picked for them, so even the first question after
+     * a new voice gets its "ja" at once. Each sound is kept, so this is done once per voice.
+     */
+    private fun prepareQuickSounds() {
+        val s = services.settings.value
+        if (!s.speak || !s.liveSpeech) return
+        val languages = when (s.answers) {
+            app.homeydash.agent.Language.Swedish -> listOf(true)
+            app.homeydash.agent.Language.English -> listOf(false)
+            app.homeydash.agent.Language.Auto -> listOf(true, false)
+        }
+        val people = services.faces.people.value
+        val talking = s.wakeNames(people).map { s.talkingAs(s.characterNamed(it)) } +
+            people.flatMap { person -> person.characters.map { s.talkingAs(it, person) } }
+        talking.distinctBy { it.persona to it.voice }.forEach { t ->
+            for (swedish in languages) {
+                // Alma only speaks Swedish.
+                if (!swedish && t.voice == app.homeydash.agent.VoiceStyle.Alma) continue
+                services.output.prepareSounds(app.homeydash.agent.ThinkingSounds.everything(t.persona, swedish), swedish, t.voice)
+            }
+        }
+    }
+
+    /**
+     * How long the answer took to start being said after the question ended, for the memory
+     * ("answers from the local AI start about 1.8 s after someone stops talking"), so a quick
+     * "ja" is only said where the wait is long enough to need one.
+     */
+    private fun learnWait(clock: Timing) {
+        val end = clock.speechEnd ?: return
+        val first = clock.sentenceAt.takeIf { it != 0L } ?: return
+        val s = services.settings.value
+        if (s.access(Secret.Memory) == Access.Off || first <= end) return
+        scope.launch {
+            runCatching { services.memory.learn(listOf(app.homeydash.agent.Memory.answerWait(first - end, s.mode.name))) }
         }
     }
 
@@ -1153,6 +1241,7 @@ class Assistant(
      * what was said, the AI's first word and speed, and when the voice started.
      */
     private fun timed(clock: Timing, reply: AgentReply) {
+        learnWait(clock)
         fun since(at: Long) = at.takeIf { it != 0L }?.let { it - clock.askedAt }
         val speed = app.homeydash.agent.Speed(
             hearMs = clock.hearMs,

@@ -380,4 +380,33 @@ class SaidNameTest {
         val squeezed = SaidName.distance(taught, SaidName.heard(word(listOf(120.0, 125.0, 130.0, 110.0), nova, msEach = 30, seed = 2)))!!.distance
         assertTrue("%.3f vs %.3f".format(again, squeezed), squeezed > again + 0.1f)
     }
+
+    @Test
+    fun `answer waits keep one running mean per brain, and decide whether a quick yes is said`() {
+        assertEquals(null, Memory.usualWait(emptyList(), "Local"))
+        assertTrue(ThinkingSounds.wantsAck(null))
+        var data = Memory.merge(MemoryData(), Memory.answerWait(2_000, "Local"), 1L)
+        data = Memory.merge(data, Memory.answerWait(1_200, "Local"), 2L)
+        data = Memory.merge(data, Memory.answerWait(400, "Internet"), 3L)
+        val local = data.facts.filter { it.subject == "Answers from the local AI" }
+        assertEquals(1, local.size)
+        assertEquals(1_800L, Memory.usualWait(data.facts, "Local"))
+        assertEquals("1.8 s after someone stops talking", local[0].obj)
+        assertEquals(400L, Memory.usualWait(data.facts, "Internet"))
+        assertTrue(ThinkingSounds.wantsAck(Memory.usualWait(data.facts, "Local")))
+        assertTrue(!ThinkingSounds.wantsAck(Memory.usualWait(data.facts, "Internet")))
+        // Pause habits still keep theirs.
+        data = Memory.merge(data, Memory.pauseHabit(800, Asker("g", "Gabriel"), ZonedDateTime.of(2026, 10, 21, 12, 0, 0, 0, ZoneId.of("Europe/Stockholm"))), 4L)
+        assertEquals("0.8 s between thoughts", data.facts.last().obj)
+    }
+
+    @Test
+    fun `quick yes words are real words a voice can say, and are made with the rest`() {
+        for (p in Persona.entries) for (sv in listOf(true, false)) {
+            val acks = ThinkingSounds.acks(p, sv)
+            assertTrue(acks.isNotEmpty())
+            acks.forEach { assertEquals(it, ThinkingSounds.sayable(it, sv)) }
+            assertTrue(ThinkingSounds.everything(p, sv).containsAll(acks + ThinkingSounds.all(p, sv) + ThinkingSounds.answers(p, sv)))
+        }
+    }
 }

@@ -271,6 +271,11 @@ data class AgentSettings(
      * small "hmm" when it takes a moment. Only for answers on the tablet's own speaker.
      */
     val liveSpeech: Boolean = true,
+    /**
+     * A quick "ja" or "okej" in its own voice the moment someone stops talking, while the
+     * question is written down and the AI thinks. Made once per voice and kept, so it is instant.
+     */
+    val quickYes: Boolean = true,
     /** Whether, and how readily, someone whose voice the tablet knows can talk over an answer to stop it. */
     val interrupt: Interrupt = Interrupt.Clear,
     /** Strangers at the tablet (face recognition sees someone it doesn't know) only get guest access. */

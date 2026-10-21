@@ -401,6 +401,14 @@ private fun VoicePage(services: AssistantServices, settings: AgentSettings, upda
                 "On the tablet's own speaker; a Sonos gets the whole answer at once.",
             settings.liveSpeech,
         ) { on -> update { it.copy(liveSpeech = on) } }
+        if (settings.liveSpeech) {
+            SwitchRow(
+                "Quick \"ja\" when you stop",
+                "Says \"ja\", \"okej\" or \"japp\" in the character's own voice right as you finish, while it writes down and thinks about the question. " +
+                    "Each voice's sounds are made once and kept on the tablet, so they play at once. Skipped when answers usually come quicker than that.",
+                settings.quickYes,
+            ) { on -> update { it.copy(quickYes = on) } }
+        }
     }
     LookAndVoice(services, settings, update)
     SettingsBox("Speaker") {
