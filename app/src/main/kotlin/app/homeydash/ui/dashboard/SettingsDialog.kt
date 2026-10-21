@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import app.homeydash.ui.assistant.Hint
 import app.homeydash.ui.components.dialogSize
 import app.homeydash.ui.theme.Palette
 import androidx.compose.foundation.layout.Arrangement
@@ -238,10 +239,8 @@ internal fun AppearanceSettings(
                 )
             }
         }
-        Text(
+        Hint(
             "Fit screen sizes cards and text to this tablet's screen. Press and hold a card to hide it, move it or put it in a group.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
     }
     SettingsBox("Highlight") {
@@ -288,10 +287,8 @@ internal fun AppearanceSettings(
             Text("Home background", style = MaterialTheme.typography.labelLarge, color = g.fg, modifier = Modifier.weight(1f).padding(start = 10.dp))
             SymIcon(Sym.chevronRight, size = 20.dp, tint = g.muted)
         }
-        Text(
+        Hint(
             "Each room can have its own background: open the room and tap the picture button.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
     }
 }
@@ -312,10 +309,8 @@ internal fun HomeySettings(
             style = MaterialTheme.typography.bodyLarge,
             color = g.fg,
         )
-        Text(
+        Hint(
             "Devices you hide in the Homey app stay off this dashboard. You can also hide devices on this tablet only.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
         )
         // Two to a row, so the list of pages takes half the height.
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -438,7 +433,7 @@ private fun SettingSwitch(title: String, detail: String, on: Boolean, enabled: B
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.labelLarge, color = g.fg)
-            Text(detail, style = MaterialTheme.typography.bodyMedium, color = g.muted)
+            Hint(detail)
         }
         Toggle(on, onClick = { onChange(!on) }.takeIf { enabled })
     }

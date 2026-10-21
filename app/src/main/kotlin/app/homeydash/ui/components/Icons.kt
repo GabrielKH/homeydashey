@@ -81,6 +81,7 @@ object Sym {
     val floorLamp = Ic(R.drawable.ph_lamp, R.drawable.ph_lamp_fill)
     val garage = Ic(R.drawable.ph_garage, R.drawable.ph_garage_fill)
     val garageDoor = Ic(R.drawable.ph_garage, R.drawable.ph_garage_fill)
+    val info = Ic(R.drawable.ph_info, R.drawable.ph_info_fill)
     val heat = Ic(R.drawable.ph_fire, R.drawable.ph_fire_fill)
     val heatPump = Ic(R.drawable.ph_thermometer_hot, R.drawable.ph_thermometer_hot_fill)
     val home = Ic(R.drawable.ph_house, R.drawable.ph_house_fill)

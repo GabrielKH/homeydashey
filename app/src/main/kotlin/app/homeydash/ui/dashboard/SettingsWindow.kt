@@ -64,12 +64,13 @@ private val GROUPS = listOf(
     ),
     "Assistant" to listOf(
         Category("main", Sym.face, "Assistant"),
-        Category("voice", Sym.speaker, "Voice and look"),
+        Category("voice", Sym.speaker, "Voice and character"),
         Category("listen", Sym.mic, "Listening"),
         Category("brain", Sym.autoAwesome, "AI and servers"),
         Category("routines", Sym.flow, "Routines"),
         Category("memory", Sym.lightbulb, "Memory"),
         Category("privacy", Sym.shieldLock, "Privacy and security"),
+        Category("phones", Sym.phone, "Find my phone"),
         Category("spotify", Sym.musicNote, "Spotify on Sonos"),
     ),
     "App" to listOf(
@@ -126,18 +127,21 @@ fun SettingsWindow(
     AppDialog(onDismiss) { Compact(WindowScale) {
         BackHandler(onBack = back)
         val screen = screenSizeDp()
+        // One glass panel, the menu and the page split by a hairline, like a tablet's own settings.
         Row(
             // The whole screen, with the same margin as the dashboard around it.
-            Modifier.width(screen.width - 32.dp).height(screen.height - 32.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier
+                .width(screen.width - 32.dp)
+                .height(screen.height - 32.dp)
+                .background(g.wallBase, PanelShape)
+                .glass(),
         ) {
             Menu(selected = parent ?: section, compact = compact, onCompact = onCompact, onPick = pick)
+            Box(Modifier.width(1.dp).fillMaxHeight().background(g.glassLine))
             Column(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(g.wallBase, PanelShape)
-                    .glass()
                     .padding(vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -181,8 +185,6 @@ private fun Menu(selected: String, compact: Boolean, onCompact: (Boolean) -> Uni
         Modifier
             .width(width)
             .fillMaxHeight()
-            .background(g.wallBase, PanelShape)
-            .glass()
             .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = 18.dp),
         horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
     ) {

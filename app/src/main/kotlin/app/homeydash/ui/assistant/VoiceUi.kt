@@ -342,12 +342,10 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
             Text("Wake by name", style = MaterialTheme.typography.labelLarge, color = g.fg)
-            Text(
+            Hint(
                 "Say \"Hey ${settings.wakeName.trim().ifEmpty { "Nova" }}\" and the assistant starts listening, like \"Hey Siri\". " +
                     others.joinToString("") { "\"Hey $it\" wakes the character someone picked under People, for voices it knows. " } +
                     "Heard on the tablet by a small offline model that only knows the name; nothing else is recorded or sent.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
             )
         }
         Toggle(settings.wake, onClick = {
@@ -386,23 +384,19 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
     NameField(settings.wakeName) { name ->
         update { it.copy(wakeName = name, novaName = if (it.persona == app.homeydash.agent.Persona.Nova && name.isNotBlank()) name.trim() else it.novaName) }
     }
-    Text(
+    Hint(
         when {
             WakeName.clean(settings.wakeName).isEmpty() -> "Give the assistant a name."
             else -> "Use a name of two syllables or more that isn't said much at home. Any Swedish or English question works after it. " +
                 "Teaching your voice under People also teaches it how you say the name, so it is found even when the spotter misses it."
         },
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
             Text("Only voices it knows", style = MaterialTheme.typography.labelLarge, color = g.fg)
-            Text(
+            Hint(
                 "Only wake for people whose voice is taught under People. Who is speaking also sets what they may do, " +
                     "when \"Face and voice recognition\" is on.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
             )
         }
         Toggle(settings.onlyKnownVoices, onClick = { update { it.copy(onlyKnownVoices = !it.onlyKnownVoices) } })
@@ -444,12 +438,10 @@ fun WakeSettings(services: AssistantServices, settings: AgentSettings, update: (
         )
         Text("${settings.micSensitivity}%", style = MaterialTheme.typography.labelLarge, color = g.fg)
     }
-    Text(
+    Hint(
         "Higher hears the name from across the room but accepts more wakes by mistake, for example from the TV: " +
             "it sets both the microphone gain and how sure the wake judge must be (about 1 false wake in 200 spotted names at the lowest, 1 in 20 at the highest). " +
             "It listens through the tablet's voice input, which mixes its microphones where the tablet supports it, set for a wide room.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     WakeStrictness(services, settings)
     ListenTest(services, settings)
@@ -468,12 +460,10 @@ private fun WakeStrictness(services: AssistantServices, settings: AgentSettings)
     val rows = people.flatMap { p -> names.filter { n -> p.printsFor(n).isNotEmpty() || p.saidFor(n).isNotEmpty() }.map { p to it } }
     if (rows.isEmpty()) return
     Text("How sure the judge must be", style = MaterialTheme.typography.labelLarge, color = g.fg)
-    Text(
+    Hint(
         "For each voice and name. At 50 % your voice plus the name said the way you taught it wakes it. " +
             "Higher needs more: around 75 % it usually also wants the spotter or Whisper to hear the name, which stops singing and made-up words but can take a moment longer. " +
             "Lower wakes on less. Use Test listening below to see where your own calls land.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = g.muted,
     )
     rows.forEach { (person, name) ->
         val value = person.strictnessFor(name)
@@ -516,10 +506,8 @@ private fun ListenTest(services: AssistantServices, settings: AgentSettings) {
             color = g.fg,
             modifier = Modifier.pressable({ open = !open }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
         )
-        Text(
+        Hint(
             if (open) "Say the name, other things, and let the TV play. Nothing wakes while testing." else "Meters for sound, the name and the wake judge, with the words it heard.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = g.muted,
             modifier = Modifier.weight(1f),
         )
     }
@@ -596,10 +584,8 @@ private fun ListenTest(services: AssistantServices, settings: AgentSettings) {
     lines.forEach { line ->
         Column(Modifier.fillMaxWidth().glass(androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("\"${line.words}\"", style = MaterialTheme.typography.labelLarge, color = g.fg)
-            Text(
+            Hint(
                 listOfNotNull(line.spotted ?: "no name caught", line.said?.let { "said like taught: $it" }).joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium,
-                color = g.muted,
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Judge", style = MaterialTheme.typography.bodyMedium, color = g.muted)
