@@ -32,7 +32,7 @@ object CalendarBook {
     const val GUESS = ""
 
     private val FAMILY_WORDS = setOf("family", "familj", "familjen", "familjens", "families", "hem", "home", "house", "huset", "shared", "delad", "gemensam")
-    private val MINE = Regex("""^(mine|my|my own|my calendar|min|mitt|min egen|min kalender|egen|own|me|jag|mig)$""", RegexOption.IGNORE_CASE)
+    private val MINE = Regex("""^(mine|my|min|mitt|own|egen|me|jag|mig)( own| egen)?( calendar| kalender| kalendern)?$""", RegexOption.IGNORE_CASE)
     private val FAMILY = Regex("""^(the )?(family|familj|familjen|familjens|familjekalender|familjekalendern|family calendar|house|huset|shared|alla|everyone)( calendar| kalender)?$""", RegexOption.IGNORE_CASE)
     private val TIME = Regex("""^(\d{1,2})[:.](\d{2})$""")
     private val HOUR = Regex("""^(\d{1,2})$""")
@@ -111,6 +111,37 @@ object CalendarBook {
                 }
             }
         }
+    }
+
+    private val WEEKDAYS = listOf(
+        listOf("monday", "måndag", "mandag"), listOf("tuesday", "tisdag"), listOf("wednesday", "onsdag"), listOf("thursday", "torsdag"),
+        listOf("friday", "fredag"), listOf("saturday", "lördag", "lordag"), listOf("sunday", "söndag", "sondag"),
+    )
+    private val NEXT_WEEK = Regex("""\b(next week|nästa vecka|nasta vecka)\b""")
+
+    /**
+     * The day [text] names: yyyy-mm-dd, today, tomorrow, the day after tomorrow, or a weekday
+     * ("måndag", "next Monday", "på måndag nästa vecka"), which is the next one after today, or
+     * the one in next week when that is said. A small model works dates out wrong ("på måndag"
+     * became tomorrow), so the tool takes the words as said and works the date out itself.
+     */
+    fun day(text: String, today: LocalDate): LocalDate? {
+        val t = text.trim().lowercase()
+        if (t.isEmpty()) return null
+        runCatching { LocalDate.parse(t) }.getOrNull()?.let { return it }
+        val words = t.replace(Regex("""[^\p{L}\d ]"""), " ").split(Regex("\\s+")).filter { it.isNotEmpty() }
+        when {
+            t.contains("övermorgon") || t.contains("overmorgon") || t.contains("day after tomorrow") -> return today.plusDays(2)
+            t.contains("imorgon") || t.contains("i morgon") || t.contains("tomorrow") -> return today.plusDays(1)
+            t.contains("idag") || t.contains("i dag") || t.contains("today") || t.contains("ikväll") || t.contains("tonight") -> return today
+        }
+        val index = WEEKDAYS.indexOfFirst { names -> words.any { w -> names.any { w == it || w == it + "en" || w == it + "s" } } }
+        if (index < 0) return null
+        val wanted = java.time.DayOfWeek.of(index + 1)
+        if (NEXT_WEEK.containsMatchIn(t)) {
+            return today.plusWeeks(1).with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).with(java.time.temporal.TemporalAdjusters.nextOrSame(wanted))
+        }
+        return today.with(java.time.temporal.TemporalAdjusters.next(wanted))
     }
 
     /** "18:00", "18.30", "6" → a time; "all day" and blank → null; a failure otherwise. */

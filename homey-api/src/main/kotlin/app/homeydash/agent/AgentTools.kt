@@ -166,7 +166,7 @@ class AgentTools(
             "Add an event to a calendar: the asker's own (\"min kalender\"), the family calendar, or someone else's by name. Asks for a yes first.",
         ) {
             string("title", "What it is, short, e.g. Tandläkare or Padel with Erik")
-            string("date", "The day, yyyy-mm-dd, worked out from today in the note")
+            string("date", "The day as the user said it: today, tomorrow, a weekday (\"måndag\", \"next friday\"), or yyyy-mm-dd for a date")
             string("time", "Start, HH:mm 24-hour; \"all day\" for an all-day event; leave out when not said")
             number("minutes", "How long; leave out when not said")
             string("in_calendar", "\"mine\", \"family\", or a person's name; leave out when not said")
@@ -939,7 +939,7 @@ class AgentTools(
     private suspend fun addEvent(title: String, date: String, time: String, minutes: Double?, whose: String, location: String, timeSaid: Boolean): ToolResult {
         if (!view.allows(Secret.AddEvents)) return ok("Adding calendar events is switched off under the assistant's Privacy and security settings.")
         val name = title.trim().ifEmpty { return ok("What should the event be called?") }
-        val day = runCatching { LocalDate.parse(date.trim()) }.getOrNull() ?: return ok("Give the day as yyyy-mm-dd, worked out from today in the note.")
+        val day = CalendarBook.day(date, today()) ?: return ok("Which day? Give a weekday, today, tomorrow or yyyy-mm-dd.")
         val s = view.settings
         val usual = memory?.takeIf { s.access(Secret.Memory) != Access.Off }?.usualEvent(name, s.asker?.id)
         val at = if (timeSaid && time.isNotBlank()) CalendarBook.time(time).getOrElse { return ok(it.message.orEmpty()) } else usual?.time
@@ -953,7 +953,8 @@ class AgentTools(
         val where = CalendarBook.label(calendar, calendars, s)
         val said = CalendarBook.describe(event, today())
         return ToolResult(
-            "Would add $said to $where. Say it back in a short sentence and ask the user to confirm.",
+            "Not added yet: it waits for the user's yes. Ask only this, once, in the user's language, with the day in words: " +
+                "add $said to $where? If they then change something, call add_event again with the change.",
             pending = PendingAction("Add $said to $where?", tapOnly = false) {
                 dashboard.addEvent(event)
                 if (s.access(Secret.Memory) != Access.Off) memory?.learn(CalendarBook.habit(event, where, s.asker, clock()))

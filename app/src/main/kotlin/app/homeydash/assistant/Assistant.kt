@@ -1200,7 +1200,9 @@ class Assistant(
             calendarAccounts = known.filter { it.calendar.isNotBlank() }.associate { it.id to it.calendar },
         )
         if (s.access(Secret.Faces) == Access.Off) return s to null
-        val byVoice = voice?.takeIf { it.person != null && SystemClock.elapsedRealtime() - it.at < 60_000 }
+        // The voice that woke it speaks for the whole conversation, follow-ups too, so "min kalender"
+        // a minute and a half in is still theirs.
+        val byVoice = voice?.takeIf { it.person != null && (conversing || SystemClock.elapsedRealtime() - it.at < 60_000) }
         val seen = byVoice ?: services.faces.current() ?: return s to null
         val person = seen.person
         return when {

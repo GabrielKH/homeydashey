@@ -44,6 +44,7 @@ class CalendarBookTest {
     fun mineIsTheAskersAccountAndFamilyIsFoundByName() {
         assertEquals("1", picked(CalendarBook.pick("mine", calendars, settings())))
         assertEquals("1", picked(CalendarBook.pick("min kalender", calendars, settings())))
+        assertEquals("1", picked(CalendarBook.pick("my own calendar", calendars, settings())))
         assertEquals("2", picked(CalendarBook.pick("family", calendars, settings())))
         assertEquals("2", picked(CalendarBook.pick("familjekalendern", calendars, settings())))
         assertEquals("3", picked(CalendarBook.pick("Annas kalender", calendars, settings())))
@@ -75,6 +76,18 @@ class CalendarBookTest {
         assertEquals(90, usual.minutes)
         assertEquals("2", usual.calendarId)
         assertNull(CalendarBook.usual(listOf(habit), "Tandläkare", "u-gabriel"))
+    }
+
+    @Test
+    fun daysAreWorkedOutFromTheWordsSaid() {
+        // 2026-10-21 is a Wednesday.
+        assertEquals(LocalDate.of(2026, 10, 26), CalendarBook.day("måndag", today))
+        assertEquals(LocalDate.of(2026, 10, 26), CalendarBook.day("next Monday", today))
+        assertEquals(LocalDate.of(2026, 10, 28), CalendarBook.day("onsdag", today))
+        assertEquals(LocalDate.of(2026, 10, 30), CalendarBook.day("fredag nästa vecka", today))
+        assertEquals(LocalDate.of(2026, 10, 22), CalendarBook.day("imorgon", today))
+        assertEquals(LocalDate.of(2026, 11, 3), CalendarBook.day("2026-11-03", today))
+        assertNull(CalendarBook.day("snart", today))
     }
 
     @Test
@@ -120,7 +133,7 @@ class CalendarBookTest {
         val dash = Dash()
         val view = HomeView.build(emptyMap(), emptyMap(), emptyMap(), emptySet(), settings(), true)
         val tools = AgentTools(view, Home(), dash, today = { today })
-        val r = tools.run(call("title" to "Tandläkare", "date" to "2026-10-23", "time" to "14:00", "in_calendar" to "min"))
+        val r = tools.run(call("title" to "Tandläkare", "date" to "fredag", "time" to "14:00", "in_calendar" to "min"))
         assertTrue(r.text, r.text.contains("Gabriel's calendar") && r.text.contains("14:00"))
         assertTrue(dash.added.isEmpty())
         assertEquals("Added to Gabriel's calendar.", r.pending!!.run())
