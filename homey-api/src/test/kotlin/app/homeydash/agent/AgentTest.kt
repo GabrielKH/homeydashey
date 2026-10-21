@@ -290,6 +290,12 @@ class AgentTest {
         assertTrue(tools.run(call("play_music", "player" to alias, "query" to "P1")).text.contains("on Kök"))
     }
 
+    @Test fun `music with no player named plays on a speaker that can`() = runTest {
+        val v = HomeView.build(zones, media, emptyMap(), emptySet(), AgentSettings(), true)
+        val tools = AgentTools(v, MediaHome(), FakeDashboard())
+        assertTrue(tools.run(call("play_music", "query" to "P1")).text.contains("on Kök"))
+    }
+
     @Test fun `the endpointer hears a question start and stop`() {
         val e = Endpointer(16000, silenceMs = 500, noSpeechMs = 3000, patienceMs = 1500)
         val quiet = ShortArray(1600) { ((it % 7) - 3).toShort() }

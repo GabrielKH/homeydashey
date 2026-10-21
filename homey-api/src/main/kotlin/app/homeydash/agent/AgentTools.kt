@@ -523,13 +523,27 @@ class AgentTools(
         return ok("Started ${flow.name}.")
     }
 
+    /**
+     * The player meant when the model names none ("play a chill playlist", "save it"): the one
+     * music was last played on, else one playing now, else one that can search Spotify, in the
+     * kitchen (where the tablet hangs) first.
+     */
+    private fun defaultPlayer(): AgentDevice? {
+        val players = view.devices.filter { sources(it.id).isNotEmpty() }
+        lastPlayer?.let { id -> players.firstOrNull { it.id == id } }?.let { return it }
+        players.firstOrNull { it.capability("speaker_playing")?.value?.toString() == "true" }?.let { return it }
+        val spotify = players.filter { p -> sources(p.id).any { it.catalogue } }.ifEmpty { players }
+        return spotify.firstOrNull { NameMatch.normalize(it.room.orEmpty()) in KITCHEN } ?: spotify.firstOrNull()
+    }
+
     private suspend fun playMusic(alias: String, query: String, kind: String? = null): ToolResult {
-        val asked = view.device(alias) ?: return unknown(alias)
+        val asked = (if (alias.isBlank()) defaultPlayer() else view.device(alias)) ?: return unknown(alias)
         val d = musicPlayer(asked) ?: return ok(
             "${asked.name} can't play music. These can: " +
                 view.devices.filter { sources(it.id).isNotEmpty() }.joinToString { "${it.alias} (${it.name}${it.room?.let { r -> ", $r" }.orEmpty()})" } + ".",
         )
         val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
+        lastPlayer = d.id
         return ok("Playing $played on ${d.name}.")
     }
 
@@ -539,7 +553,7 @@ class AgentTools(
      * so any speaker that has the card will do, the one asked for first.
      */
     private suspend fun saveFavourite(alias: String, query: String): ToolResult {
-        val asked = view.device(alias) ?: return unknown(alias)
+        val asked = (if (alias.isBlank()) defaultPlayer() else view.device(alias)) ?: return unknown(alias)
         val first = listOfNotNull(musicPlayer(asked), asked) + view.devices
         val holder = first.firstOrNull { dev -> home.deviceActions(dev.id).any { it.cardId == app.homeydash.sonos.SonosCards.SAVE } }
             ?: return ok("No Sonos speaker was found on the Wi-Fi, so nothing can be added to the Sonos favourites." + (home.missingActions(asked.id)?.let { " ($it)" }.orEmpty()))
@@ -1203,6 +1217,10 @@ class AgentTools(
 
         /** How a tool asks for a device: by name, since small models mix up alias numbers. */
         private const val DEVICE = "The device's name as listed, with its room after a comma when several share the name, e.g. \"Taklampa, Sovrum\""
+
+        /** The player music was last played on, for a play_music or save_favourite that names none. */
+        @Volatile private var lastPlayer: String? = null
+        private val KITCHEN = setOf("kok", "koket", "kitchen")
 
         /** What a model calls a speaker's favourites when it guesses an action name. */
         private val FAVOURITE = Regex("""(?i)(play_?)?(favou?rites?|favorit(er)?|radio|station|kanal)""")
