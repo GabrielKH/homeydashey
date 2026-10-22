@@ -43,13 +43,10 @@ class SpotifyTest {
         assertEquals(SpotifyHit.Kind.Playlist to "chill", SpotifySearch.parse("playlist my own chill"))
     }
 
-    @Test fun `knows Spotify's charts and podcasts by their everyday names`() {
-        assertEquals(listOf("Top 50 – Sverige"), SpotifySearch.chartsFor("topplistan").map { it.name })
-        assertEquals(listOf("Top 50 – Sverige"), SpotifySearch.chartsFor("top 50 sweden").map { it.name })
-        assertEquals(listOf("Top 50 – Global"), SpotifySearch.chartsFor("global top 50").map { it.name })
-        assertEquals(listOf("Top 50 – Global"), SpotifySearch.chartsFor("top 50", market = "US").map { it.name })
-        assertEquals(listOf("Today's Top Hits"), SpotifySearch.chartsFor("today's top hits").map { it.name })
-        assertEquals(emptyList<String>(), SpotifySearch.chartsFor("chill jazz").map { it.name })
+    @Test fun `knows podcasts, liked songs and filler words`() {
+        // Words that only say "something good" are left out of the search.
+        assertEquals(SpotifyHit.Kind.Track to "hiphop", SpotifySearch.parse("the best hiphop song right now"))
+        assertEquals(SpotifyHit.Kind.Track to "", SpotifySearch.parse("mina gillade låtar"))
         assertEquals(SpotifyHit.Kind.Show to "Alex och Sigge", SpotifySearch.parse("spela podden Alex och Sigge"))
         assertEquals(SpotifyHit.Kind.Show to "Sommar i P1", SpotifySearch.parse("senaste avsnittet av Sommar i P1"))
         assertEquals(SpotifyHit.Kind.Episode to "Naturen", SpotifySearch.parse("avsnittet Naturen"))
@@ -237,8 +234,9 @@ class SpotifyTest {
         // "min spellista" looks only among your own.
         assertEquals(listOf("Sommar i köket"), search.search("min spellista sommar").map { it.name })
         assertEquals("Your playlist · Gabriel", search.search("min spellista sommar").single().description)
-        // Without "my", your own match comes before the catalogue's.
-        assertEquals("Sommar i köket", search.search("playlist sommar").first().name)
+        // Without "my", your own only comes first when it's what was named; else Spotify's answer does.
+        assertEquals("Sommar i köket", search.search("playlist sommar i köket").first().name)
+        assertEquals(listOf("ABBA Gold", "Sommar i köket"), search.search("playlist sommar").map { it.name })
         assertTrue(tokenForms.first().contains("grant_type=refresh_token") && tokenForms.first().contains("refresh_token=old"))
         assertEquals("new", kept)
 

@@ -223,8 +223,6 @@ class SonosCards(
                         put("description", JsonPrimitive(hit.description))
                         hit.art?.let { put("art", JsonPrimitive(it)) }
                         if (hit.mine) put("mine", JsonPrimitive("true"))
-                        // One of Spotify's own charts, asked for by its everyday name ("topplistan").
-                        if (hit.by == "Spotify" && SpotifySearch.chartsFor(query).any { it.id == hit.id }) put("chart", JsonPrimitive("true"))
                     },
                 ),
             )

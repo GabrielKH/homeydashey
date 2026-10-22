@@ -25,7 +25,7 @@ data class SpotifyHit(
     val name: String,
     val by: String? = null,
     val art: String? = null,
-    /** One of the signed-in account's own playlists (made or followed), not something found in the catalogue. */
+    /** In the signed-in account's library (its playlists, saved albums and podcasts, liked songs), not just found in the catalogue. */
     val mine: Boolean = false,
 ) {
     enum class Kind(val label: String, val type: String) {
@@ -35,8 +35,15 @@ data class SpotifyHit(
         Episode("Episode", "episode"),
     }
 
-    /** "Song · ABBA", or "Your playlist · Gabriel", shown under the name. */
-    val description: String get() = listOfNotNull(if (mine) "Your playlist" else kind.label, by).joinToString(" · ")
+    /** "Song · ABBA", or "Your playlist · Gabriel", "Liked song · ABBA", shown under the name. */
+    val description: String get() = listOfNotNull(
+        when {
+            !mine -> kind.label
+            kind == Kind.Track -> "Liked song"
+            else -> "Your ${kind.label.lowercase()}"
+        },
+        by,
+    ).joinToString(" · ")
 }
 
 /** A Spotify developer app's client ID and secret. */
@@ -100,66 +107,83 @@ class SpotifySearch(
     }
 
     /**
-     * The signed-in account's own playlists (made or followed), read again after a few
-     * minutes; empty when nobody signed in or Spotify refused, with the reason in [ownTrouble].
+     * The signed-in account's library: its playlists (made or followed), saved albums, saved
+     * podcasts and liked songs, read again after a few minutes. Empty when nobody signed in;
+     * what Spotify refused is in [ownTrouble] (an older sign-in may only allow playlists).
      */
-    suspend fun myPlaylists(): List<SpotifyHit> {
+    suspend fun library(): List<SpotifyHit> {
         if (!signedIn) return emptyList()
         own?.takeIf { System.currentTimeMillis() - it.first < OWN_FOR_MS }?.let { return it.second }
-        return try {
-            val access = userAccess()
-            val all = mutableListOf<SpotifyHit>()
-            for (page in 0 until OWN_PAGES) {
-                val json = get("/v1/me/playlists", "limit" to "50", "offset" to (page * 50).toString(), access = access) as? JsonObject ?: break
-                val items = (json["items"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>()
-                all += items.mapNotNull { p ->
-                    hit(SpotifyHit.Kind.Playlist, p, (p["owner"] as? JsonObject)?.str("display_name"), image(p["images"]))?.copy(mine = true)
-                }
-                if (items.size < 50 || json["next"] !is JsonPrimitive || (json["next"] as JsonPrimitive).contentOrNull == null) break
-            }
-            ownTrouble = null
-            all.also { own = System.currentTimeMillis() to it }
+        val access = try {
+            userAccess()
         } catch (e: IOException) {
             ownTrouble = e.message
+            return emptyList()
+        }
+        val troubles = mutableListOf<String>()
+        suspend fun pages(path: String, read: (JsonObject) -> SpotifyHit?): List<SpotifyHit> = try {
+            val all = mutableListOf<SpotifyHit>()
+            for (page in 0 until OWN_PAGES) {
+                val json = get(path, "limit" to "50", "offset" to (page * 50).toString(), access = access) as? JsonObject ?: break
+                val items = (json["items"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>()
+                all += items.mapNotNull(read).map { it.copy(mine = true) }
+                if (items.size < 50 || (json["next"] as? JsonPrimitive)?.contentOrNull == null) break
+            }
+            all
+        } catch (e: IOException) {
+            troubles += e.message.orEmpty()
             emptyList()
         }
+        fun inner(o: JsonObject, key: String) = o[key] as? JsonObject
+        val playlists = pages("/v1/me/playlists") { p -> hit(SpotifyHit.Kind.Playlist, p, (p["owner"] as? JsonObject)?.str("display_name"), image(p["images"])) }
+        val albums = pages("/v1/me/albums") { o -> inner(o, "album")?.let { a -> hit(SpotifyHit.Kind.Album, a, artists(a), image(a["images"])) } }
+        val shows = pages("/v1/me/shows") { o -> inner(o, "show")?.let { sh -> hit(SpotifyHit.Kind.Show, sh, null, image(sh["images"])) } }
+        val liked = pages("/v1/me/tracks") { o ->
+            inner(o, "track")?.let { t -> hit(SpotifyHit.Kind.Track, t, artists(t), image((t["album"] as? JsonObject)?.get("images"))) }
+        }
+        ownTrouble = troubles.firstOrNull()?.let { "$it (sign in again to let the app read your albums, podcasts and liked songs)" }
+        return (playlists + albums + shows + liked).also { own = System.currentTimeMillis() to it }
     }
 
-    /** The account's own playlists that [query] names, best first; all of them for an empty query. */
-    suspend fun myPlaylists(query: String): List<SpotifyHit> {
-        val mine = myPlaylists()
-        if (query.isBlank()) return mine
+    /** The library's [kind] (any kind when null) that [query] names, best first, with how well; all of it for an empty query. */
+    suspend fun library(query: String, kind: SpotifyHit.Kind?): List<Pair<SpotifyHit, Double>> {
+        val mine = library().filter { kind == null || it.kind == kind }
+        if (query.isBlank()) return mine.map { it to 1.0 }
         val q = NameMatch.normalize(query)
-        return mine.map { it to maxOf(NameMatch.score(query, it.name), if (q.length >= 3 && NameMatch.normalize(it.name).contains(q)) 0.9 else 0.0) }
+        return mine.map { h ->
+            val text = listOfNotNull(h.name, h.by).joinToString(" ")
+            h to maxOf(NameMatch.score(query, h.name), NameMatch.score(query, text), if (q.length >= 3 && NameMatch.normalize(h.name).contains(q)) 0.7 else 0.0)
+        }
             .filter { it.second >= 0.5 }
             .sortedByDescending { it.second }
-            .map { it.first }
     }
 
     /**
      * What Spotify finds for [text], in the order to offer it. "Album …", "låten …",
-     * "spellistan …" and "artisten …" look for that kind only.
+     * "spellistan …", "podden …" and "artisten …" look for that kind only. The account's
+     * library comes first when it clearly has what was named, or when "my …" was said;
+     * otherwise the whole catalogue comes first, so "the best hiphop right now" isn't
+     * answered with a hiphop playlist of your own.
      */
     suspend fun search(text: String): List<SpotifyHit> {
         val (kind, query) = parse(text)
-        // "min spellista Sommar", "my playlists": only the account's own, when signed in.
-        val onlyMine = signedIn && kind == SpotifyHit.Kind.Playlist && MINE.containsMatchIn(text)
-        val mine = if (kind == null || kind == SpotifyHit.Kind.Playlist) myPlaylists(query) else emptyList()
-        if (onlyMine && mine.isNotEmpty()) return mine
-        // "Topplistan", "top 50 Sweden": Spotify's own charts, which its search no longer finds.
-        val charts = if (kind == null || kind == SpotifyHit.Kind.Playlist) chartsFor(query, market) else emptyList()
-        if (query.isBlank()) return mine
-        // Podcasts and episodes only when asked for, so a song search isn't crowded by them.
-        val kinds = kind?.let(::listOf) ?: listOf(SpotifyHit.Kind.Track, SpotifyHit.Kind.Album, SpotifyHit.Kind.Artist, SpotifyHit.Kind.Playlist)
+        val mineAsked = MINE.containsMatchIn(text) || LIKED.containsMatchIn(text)
+        val mine = library(query, kind)
+        // "min spellista Sommar", "mina poddar", "mina gillade låtar": only the library, when it has them.
+        if (signedIn && mineAsked && mine.isNotEmpty()) return mine.map { it.first }
+        if (query.isBlank()) return emptyList()
+        // Podcasts are searched too (episodes only when asked for), so a show is found by its name.
+        val kinds = kind?.let(::listOf)
+            ?: listOf(SpotifyHit.Kind.Track, SpotifyHit.Kind.Album, SpotifyHit.Kind.Artist, SpotifyHit.Kind.Playlist, SpotifyHit.Kind.Show)
         val json = get(
             "/v1/search",
             "q" to query, "type" to kinds.joinToString(",") { it.type },
             // Apps in development mode get at most 10 a kind.
             "limit" to (if (kind == null) "6" else "10"), "market" to market,
         )
-        // The account's own playlists that match come first: the catalogue search rarely finds them.
-        val first = charts + mine
-        return first + order(query, parseSearch(json), kind).filterNot { hit -> first.any { it.id == hit.id } }
+        val (strong, weak) = mine.partition { it.second >= OWN_IS_CLEAR }.let { (a, b) -> a.map { it.first } to b.map { it.first } }
+        val found = order(query, parseSearch(json), kind).filterNot { hit -> mine.any { it.first.id == hit.id } }
+        return strong + found + weak
     }
 
     /** The podcast [showId]'s newest episode, to play when someone asks for the podcast; null when Spotify lists none. */
@@ -250,36 +274,18 @@ class SpotifySearch(
     companion object {
         /** Where Spotify sends the sign-in back to; the same address the settings ask to add to the developer app. */
         const val REDIRECT = "http://127.0.0.1:8888/callback"
-        private const val SCOPES = "playlist-read-private playlist-read-collaborative"
+        private const val SCOPES = "playlist-read-private playlist-read-collaborative user-library-read"
         private const val OWN_FOR_MS = 5 * 60 * 1000L
         private const val OWN_PAGES = 4
 
         /** "my", "min", "mina", "egna": the account's own playlists are meant. */
         private val MINE = Regex("(?<!\\S)(my|mine|own|min|mina|mitt|egna)(?!\\S)", RegexOption.IGNORE_CASE)
 
-        /**
-         * Spotify's own chart playlists. Apps in development mode don't find Spotify's playlists
-         * by search any more, but the speakers play them with the household's own Spotify.
-         */
-        private class Chart(val id: String, val name: String, val words: Regex)
+        /** How well a library item must match before it comes ahead of the whole catalogue. */
+        private const val OWN_IS_CLEAR = 0.9
 
-        private const val TOP = "(top ?50|topp ?50|top ?list\\w*|topplist\\w*|charts?|mest spelade|most played|most streamed|top songs|topplatser)"
-        private val CHARTS = listOf(
-            Chart("37i9dQZEVXbLoATJ81JYXz", "Top 50 – Sverige", Regex("$TOP.*(sverige|sweden|svensk\\w*|swedish)|(sverige|sweden|svensk\\w*|swedish).*$TOP")),
-            Chart("37i9dQZEVXbMDoHDwVN2tF", "Top 50 – Global", Regex("$TOP.*(global|world|varlden|internationell\\w*)|(global|world|varlden|internationell\\w*).*$TOP")),
-            Chart("37i9dQZF1DXcBWIGoYBM5M", "Today's Top Hits", Regex("today ?s top hits|top hits|dagens hits|hits just nu|hottest hits")),
-        )
-
-        /** The charts [query] asks for; a bare "topplistan" or "top 50" is the home country's (Sweden's outside it). */
-        fun chartsFor(query: String, market: String = "SE"): List<SpotifyHit> {
-            val q = NameMatch.normalize(query)
-            if (q.isBlank()) return emptyList()
-            val named = CHARTS.filter { it.words.containsMatchIn(q) }
-            val charts = named.ifEmpty {
-                if (Regex("(^| )$TOP( |$)").containsMatchIn(q)) listOf(CHARTS[if (market == "SE") 0 else 1]) else emptyList()
-            }
-            return charts.map { SpotifyHit(SpotifyHit.Kind.Playlist, it.id, it.name, "Spotify") }
-        }
+        /** "Liked songs", "gillade låtar": the account's liked songs. */
+        private val LIKED = Regex("(?i)(liked songs|liked tracks|gillade (låtar|spår)|låtar jag gillat|mina låtar|my songs)")
 
         private val KIND_WORDS = listOf(
             SpotifyHit.Kind.Artist to "(songs by|music by|something by|låtar (med|av)|musik (med|av)|nå(go)?t (med|av)|the artist|the band|artisten|artist|bandet)",
@@ -291,6 +297,7 @@ class SpotifySearch(
             SpotifyHit.Kind.Episode to "(the episode|episode|avsnittet|avsnitt)",
         ).map { (kind, words) -> kind to Regex("(^|\\s)$words(\\s|$)", RegexOption.IGNORE_CASE) }
         private val SPACES = Regex("\\s+")
+        private val FILLER = Regex("(?i)(?<!\\S)(the best|best|bästa|right now|just nu|at the moment|för tillfället|currently)(?!\\S)")
         private val LEAD = Regex("^(play|spela( upp)?|put on|sätt på|starta)\\s+", RegexOption.IGNORE_CASE)
         private val TAIL = Regex("\\s+(on|from|på|från|i) spotify$", RegexOption.IGNORE_CASE)
         private val BY = Regex("\\s+(by|med|av)\\s+", RegexOption.IGNORE_CASE)
@@ -306,8 +313,14 @@ class SpotifySearch(
                     break
                 }
             }
-            // "min spellista Sommar" looks for "Sommar".
-            if (kind == SpotifyHit.Kind.Playlist) q = q.replace(MINE, " ").trim()
+            // "liked songs" are songs; "min spellista Sommar" looks for "Sommar".
+            if (LIKED.containsMatchIn(q)) {
+                kind = kind ?: SpotifyHit.Kind.Track
+                q = q.replace(LIKED, " ").trim()
+            }
+            if (kind != null) q = q.replace(MINE, " ").trim()
+            // Words that only say "something good" search badly: "the best hiphop right now" is hiphop.
+            q = q.replace(FILLER, " ").trim()
             q = q.replace(BY, " ").replace(SPACES, " ").trim()
             return kind to q
         }

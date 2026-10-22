@@ -204,8 +204,7 @@ class StoreHomeControl(
         }
         // The artist is often only in the description ("Abbey Road" · "The Beatles").
         fun score(item: AutocompleteItem): Double =
-            // A chart asked for by its everyday name ("topplistan") is what was meant, whatever else is called alike.
-            if ((item.raw["chart"] as? JsonPrimitive)?.content == "true") 2.0 else maxOf(NameMatch.score(query, item.name), NameMatch.score(query, listOfNotNull(item.name, item.description).joinToString(" ")))
+            maxOf(NameMatch.score(query, item.name), NameMatch.score(query, listOfNotNull(item.name, item.description).joinToString(" ")))
         val found = look(own)
         val ownBest: Pair<MusicSource, AutocompleteItem>? = NameMatch.best(query, found) { score(it.second) }
         var best: Pair<MusicSource, AutocompleteItem>? = ownBest?.takeIf { catalogues.isEmpty() || radio || score(it.second) >= OWN_IS_ENOUGH }
@@ -216,8 +215,9 @@ class StoreHomeControl(
                 runCatching { choices(source.card, source.arg, "$word $query") }.onFailure { trouble = it }.getOrDefault(emptyList()).map { source to it }
             }
             val hit = NameMatch.best(query, hits) { score(it.second) }
-            // The home's own near match beats a catalogue's guess.
-            best = listOfNotNull(ownBest, hit).maxByOrNull { score(it.second) } ?: hits.firstOrNull()
+            // Spotify's own order is its best answer ("the best hiphop right now" has no name to match);
+            // the home's near match only when Spotify finds nothing. A clear match was taken above.
+            best = hit ?: hits.firstOrNull() ?: ownBest
         }
         best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" }
             ?: trouble?.let { throw java.io.IOException("Searching for \"$query\" failed: ${it.message}", it) }

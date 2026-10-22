@@ -718,6 +718,16 @@ private fun Spotify(services: AssistantServices, settings: AgentSettings, update
     if (settings.spotifyClientId.isNotBlank() && settings.spotifySecret.isNotBlank()) SpotifyAccount(services, settings, update)
 }
 
+/** What was found in the Spotify library: "34 playlists, 12 albums, 5 podcasts, 180 liked songs found." */
+private suspend fun libraryText(spotify: app.homeydash.sonos.SpotifySearch): String {
+    val all = spotify.library()
+    val counts = listOf(
+        app.homeydash.sonos.SpotifyHit.Kind.Playlist to "playlists", app.homeydash.sonos.SpotifyHit.Kind.Album to "albums",
+        app.homeydash.sonos.SpotifyHit.Kind.Show to "podcasts", app.homeydash.sonos.SpotifyHit.Kind.Track to "liked songs",
+    ).map { (kind, word) -> "${all.count { it.kind == kind }} $word" }.joinToString()
+    return "$counts found." + (spotify.ownTrouble?.let { " Couldn't read everything: $it" } ?: "")
+}
+
 /**
  * Signing in to the Spotify account, so its own playlists (private ones too) are found: the
  * catalogue search only finds public playlists, and seldom your own.
@@ -747,8 +757,7 @@ private fun SpotifyAccount(services: AssistantServices, settings: AgentSettings,
                 val spotify = services.spotify ?: throw java.io.IOException("Spotify isn't ready yet")
                 val (refresh, name) = spotify.finishSignIn(code)
                 update { it.copy(spotifyUser = refresh, spotifyUserName = name.orEmpty()) }
-                val count = spotify.myPlaylists().size
-                spotify.ownTrouble?.let { "Couldn't read your playlists: $it" } ?: "$count playlists found."
+                libraryText(spotify)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 "Couldn't sign in: ${e.message}"
@@ -757,14 +766,13 @@ private fun SpotifyAccount(services: AssistantServices, settings: AgentSettings,
     }
     SettingsBox("Your playlists") {
         Hint(
-            "Sign in with the Spotify account that's added in the Sonos app, so Nova and Play music find your own playlists, private ones too. " +
+            "Sign in with the Spotify account that's added in the Sonos app, so Nova and Play music find your own playlists (private ones too), saved albums, podcasts and liked songs (signed in before 22 October? Sign in again for the albums, podcasts and liked songs). " +
                 "The developer app above needs the redirect URI ${app.homeydash.sonos.SpotifySearch.REDIRECT}.",
         )
         LaunchedEffect(signedIn) {
             if (signedIn && status == null) {
                 val spotify = services.spotify ?: return@LaunchedEffect
-                val count = spotify.myPlaylists().size
-                status = spotify.ownTrouble?.let { "Couldn't read your playlists: $it" } ?: "$count playlists found."
+                status = libraryText(spotify)
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
