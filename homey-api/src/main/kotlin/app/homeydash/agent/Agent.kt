@@ -259,8 +259,13 @@ class Agent(
             // Looked up since the last change: the same look again only repeats it.
             val looked = mutableMapOf<String, ToolResult>()
             var toldToCall = false
+            // Tools that ran this turn, so a needed one still missing after others is asked for.
+            val ranTools = mutableSetOf<String>()
+            // A mood set the room: lamps and blinds the user didn't name are left as the mood made them.
+            var moodSet = false
             // What the user may be agreeing to: the question it asked just before, in a follow-up.
-            val lastAsked = if (!context.followUp) "" else history.lastOrNull()?.messages?.lastOrNull { it.role == "assistant" && !it.content.isNullOrBlank() }?.content.orEmpty()
+            // Short answers ("ja", "gör det") count too: the eval and quick replies don't always come as follow-ups.
+            val lastAsked = if (!context.followUp && text.trim().split(Regex("\\s+")).size > 4) "" else history.lastOrNull()?.messages?.lastOrNull { it.role == "assistant" && !it.content.isNullOrBlank() }?.content.orEmpty()
             val out = voice?.let { SpeechStream(it, homeView::named) }
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
@@ -314,8 +319,8 @@ class Agent(
                             return AgentReply("", brain, ignored = true)
                         }
                         // "Vad händer i morgon?" answered with the weather: the tool it needs, asked for once.
-                        if (!acted && !toldToCall && context.routine == null) {
-                            CallCheck.shouldCall(text, specs.map { it.name })?.let { tool ->
+                        if (!toldToCall && context.routine == null) {
+                            CallCheck.shouldCall(text, specs.map { it.name })?.takeIf { !acted || it !in ranTools }?.let { tool ->
                                 toldToCall = true
                                 heard.trace("guard", "Answered without $tool; asked it to call it.")
                                 turn += ChatMessage.user(nudgeCall(tool))
@@ -388,6 +393,9 @@ class Agent(
                             ?: failedTarget?.takeIf { call.name in SETS && target(call) != it }?.let {
                                 CallCheck.Refusal("Not done: what the user asked for didn't respond, so nothing else is changed instead. Tell them it didn't respond.")
                             }
+                            ?: CallCheck.Refusal(AFTER_MOOD).takeIf {
+                                moodSet && call.name in SETS && call.name != "set_mood" && !CallCheck.names(text, target(call), homeView)
+                            }
                         if (refused != null) {
                             if (!refusedBefore.add(key)) refusedAgain = true
                             heard.trace("guard", "Skipped ${call.name} ${call.arguments}: ${refused.text}")
@@ -395,6 +403,7 @@ class Agent(
                             continue
                         }
                         ran = true
+                        ranTools += call.name
                         val seen = looked[key]?.takeIf { call.name in LOOKS && call.name != KnowHow.GUIDE }
                         val before = done[key]?.takeIf { call.name !in LOOKS }
                         val result = if (call.name == KnowHow.GUIDE) {
@@ -420,6 +429,7 @@ class Agent(
                             else -> true // Timers, pages, recipes and the fridge answer in their own words.
                         }
                         changed = changed || did
+                        if (did && call.name == "set_mood" && !StepText.failed(result.text)) moodSet = true
                         if (call.name in LOOKS) looked[key] = result
                         if (call.name in SETS && seen == null) {
                             if (StepText.failed(result.text)) failedTarget = target(call)
@@ -1087,6 +1097,8 @@ class Agent(
             (call.arguments[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
         }.orEmpty().lowercase()
 
+        const val AFTER_MOOD = "Not done: the mood already set the room the way its owner made it. Don't change other lamps, " +
+            "blinds or players unless the user named them; tell the user the mood is on."
         const val NUDGE_ENGLISH = "(From the app, not the user: the user set answers to English only. Say your last answer again in English, and nothing else.)"
         const val NUDGE_SWEDISH = "(From the app, not the user: the user set answers to Swedish only. Say your last answer again in Swedish, and nothing else.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"

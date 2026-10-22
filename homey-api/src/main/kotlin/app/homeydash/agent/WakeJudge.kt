@@ -160,7 +160,8 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, stri
          */
         fun syllables(heard: Int, name: String): Evidence? {
             val needed = HeldSound.syllables(name)
-            if (needed < 2) return null
+            // Nothing counted at all: the clip was too quiet or clipped to tell, not a short sound.
+            if (needed < 2 || heard == 0) return null
             return if (heard < needed) Evidence("syllables", -5.0, "$heard, $name has $needed") else Evidence("syllables", 0.0, "$heard")
         }
 

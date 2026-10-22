@@ -97,7 +97,7 @@
       "say": {"sv": ["tänd i hallen"], "en": ["turn on the hall light"]},
       "expect": {
         "state": {"hall_light": {"onoff": false}},
-        "reply": ["kunde inte|gick inte|lyckades inte|svarar inte|fel|problem|couldn't|could not|can't|cannot|failed|unavailable|didn't|not respond|isn't responding|won't|not available|isn't available|unresponsive|not working|isn't working|svarar inte|går inte att nå|inte tillgänglig"],
+        "reply": ["kunde inte|gick inte|lyckades inte|svarar inte|fel|problem|couldn't|could not|can't|cannot|failed|unavailable|didn't|not respond|isn't responding|aren't responding|arent responding|not responding|no response|won't|not available|isn't available|unresponsive|not working|isn't working|svarar inte|går inte att nå|inte tillgänglig"],
         "error": true
       }
     }

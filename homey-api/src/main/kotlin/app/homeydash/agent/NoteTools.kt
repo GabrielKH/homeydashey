@@ -320,7 +320,7 @@ class NoteTools(
         if (q.isEmpty()) return 0.0
         val t = NameMatch.tokens(text)
         val joined = t.joinToString("")
-        val hits = q.count { w -> t.any { NameMatch.sameWord(it, w) } || (w.length >= 4 && joined.contains(w)) }
+        val hits = q.count { said -> Translate.variants(said).any { w -> t.any { NameMatch.sameWord(it, w) } || (w.length >= 4 && joined.contains(w)) } }
         return hits.toDouble() / q.size
     }
 
