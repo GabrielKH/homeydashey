@@ -1,0 +1,42 @@
+{
+  "skill": "moods",
+  "title": "Moods, looks and Flows",
+  "cases": [
+    {
+      "id": "moods.dinner",
+      "about": "The owner's own mood, by name.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["sätt på middagsstämningen", "middag i köket"],
+        "en": ["start the dinner mood"]
+      },
+      "expect": {"did": ["mood:middag"], "tools": ["set_mood"], "may_change": ["kitchen_ceiling", "kitchen_spots"]}
+    },
+    {
+      "id": "moods.movie",
+      "about": "A mood the owner made fits better than a made-up look.",
+      "say": {"sv": ["filmkväll", "dags för film i vardagsrummet"], "en": ["movie night"]},
+      "expect": {"did": ["mood:filmkvall"], "may_change": ["sofa_lamp", "floor_lamp"]}
+    },
+    {
+      "id": "moods.cozy",
+      "about": "No mood fits, so a look for the room's lights.",
+      "say": {"sv": ["gör det mysigt i vardagsrummet", "mysbelysning i vardagsrummet"], "en": ["make the living room cozy"]},
+      "expect": {"changed": ["sofa_lamp|floor_lamp"], "may_change": ["sofa_lamp", "floor_lamp"], "tools": ["set_scene|set_device|set_room"]}
+    },
+    {
+      "id": "moods.flow",
+      "about": "A Homey Flow by its name.",
+      "tags": ["smoke"],
+      "say": {"sv": ["kör städläget", "starta flowet städläge"], "en": ["run the cleaning mode flow städläge"]},
+      "expect": {"did": ["flow:stadlage"], "tools": ["run_flow"]}
+    },
+    {
+      "id": "moods.guest_flow",
+      "about": "Guests can't start Flows.",
+      "guest": true,
+      "say": {"sv": ["kör städläget"], "en": ["run the städläge flow"]},
+      "expect": {"did_not": ["flow:"], "unchanged": true}
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "skill": "recipes",
+  "title": "Recipes and cooking",
+  "cases": [
+    {
+      "id": "recipes.find_chicken",
+      "about": "Finding saved recipes by an ingredient.",
+      "tags": ["smoke"],
+      "say": {"sv": ["vad kan jag laga med kyckling?", "har vi något recept med kyckling?"], "en": ["what can I cook with chicken?"]},
+      "expect": {"reply": ["curry|kycklinggryta"], "tools": ["find_recipes"], "recipe": "none"}
+    },
+    {
+      "id": "recipes.open_lasagne",
+      "about": "Opening a recipe to cook.",
+      "tags": ["smoke"],
+      "say": {"sv": ["öppna lasagnen", "vi ska laga lasagne, visa receptet"], "en": ["open the lasagne recipe"]},
+      "expect": {"recipe": "lasagne", "step": 1, "tools": ["open_recipe"]}
+    },
+    {
+      "id": "recipes.next_step",
+      "about": "The next step while cooking.",
+      "given": {"recipe": "Lasagne", "step": 2},
+      "say": {"sv": ["nästa steg", "vad är nästa steg?"], "en": ["next step"]},
+      "expect": {"recipe": "lasagne", "step": 3, "reply": ["vitsas|vitsås|mjolk|milk|white sauce|bechamel"]}
+    },
+    {
+      "id": "recipes.ingredients",
+      "about": "Reading what a recipe needs.",
+      "say": {"sv": ["vad behöver jag till pannkakorna?", "vilka ingredienser är det i pannkakor?"], "en": ["what do I need for the pancakes?"]},
+      "expect": {"reply": ["mjol|flour", "agg|egg", "mjolk|milk"], "tools": ["read_recipe|find_recipes|open_recipe"]}
+    },
+    {
+      "id": "recipes.close",
+      "about": "Done cooking.",
+      "given": {"recipe": "Pannkakor", "step": 3},
+      "say": {"sv": ["vi är klara, stäng receptet"], "en": ["we're done, close the recipe"]},
+      "expect": {"recipe": "none"}
+    }
+  ]
+}

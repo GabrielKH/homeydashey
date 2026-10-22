@@ -355,6 +355,11 @@ data class AgentSettings(
     /** A GitHub token that may write issues in [logRepo]. */
     val logToken: String = "",
     val logRepo: String = AgentLog.DEFAULT_REPO,
+    /** How much the log keeps, and per area where it differs ([logAreas]). */
+    val logLevel: LogLevel = LogLevel.Detailed,
+    val logAreas: Map<LogArea, LogLevel> = emptyMap(),
+    /** Until when Verbose holds (epoch ms); after that it keeps only Detailed, so the tablet doesn't fill up. */
+    val verboseUntil: Long = 0,
     /**
      * The local AI gets its tools as short lines of text and answers with a written call, instead
      * of JSON schemas the server must handle: a much shorter prompt, and it works on servers that
@@ -485,6 +490,13 @@ data class AgentSettings(
         openAiSpeechKey.trim().ifBlank { internet?.takeIf { it.provider == Provider.OpenAI }?.apiKey.orEmpty() }
 
     fun access(secret: Secret): Access = secrets[secret] ?: secret.default
+
+    /** Something is set to Local AI only, so what the local AI is sent may hold it. */
+    fun keepsLocal(): Boolean = Secret.entries.any { access(it) == Access.LocalOnly }
+
+    /** How much of [area] the log keeps at [now]: Verbose only until [verboseUntil], then Detailed. */
+    fun logLevel(area: LogArea, now: Long = System.currentTimeMillis()): LogLevel =
+        (logAreas[area] ?: logLevel).let { if (it == LogLevel.Verbose && now >= verboseUntil) LogLevel.Detailed else it }
 
     /** Whether [secret] may be used by a brain that is local ([local] = true) or on the internet. */
     fun allows(secret: Secret, local: Boolean): Boolean = when (access(secret)) {

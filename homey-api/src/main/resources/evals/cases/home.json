@@ -1,0 +1,37 @@
+{
+  "skill": "home",
+  "title": "Weather, dashboard and people",
+  "cases": [
+    {
+      "id": "home.umbrella",
+      "about": "Tomorrow's weather, from the forecast.",
+      "tags": ["smoke"],
+      "say": {"sv": ["behöver jag paraply i morgon?", "blir det regn imorgon?"], "en": ["do I need an umbrella tomorrow?"]},
+      "expect": {"reply": ["ja|regn|yes|rain"], "unchanged": true}
+    },
+    {
+      "id": "home.outside_now",
+      "about": "How warm it is outside right now.",
+      "say": {"sv": ["hur varmt är det ute?"], "en": ["how warm is it outside?"]},
+      "expect": {"reply": ["11"], "unchanged": true}
+    },
+    {
+      "id": "home.show_fridge",
+      "about": "Opening a page on the dashboard.",
+      "say": {"sv": ["visa kylen", "öppna kylskåpssidan"], "en": ["show the fridge page"]},
+      "expect": {"did": ["page:fridge"], "unchanged": true}
+    },
+    {
+      "id": "home.dark_mode",
+      "about": "Switching the theme.",
+      "say": {"sv": ["byt till mörkt läge"], "en": ["switch to dark mode"]},
+      "expect": {"did": ["theme:dark"], "tools": ["set_theme"]}
+    },
+    {
+      "id": "home.who_is_home",
+      "about": "Who is home, from Homey's users.",
+      "say": {"sv": ["vem är hemma?"], "en": ["who is home?"]},
+      "expect": {"reply": ["gabriel"], "tools": ["who_is_home"], "unchanged": true}
+    }
+  ]
+}

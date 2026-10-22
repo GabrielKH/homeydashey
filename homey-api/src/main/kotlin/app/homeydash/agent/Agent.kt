@@ -141,6 +141,14 @@ class Agent(
         asking = settings.asker
         guestAsking = settings.guest
         val heard = Watch(listener)
+        // "Det där blev fel": marks the last answer for Claude to look at, and isn't a question itself.
+        if (WrongAnswer.matches(text, settings.wakeName)) {
+            heard.trace(AgentLog.FLAG, "Said the last answer was wrong: \"$text\"")
+            return AgentReply(
+                if (swedish(text, settings)) "Okej, jag har markerat det för Claude." else "Got it, I've marked that for Claude.",
+                actions = listOf("Marked the last answer as wrong in the logs."),
+            )
+        }
         heard.trace("question", text)
         val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech).copy(rounds = heard.rounds.toList())
         heard.trace(
@@ -248,6 +256,7 @@ class Agent(
                     // the AI talking to itself before its next call.
                     out?.next(hold = acted)
                     val live = out?.takeIf { !command || changed }
+                    if (heard.wants(AgentLog.PROMPT)) heard.trace(AgentLog.PROMPT, prompt(messages, tools.sent), brain.local && settings.keepsLocal())
                     // Always streamed, also when nothing is spoken yet, so the first word can be timed.
                     val answer = try {
                         chat.stream(brain, messages, tools.sent, requireTool = nudged && !acted, onText = { piece: String -> live?.feed(piece) })
@@ -1087,6 +1096,34 @@ class Agent(
 }
 
 /** Spots a spoken yes or no in Swedish or English. */
+/** The whole prompt of one round as text, for the log at Verbose. */
+internal fun prompt(messages: List<ChatMessage>, tools: List<ToolSpec>): String = buildString {
+    for (m in messages) {
+        append("[").append(m.role).append("]")
+        m.toolCallId?.let { append(" (").append(it).append(")") }
+        append("\n")
+        m.content?.let { append(it).append("\n") }
+        m.toolCalls.forEach { append("CALL ").append(it.name).append(' ').append(it.arguments).append("\n") }
+    }
+    if (tools.isNotEmpty()) append("[tools] ").append(tools.joinToString { it.name })
+}
+
+/** "Det där blev fel", "that was wrong": said about the last answer, alone, maybe with the wake name. */
+object WrongAnswer {
+    private val PHRASE = Regex(
+        // Matched on normalized words: no accents ("dar" for "där"), no apostrophes ("that s").
+        """(det dar |det |nu )?(blev|var|gick) (det )?(helt )?fel( svar)?|fel svar|du (gjorde|svarade|tog) fel|det (dar )?stammer inte|""" +
+            """that( s| is| was) (wrong|not right|incorrect)|wrong answer|you got (that|it) wrong|that s not what i (asked|said|meant)""",
+    )
+
+    fun matches(text: String, wakeName: String = ""): Boolean {
+        var t = NameMatch.normalize(text)
+        val name = NameMatch.normalize(wakeName)
+        if (name.isNotEmpty()) t = t.removePrefix("hej $name").removePrefix("hey $name").removePrefix(name).removeSuffix(name).trim()
+        return PHRASE.matches(t.removeSuffix(" nova").trim())
+    }
+}
+
 object Confirmation {
     private val SPACES = Regex("\\s+")
     private val SWEDISH_WORD = Regex("""\b(och|jag|du|det|är|inte|på|av|ja|nej|tänd|släck|hur|vad)\b""", RegexOption.IGNORE_CASE)

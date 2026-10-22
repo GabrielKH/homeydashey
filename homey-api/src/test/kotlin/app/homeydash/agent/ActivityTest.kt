@@ -188,6 +188,56 @@ class ActivityTest {
         file.delete()
     }
 
+    @Test fun `log levels keep more or less, per area`() {
+        val log = AgentLog(null, ZoneId.of("UTC"))
+        log.add("question", "släck i köket")
+        log.add("model", "CALL set_room")
+        log.add("wake", "Heard Nova")
+        log.add(AgentLog.PROMPT, "[system] …")
+        // Detailed by default: everything as before, but not the whole prompt.
+        assertEquals(listOf("question", "model", "wake"), log.unsent().map { it.kind })
+        var levels = mapOf(LogArea.Brain to LogLevel.Errors, LogArea.Tools to LogLevel.Errors)
+        val strict = AgentLog(null).apply { this.levels = { levels[it] ?: LogLevel.Off } }
+        strict.add("question", "x")
+        strict.add("result", "Done: light on.")
+        strict.add("result", "Couldn't reach the lamp.")
+        strict.add("wake", "Heard Nova")
+        strict.add("error", "Timed out")
+        assertEquals(listOf("result", "error"), strict.unsent().map { it.kind })
+        levels = emptyMap()
+        strict.add("error", "kept nothing")
+        strict.flag(null, "wrong")
+        assertEquals(2, strict.unsent().size)
+        val s = AgentSettings(logLevel = LogLevel.Verbose, verboseUntil = 1000, logAreas = mapOf(LogArea.Wake to LogLevel.Off))
+        assertEquals(LogLevel.Verbose, s.logLevel(LogArea.Brain, now = 999))
+        assertEquals(LogLevel.Detailed, s.logLevel(LogArea.Brain, now = 1000))
+        assertEquals(LogLevel.Off, s.logLevel(LogArea.Wake, now = 0))
+    }
+
+    @Test fun `each question is a turn, and a wrong answer marks its own`() {
+        val log = AgentLog(null, ZoneId.of("UTC"))
+        log.add("question", "tänd i köket", at = 0)
+        log.add("answer", "Tänt.", at = 1)
+        log.add("question", "spela P1", at = 2)
+        log.add("answer", "Spelar P3.", at = 3)
+        log.flag("tänd i köket", "held on screen", at = 4)
+        log.flag(null, "said it was wrong", at = 5)
+        val e = log.unsent()
+        assertEquals(listOf(1, 1, 2, 2, 1, 2), e.map { it.turn })
+        val md = log.markdown(e)
+        assertTrue(md, md.contains("_Turn 2_"))
+        assertTrue(md, md.contains("⚑ marked wrong (turn 1)"))
+    }
+
+    @Test fun `saying it was wrong is not a question`() {
+        assertTrue(WrongAnswer.matches("Det där blev fel"))
+        assertTrue(WrongAnswer.matches("nu blev det fel, Nova", "Nova"))
+        assertTrue(WrongAnswer.matches("That's wrong!"))
+        assertTrue(WrongAnswer.matches("hey TARS that was wrong", "TARS"))
+        assertFalse(WrongAnswer.matches("det var fel lampa, jag menade spotsen"))
+        assertFalse(WrongAnswer.matches("vad är fel med diskmaskinen?"))
+    }
+
     @Test fun `posts the log on one issue, made the first time`() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("""[{"number":3,"title":"Something else"},{"number":4,"title":"Assistant logs","pull_request":{}}]"""))

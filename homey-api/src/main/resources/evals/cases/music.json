@@ -1,0 +1,45 @@
+{
+  "skill": "music",
+  "title": "Music and speakers",
+  "cases": [
+    {
+      "id": "music.p1_kitchen",
+      "about": "A radio station on the speaker in a room.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["spela P1 i köket", "sätt på P1 i köket", "kan du sätta på radio P1 i köket"],
+        "en": ["play P1 in the kitchen"]
+      },
+      "expect": {"did": ["play:kitchen_sonos:p1"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.jazz_living",
+      "about": "A favourite, said loosely.",
+      "say": {
+        "sv": ["sätt på lite morgonjazz i vardagsrummet", "spela morgonjazz på vardagsrummets sonos"],
+        "en": ["put on the morning jazz in the living room"]
+      },
+      "expect": {"did": ["play:living_sonos:morgonjazz"], "may_change": ["living_sonos"]}
+    },
+    {
+      "id": "music.pause",
+      "about": "Pausing what plays.",
+      "given": {"devices": {"kitchen_sonos": {"speaker_playing": true}}},
+      "say": {"sv": ["pausa musiken i köket", "stäng av musiken i köket"], "en": ["pause the music in the kitchen"]},
+      "expect": {"state": {"kitchen_sonos": {"speaker_playing": false}}}
+    },
+    {
+      "id": "music.louder",
+      "about": "Louder means a higher volume than now.",
+      "given": {"devices": {"kitchen_sonos": {"speaker_playing": true, "volume_set": 0.3}}},
+      "say": {"sv": ["höj volymen i köket", "lite högre i köket"], "en": ["turn the kitchen speaker up"]},
+      "expect": {"up": {"kitchen_sonos": ["volume_set"]}, "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.anything",
+      "about": "\"Play something\" picks something instead of asking.",
+      "say": {"sv": ["spela något i köket"], "en": ["play some music in the kitchen"]},
+      "expect": {"did": ["play:kitchen_sonos"], "may_change": ["kitchen_sonos"]}
+    }
+  ]
+}

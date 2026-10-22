@@ -25,6 +25,8 @@ enum class StepState { Running, Done, Failed }
 interface AgentListener {
     fun step(step: AgentStep) {}
     fun trace(kind: String, text: String, localOnly: Boolean = false) {}
+    /** Whether lines of [kind] are kept, so big ones like the whole prompt aren't made for nothing. */
+    fun wants(kind: String): Boolean = false
 }
 
 internal object StepIds {
@@ -43,6 +45,8 @@ internal class Watch(private val base: AgentListener?) : AgentListener {
     val rounds = mutableListOf<ChatStats>()
 
     override fun step(step: AgentStep) { base?.step(step) }
+
+    override fun wants(kind: String): Boolean = base?.wants(kind) == true
 
     override fun trace(kind: String, text: String, localOnly: Boolean) {
         if (localOnly) local = true

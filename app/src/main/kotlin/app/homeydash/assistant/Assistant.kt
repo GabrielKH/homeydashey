@@ -92,6 +92,8 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     /** What the assistant heard, thought and did, kept until it is sent (Settings → Assistant → Send logs). */
     val log = AgentLog(File(appContext.filesDir, "assistant/log.jsonl"))
     private val github = GitHubLog(http)
+    /** Settings → Skill tests: every skill asked many ways, in a practice house, with the brains set up here. */
+    val skillTests = SkillTests(this, http, scope)
     private val logScope = scope
     private var upload: Job? = null
     /** When the log was last sent, and what went wrong if it wasn't; for the settings. */
@@ -99,6 +101,7 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
         private set
 
     init {
+        log.levels = { area -> settings.value.logLevel(area) }
         scope.launch { routines.load() }
         scope.launch { memory.load() }
         scope.launch { knowHow.load() }
@@ -133,6 +136,16 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     fun trace(kind: String, text: String, localOnly: Boolean) {
         // Kept in order; a line appended to a small file.
         log.add(kind, text, localOnly)
+        sendSoon()
+    }
+
+    /** Marks the answer [answer] to [question] as wrong in the logs, for Claude to look at (a long press on it). */
+    fun flag(question: String?, answer: String) {
+        log.flag(question, "Marked wrong on the screen: \"$answer\"" + (question?.let { " (asked: \"$it\")" } ?: ""))
+        sendSoon()
+    }
+
+    private fun sendSoon() {
         val s = settings.value
         if (!s.sendLogs || s.logToken.isBlank()) return
         // Sent a little after the conversation goes quiet, as one comment.
@@ -233,6 +246,8 @@ data class Line(
     val speed: String? = null,
     /** The same, as the steps shown while it worked. */
     val steps: List<AgentStep> = emptyList(),
+    /** Marked as wrong in the logs, with a long press. */
+    val flagged: Boolean = false,
 )
 
 /** What [Scene] the assistant shows with an answer. */
@@ -374,6 +389,7 @@ class Assistant(
             }
 
             override fun trace(kind: String, text: String, localOnly: Boolean) = services.trace(kind, text, localOnly)
+            override fun wants(kind: String): Boolean = services.log.keeps(kind)
         }
         // Kept warm while nobody talks: a warm-up started by the wake word ran on the Mac at the
         // same time as Whisper (7 s of speech to text, 20 s to the first word after a quiet spell).
@@ -1176,6 +1192,14 @@ class Assistant(
             }
             show(reply)
         }
+    }
+
+    /** A long press on an answer: marks it as wrong in the logs, for Claude to look at. */
+    fun flag(index: Int) {
+        val line = lines.getOrNull(index)?.takeIf { !it.fromUser && !it.flagged } ?: return
+        val question = lines.subList(0, index).lastOrNull { it.fromUser }?.text
+        services.flag(question, line.text)
+        lines[index] = line.copy(flagged = true)
     }
 
     fun confirm(yes: Boolean) {

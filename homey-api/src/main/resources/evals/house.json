@@ -1,0 +1,70 @@
+// The practice house the skill tests run in. Made up, but laid out like a real Swedish home
+// with Homey: device names in Swedish, Sonos speakers, moods and Flows. Device ids are what the
+// test cases name; the assistant only ever sees the names.
+{
+  "zones": [
+    {"id": "home", "name": "Hemma"},
+    {"id": "kitchen", "name": "Kök", "parent": "home"},
+    {"id": "living", "name": "Vardagsrum", "parent": "home"},
+    {"id": "bedroom", "name": "Sovrum", "parent": "home"},
+    {"id": "hall", "name": "Hall", "parent": "home"},
+    {"id": "outside", "name": "Ute", "parent": "home"}
+  ],
+  "devices": [
+    {"id": "kitchen_ceiling", "name": "Taklampa kök", "zone": "kitchen", "class": "light", "caps": {"onoff": true, "dim": 0.8}},
+    {"id": "kitchen_spots", "name": "Spotlights kök", "zone": "kitchen", "class": "light", "caps": {"onoff": true, "dim": 0.6}},
+    {"id": "coffee", "name": "Kaffebryggare", "zone": "kitchen", "class": "socket", "caps": {"onoff": false, "measure_power": 0}},
+    {"id": "kitchen_sonos", "name": "Kök Sonos", "zone": "kitchen", "class": "speaker", "caps": {"speaker_playing": false, "volume_set": 0.3}},
+    {"id": "sofa_lamp", "name": "Soffbordslampa", "zone": "living", "class": "light",
+      "caps": {"onoff": false, "dim": 0.5, "light_temperature": 0.6, "light_hue": 0.1, "light_saturation": 0.2}},
+    {"id": "floor_lamp", "name": "Golvlampa", "zone": "living", "class": "light", "caps": {"onoff": false, "dim": 1.0}},
+    {"id": "living_sonos", "name": "Vardagsrum Sonos", "zone": "living", "class": "speaker", "caps": {"speaker_playing": false, "volume_set": 0.25}},
+    {"id": "thermostat", "name": "Termostat vardagsrum", "zone": "living", "class": "thermostat", "caps": {"target_temperature": 20.5, "measure_temperature": 20.1}},
+    {"id": "bedroom_lamp", "name": "Sänglampa", "zone": "bedroom", "class": "light", "caps": {"onoff": false, "dim": 0.4}},
+    {"id": "bedroom_blinds", "name": "Persienner sovrum", "zone": "bedroom", "class": "windowcoverings", "caps": {"windowcoverings_set": 1.0}},
+    {"id": "hall_light", "name": "Hallampa", "zone": "hall", "class": "light", "caps": {"onoff": false}},
+    {"id": "front_door", "name": "Ytterdörr", "zone": "hall", "class": "lock", "caps": {"locked": true}},
+    {"id": "outdoor_temp", "name": "Temperatur ute", "zone": "outside", "class": "sensor", "caps": {"measure_temperature": 11.5}}
+  ],
+  "moods": [
+    {"id": "m-dinner", "name": "Middag", "zone": "kitchen",
+      "sets": {"kitchen_ceiling": {"onoff": true, "dim": 0.4}, "kitchen_spots": {"onoff": true, "dim": 0.3}}},
+    {"id": "m-movie", "name": "Filmkväll", "zone": "living",
+      "sets": {"sofa_lamp": {"onoff": true, "dim": 0.15}, "floor_lamp": {"onoff": false}}}
+  ],
+  "flows": ["Städläge", "Tvätten klar"],
+  "people": [
+    {"id": "p-gabriel", "name": "Gabriel", "home": true},
+    {"id": "p-alex", "name": "Alex", "home": false}
+  ],
+  "music": ["P1", "P3", "P4 Stockholm", "Morgonjazz", "Chill Vibes", "Barnlåtar", "Rockklassiker", "Mix Megapol"],
+  "weather": "Now: 11 °C, cloudy, light wind. Today: 13 °C at most, dry. Tomorrow: rain most of the day, 9 to 12 °C. The day after: sunny, 15 °C.",
+  "calendars": [
+    {"id": "cal-family", "name": "Familjen", "account": "familjen@example.com"},
+    {"id": "cal-gabriel", "name": "gabriel@example.com", "account": "gabriel@example.com", "owner": "p-gabriel"}
+  ],
+  "events": [
+    {"title": "Tandläkare", "day": "tomorrow", "start": "09:00", "end": "10:00", "calendar": "cal-gabriel", "location": "Folktandvården Odenplan"},
+    {"title": "Fotbollsträning", "day": "tomorrow", "start": "17:30", "end": "19:00", "calendar": "cal-family"},
+    {"title": "Middag hos mormor", "day": "saturday", "start": "18:00", "end": "21:00", "calendar": "cal-family"}
+  ],
+  "recipes": [
+    {"title": "Lasagne", "categories": ["Middag", "Pasta"],
+      "ingredients": ["500 g köttfärs", "1 gul lök", "400 g krossade tomater", "12 lasagneplattor", "5 dl mjölk", "3 msk vetemjöl", "3 dl riven ost"],
+      "steps": ["Sätt ugnen på 200 grader.", "Bryn köttfärsen och löken, tillsätt tomaterna och låt puttra i 15 minuter.",
+        "Gör vitsåsen av mjölk och mjöl.", "Varva sås, plattor och vitsås i en form, toppa med ost.", "Grädda i 40 minuter."]},
+    {"title": "Kycklinggryta med curry", "categories": ["Middag", "Kyckling"],
+      "ingredients": ["600 g kycklingfilé", "1 msk curry", "2 dl grädde", "1 paprika", "4 dl ris"],
+      "steps": ["Koka riset.", "Strimla och bryn kycklingen med curry.", "Tillsätt paprika och grädde och låt koka i 10 minuter."]},
+    {"title": "Pannkakor", "categories": ["Efterrätt"],
+      "ingredients": ["2,5 dl vetemjöl", "6 dl mjölk", "3 ägg", "1 krm salt", "smör till stekning"],
+      "steps": ["Vispa mjöl och hälften av mjölken slätt.", "Vispa i resten av mjölken, äggen och saltet.", "Stek tunna pannkakor i smör."]}
+  ],
+  "fridge": [
+    {"name": "Mjölk", "bought": 2},
+    {"name": "Yoghurt", "bought": 9, "date": -1},
+    {"name": "Cheddarost", "bought": 5},
+    {"name": "Kycklingfilé", "bought": 1, "date": 2},
+    {"name": "Smör", "bought": 10}
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "skill": "calendar",
+  "title": "Calendar",
+  "cases": [
+    {
+      "id": "calendar.tomorrow",
+      "about": "Tomorrow's plans, from both calendars.",
+      "tags": ["smoke"],
+      "say": {"sv": ["vad händer i morgon?", "vad har vi för planer imorgon?"], "en": ["what's on tomorrow?"]},
+      "expect": {"reply": ["tandlakare|dentist", "fotboll|football|soccer"], "tools": ["calendar"], "no_event": true}
+    },
+    {
+      "id": "calendar.saturday",
+      "about": "A weekday by name.",
+      "say": {"sv": ["vad gör vi på lördag?"], "en": ["what are we doing on saturday?"]},
+      "expect": {"reply": ["mormor|grandma|grandmother"], "tools": ["calendar"]}
+    },
+    {
+      "id": "calendar.add_yes",
+      "about": "Adding an event waits for a yes, then goes in the family calendar.",
+      "tags": ["smoke"],
+      "say": {"sv": ["lägg in frisör på fredag klockan 14"], "en": ["add hairdresser on friday at 2 pm"]},
+      "expect": {"pending": true, "no_event": true, "tools": ["add_event"], "asks": true},
+      "then": [
+        {"say": {"sv": "ja", "en": "yes"}, "expect": {"event": {"title": "fris|hair", "date": "friday", "time": "14:00"}, "lang": false}}
+      ]
+    },
+    {
+      "id": "calendar.add_mine",
+      "about": "\"My calendar\" is the asker's own.",
+      "say": {"sv": ["lägg in gym i min kalender i morgon klockan sju"], "en": ["put gym in my calendar tomorrow at 7 am"]},
+      "expect": {"pending": true, "no_event": true},
+      "then": [
+        {"say": {"sv": "ja tack", "en": "yes please"}, "expect": {"event": {"title": "gym", "date": "tomorrow", "time": "07:00", "calendar": "cal-gabriel"}, "lang": false}}
+      ]
+    },
+    {
+      "id": "calendar.add_no",
+      "about": "A no means nothing is added.",
+      "say": {"sv": ["lägg in middag med Alex på söndag klockan 19"], "en": ["add dinner with Alex on sunday at 7 pm"]},
+      "expect": {"pending": true, "no_event": true},
+      "then": [
+        {"say": {"sv": "nej", "en": "no"}, "expect": {"no_event": true, "pending": false, "lang": false}}
+      ]
+    }
+  ]
+}
