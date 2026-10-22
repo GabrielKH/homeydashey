@@ -62,7 +62,7 @@ object Sym {
     val coffeeMaker = Ic(R.drawable.ph_coffee, R.drawable.ph_coffee_fill)
     val contrast = Ic(R.drawable.ph_circle_half, R.drawable.ph_circle_half_fill)
     val countertops = Ic(R.drawable.ph_cooking_pot, R.drawable.ph_cooking_pot_fill)
-    val curtains = Ic(R.drawable.ph_columns, R.drawable.ph_columns_fill)
+    val curtains = Ic(R.drawable.ph_curtain_drapes, R.drawable.ph_curtain_drapes_fill)
     val darkMode = Ic(R.drawable.ph_moon, R.drawable.ph_moon_fill)
     val deck = Ic(R.drawable.ph_sun_horizon, R.drawable.ph_sun_horizon_fill)
     val desk = Ic(R.drawable.ph_desk, R.drawable.ph_desk_fill)

@@ -1,5 +1,6 @@
 package app.homeydash.homey
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -210,6 +211,15 @@ class HomeyStore(
     }
 
     suspend fun flows(): List<HomeyFlow> = client.flows()
+
+    /** A reading's last 24 hours from Homey Insights; empty when the API key may not read Insights. */
+    suspend fun history(deviceId: String, capabilityId: String): List<Double> = try {
+        client.history(deviceId, capabilityId)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        emptyList()
+    }
 
     /** The apps installed on Homey, or null when the API key may not list them. */
     suspend fun apps(): Map<String, HomeyApp>? = try {

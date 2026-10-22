@@ -101,6 +101,19 @@ class HomeyClient(
         return null
     }
 
+    /** A device capability's readings over the last 24 hours, oldest first (see [Insights]). */
+    suspend fun history(deviceId: String, capabilityId: String): List<Double> {
+        val url = baseUrl.newBuilder()
+            .addPathSegments("api/manager/insights/log")
+            .addPathSegment(Insights.deviceUri(deviceId))
+            .addPathSegment(capabilityId)
+            .addPathSegment("entry")
+            .addQueryParameter("resolution", "last24Hours")
+            .build()
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+        return Insights.parseValues(HomeyJson.parseToJsonElement(execute(request)))
+    }
+
     suspend fun setMood(id: String) {
         execute(request("api/manager/moods/mood/$id/set").post("{}".toRequestBody(JSON_TYPE)).build())
     }
