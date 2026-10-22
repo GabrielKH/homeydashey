@@ -13,6 +13,8 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
     private var said = 0
     /** A tool call or something else not to be heard started; the rest of this round stays quiet. */
     private var quiet = false
+    /** This round is said only once it ends as the answer ([next] with hold). */
+    private var holding = false
 
     /** Something was said in any round, so the answer has started out loud. */
     var started = false
@@ -32,7 +34,7 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
     @Synchronized
     fun feed(piece: String) {
         text.append(piece)
-        if (quiet) return
+        if (quiet || holding) return
         val (speakable, stopped) = speakable(text.toString())
         if (stopped) quiet = true
         // "[ignore]" means it wasn't spoken to: wait until the start can't be that.
@@ -53,12 +55,18 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
         sayDone(speakable, all = true)
     }
 
-    /** A new round of the same answer starts (after its tools ran). */
+    /**
+     * A new round of the same answer starts (after its tools ran). With [hold] nothing of it is
+     * said while it's written, only at [finish]: after a tool ran, words written before more
+     * calls are the AI thinking aloud about the results ("Hmm, that played on the Beam instead,
+     * let me try again"), which only confuse whoever listens.
+     */
     @Synchronized
-    fun next() {
+    fun next(hold: Boolean = false) {
         text.setLength(0)
         said = 0
         quiet = false
+        holding = hold
         spokeThisRound = false
         heard.setLength(0)
     }
