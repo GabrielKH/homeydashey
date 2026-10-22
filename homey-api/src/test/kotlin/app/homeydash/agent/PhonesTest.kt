@@ -185,7 +185,7 @@ class PhonesTest {
     @Test
     fun aRingThatFailsIsSaidAndNotHunted() = runTest {
         val home = object : HomeControl by Home() {
-            override suspend fun runAction(card: FlowCardAction, args: JsonObject) = throw java.io.IOException("timeout")
+            override suspend fun runAction(card: FlowCardAction, args: JsonObject): Unit = throw java.io.IOException("timeout")
         }
         val r = find(AgentTools(view(settings()), home, Dash()))
         assertTrue(r.text, r.text.contains("didn't ring"))
