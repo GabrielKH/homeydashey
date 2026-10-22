@@ -37,6 +37,20 @@ class SpeechStreamTest {
         assertEquals("And on Friday it's Lisa's birthday.", said.last())
     }
 
+    @Test fun `a held round is only said when it ends as the answer`() {
+        val said = mutableListOf<String>()
+        val s = SpeechStream({ said += it })
+        s.next(hold = true)
+        "Hmm, that played on the Beam instead. Let me try again with the correct room. ".chunked(7).forEach(s::feed)
+        assertEquals(emptyList<String>(), said)
+        // It called a tool again: what it wrote is dropped, never heard.
+        s.next(hold = true)
+        "The best hip hop is playing in the living room. ".chunked(7).forEach(s::feed)
+        assertEquals(emptyList<String>(), said)
+        s.finish()
+        assertEquals(listOf("The best hip hop is playing in the living room."), said)
+    }
+
     @Test fun `a short first word waits for the next sentence`() {
         assertEquals(listOf("Okay. The kitchen is warm."), spoken("Okay. ", "The kitchen is warm."))
     }

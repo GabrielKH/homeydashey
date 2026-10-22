@@ -237,7 +237,9 @@ class Agent(
                     val step = StepIds.next()
                     val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
-                    out?.next()
+                    // Once a tool ran, a round is only heard when it is the answer, not when it is
+                    // the AI talking to itself before its next call.
+                    out?.next(hold = acted)
                     val live = out?.takeIf { !command || changed }
                     // Always streamed, also when nothing is spoken yet, so the first word can be timed.
                     val answer = try {
