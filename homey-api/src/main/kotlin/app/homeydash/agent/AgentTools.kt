@@ -162,9 +162,9 @@ class AgentTools(
             required("mode")
         })
         if (view.allows(Secret.Calendar)) add(tool("calendar", "Events from the family calendar, or from one person's own calendar.") {
-            string("start_date", "First day, yyyy-mm-dd; default today")
+            string("start_date", "First day as the user said it: today, tomorrow, a weekday (\"lördag\", \"saturday\"), or yyyy-mm-dd; default today")
             number("days", "How many days, 1-31; default 1")
-            string("calendar", "Leave out for the calendars on the dashboard; \"mine\" for the asker's own, \"family\", or a person's name")
+            string("calendar", "Leave out for every calendar on the dashboard, also for \"what's happening\"; \"mine\" only for the asker's own, \"family\" only for the family calendar, or a person's name")
         })
         if (!guest && view.allows(Secret.AddEvents)) add(tool(
             "add_event",

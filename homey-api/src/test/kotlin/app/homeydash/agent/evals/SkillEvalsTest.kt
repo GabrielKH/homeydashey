@@ -199,6 +199,7 @@ class SkillEvalsTest {
         assertEquals("Abbey Road by The Beatles", sim.playMusic("kitchen_sonos", "Abbey Road", "album"))
         assertEquals("Värvet by Kristoffer Triumf", sim.playMusic("kitchen_sonos", "värvet", "show"))
         assertEquals("Dancing Queen by ABBA", sim.playMusic("kitchen_sonos", "Dancing Queen ABBA", null))
+        assertEquals("Alex & Sigge by Alex Schulman och Sigge Eklund", sim.playMusic("kitchen_sonos", "Alex och Sigge", "episode"))
         assertEquals("P1", sim.playMusic("kitchen_sonos", "P1", "station"))
         assertNull(sim.playMusic("kitchen_sonos", "Abbey Road", "podcast"))
         assertTrue(sim.did.toString(), "spotify:podcast:Värvet" in sim.did && "play:kitchen_sonos:P1" in sim.did)

@@ -234,7 +234,7 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
         }
         val own = file.music.map { it to NameMatch.score(query, it) }.maxByOrNull { it.second }
         if (wanted == null && own != null && own.second >= OWN_IS_ENOUGH) return own.first.also { play(deviceId, it) }
-        val found = file.spotify.filter { wanted == null || it.kind == wanted || (wanted == "podcast" && it.kind == "episode") }
+        val found = file.spotify.filter { wanted == null || it.kind == wanted || (wanted in PODCASTS && it.kind in PODCASTS) }
             .map { it to maxOf(NameMatch.score(query, it.name), it.by?.let { b -> NameMatch.score(query, "${it.name} $b") } ?: 0.0, if (it.kind == "artist") NameMatch.score(query, it.name) else 0.0) }
             .filter { it.second > 0.5 }.maxByOrNull { it.second }?.first
         if (found != null) {
@@ -322,6 +322,8 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
         private const val OWN_IS_ENOUGH = 0.9
         /** play_music's kinds, as [SimSpotify.kind] has them. */
         private val KINDS = mapOf("track" to "song", "show" to "podcast")
+        /** An episode is found by its podcast, as on Spotify, and a podcast plays its newest episode. */
+        private val PODCASTS = setOf("podcast", "episode")
         private val SPOTIFY_KINDS = setOf("song", "album", "artist", "playlist", "podcast", "episode")
         private val ANYTHING = Regex("(anything|something|whatever|random|music|nagot|nat|valj sjalv|lite musik|musik)")
 
