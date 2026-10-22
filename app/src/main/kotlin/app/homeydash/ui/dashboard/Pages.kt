@@ -108,6 +108,10 @@ fun OverviewScreen(
     hasHousehold: Boolean = false,
     /** Cards whose module is turned off under Modules (weather, calendar, fridge), and notes until asked for. */
     widgetsOff: Set<String> = emptySet(),
+    /** Takes a pinned device off the overview. */
+    onUnpin: (String) -> Unit = {},
+    /** Hides a room's card. */
+    onHideRoom: (String) -> Unit = {},
 ) {
     val g = GlassTheme.colors
     val lightsOn = remember(rooms) { rooms.sumOf { it.lightsOn } }
@@ -180,7 +184,7 @@ fun OverviewScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .onGloballyPositioned { drag.viewport = it }
-                .rearrangeable(drag, actions.rearrange, actions::open, onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }),
+                .rearrangeable(drag, actions.rearrange, onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }),
         ) {
             LaneLayout(
                 lanes = lanes,
@@ -194,7 +198,17 @@ fun OverviewScreen(
                     when {
                         room != null -> { { actions.open(Sheet.RoomMenu(room.zone.id)) } }
                         device != null -> { { actions.open(Sheet.CardMenu(device.id)) } }
-                        else -> { {} }
+                        else -> null
+                    }
+                },
+                // The minus takes a pinned device off the overview, or hides a room.
+                remove = { key ->
+                    val room = roomsById[key]
+                    val device = favouritesById[key]
+                    when {
+                        room != null -> { { onHideRoom(room.zone.id) } }
+                        device != null -> { { onUnpin(device.id) } }
+                        else -> null
                     }
                 },
                 modifier = Modifier.fillMaxWidth().verticalScroll(scroll).padding(bottom = 24.dp),
@@ -202,7 +216,7 @@ fun OverviewScreen(
                 val room = roomsById[key]
                 val device = favouritesById[key]
                 when {
-                    room != null -> RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.hold(Sheet.RoomMenu(room.zone.id)) })
+                    room != null -> RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.hold() })
                     device != null -> DeviceTile(device, actions)
                     key == "player" && player != null -> MediaPlayerCard(player, actions, subtitle = player.zone?.let { zones[it]?.name })
                     else -> Column { widget(key) }
@@ -477,7 +491,7 @@ fun RoomScreen(
             verticalArrangement = Arrangement.spacedBy(GridGap),
             contentPadding = PaddingValues(bottom = 24.dp),
             state = grid,
-            modifier = Modifier.weight(1f).rearrangeable(drag, actions.rearrange, actions::open),
+            modifier = Modifier.weight(1f).rearrangeable(drag, actions.rearrange),
         ) {
             roomSections.forEach { section ->
                 if (roomSections.size > 1) {
@@ -545,7 +559,7 @@ private const val FAV = "fav:"
 private fun DoneChip(actions: DashboardActions, modifier: Modifier = Modifier, onAutoArrange: (() -> Unit)? = null) {
     val g = GlassTheme.colors
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("Drag cards to move them, tap one for its menu", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        Text("Drag cards to move them, tap one to edit it", style = MaterialTheme.typography.bodyMedium, color = g.muted)
         onAutoArrange?.let { GlassChip(Sym.autoAwesome, "Auto arrange", g.fg, onClick = it) }
         Row(
             Modifier

@@ -7,7 +7,12 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.grid.LazyGridItemInfo
 import androidx.compose.foundation.lazy.grid.LazyGridItemScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -19,58 +24,41 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.unit.dp
+import app.homeydash.ui.components.Sym
+import app.homeydash.ui.components.SymIcon
+import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
+import app.homeydash.ui.theme.GlassTheme
 
 /**
- * Rearranging cards the iOS way. Holding a card makes the cards jiggle; dragging it
- * then moves it, and the others make room. Letting go without dragging opens the
- * card's menu instead. While rearranging, a tap on a card opens its menu and Done
- * on the page ends it.
+ * Rearranging cards the iOS way. Holding a card makes the cards jiggle, and that's all
+ * a hold does, even when the finger lifts without moving. While they jiggle, dragging a
+ * card moves it and the others make room, a tap on a card (or its pencil badge) opens
+ * its menu, and Done or a tap between the cards ends it. Before, letting go without a
+ * drag opened the menu and stopped the jiggle, so every hold was a guess (Gabriel, 2026-10-22).
  */
 @Stable
 class Rearrange {
     var editing by mutableStateOf(false)
         private set
 
-    /** The menu of the card being held, opened if the hold ends without a drag. */
-    private var held: Sheet? = null
-    private var holding = false
-    private var holdStartedEditing = false
-
-    /** A card was held; [menu] opens if it's let go without a drag (null: stay rearranging). */
-    fun hold(menu: Sheet?) {
-        held = menu
-        holding = true
-        if (!editing) {
-            editing = true
-            holdStartedEditing = true
-        }
+    /** A card was held: the cards start to jiggle. */
+    fun hold() {
+        editing = true
     }
 
     fun done() {
         editing = false
-        held = null
-        holding = false
-        holdStartedEditing = false
-    }
-
-    /** The finger lifted. Returns the menu to open when it was a hold without a drag. */
-    internal fun release(dragged: Boolean): Sheet? {
-        val menu = held
-        val wasHolding = holding
-        held = null
-        holding = false
-        val started = holdStartedEditing
-        holdStartedEditing = false
-        if (!wasHolding || dragged || menu == null) return null
-        if (started) editing = false
-        return menu
     }
 }
 
@@ -88,6 +76,8 @@ interface DragSurface {
     fun end()
     /** Whether the card at [position] starts rearranging on a still press by itself. */
     fun holdableAt(position: Offset): Boolean
+    /** Whether there is a card at [position]; a tap anywhere else ends rearranging. */
+    fun cardAt(position: Offset): Boolean
 }
 
 @Stable
@@ -108,6 +98,8 @@ class GridDrag(val grid: LazyGridState) : DragSurface {
 
     override fun holdableAt(position: Offset): Boolean =
         grid.layoutInfo.visibleItemsInfo.firstOrNull { it.contains(position) }?.let { holdable(it.key) } == true
+
+    override fun cardAt(position: Offset): Boolean = grid.layoutInfo.visibleItemsInfo.any { it.contains(position) }
     var canMove: (Any, Any) -> Boolean = { _, _ -> false }
     var onMove: (Any, Any) -> Unit = { _, _ -> }
     var onDrop: () -> Unit = {}
@@ -186,7 +178,7 @@ fun rememberGridDrag(grid: LazyGridState): GridDrag {
  * up a card once the finger moves while rearranging, and swallows the touch from then
  * on so sliders and buttons under it don't react.
  */
-fun Modifier.rearrangeable(drag: DragSurface, rearrange: Rearrange, onMenu: (Sheet) -> Unit, onHold: () -> Unit = {}): Modifier =
+fun Modifier.rearrangeable(drag: DragSurface, rearrange: Rearrange, onHold: () -> Unit = {}): Modifier =
     pointerInput(drag, rearrange) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -209,7 +201,7 @@ fun Modifier.rearrangeable(drag: DragSurface, rearrange: Rearrange, onMenu: (She
                 } == null
                 if (timedOut) {
                     selfHeld = true
-                    rearrange.hold(null)
+                    rearrange.hold()
                     onHold()
                 }
             }
@@ -235,7 +227,10 @@ fun Modifier.rearrangeable(drag: DragSurface, rearrange: Rearrange, onMenu: (She
                 if (dragging || selfHeld) change.consume()
             }
             if (dragging) drag.end()
-            rearrange.release(dragged = dragging)?.let(onMenu)
+            // A tap between the cards ends rearranging, as on the iPhone home screen.
+            if (rearrange.editing && !dragging && !selfHeld && moved.getDistance() <= viewConfiguration.touchSlop && !drag.cardAt(down.position)) {
+                rearrange.done()
+            }
         }
     }
 
@@ -273,7 +268,35 @@ fun LazyGridItemScope.RearrangeableItem(
         if (rearrange.editing) {
             // Covers the card so its own buttons and sliders rest while rearranging.
             Box(Modifier.matchParentSize().pressable(menu))
+            if (!dragging) EditBadges(onEdit = menu, onRemove = null)
         }
+    }
+}
+
+/**
+ * The small round badges on a jiggling card: a pencil top right that opens its menu and,
+ * where the card can be taken off the page, a minus top left.
+ */
+@Composable
+internal fun BoxScope.EditBadges(onEdit: (() -> Unit)?, onRemove: (() -> Unit)?) {
+    val g = GlassTheme.colors
+    if (onRemove != null) {
+        Box(
+            Modifier.align(Alignment.TopStart).padding(8.dp).size(30.dp)
+                .pressable(onRemove)
+                .shadow(4.dp, CircleShape)
+                .background(g.muted, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { SymIcon(Sym.remove, filled = true, size = 16.dp, tint = Color.White) }
+    }
+    if (onEdit != null) {
+        Box(
+            Modifier.align(Alignment.TopEnd).padding(8.dp).size(30.dp)
+                .pressable(onEdit)
+                .shadow(4.dp, CircleShape)
+                .background(onBrush(), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { SymIcon(Sym.edit, filled = true, size = 15.dp, tint = g.onInk) }
     }
 }
 

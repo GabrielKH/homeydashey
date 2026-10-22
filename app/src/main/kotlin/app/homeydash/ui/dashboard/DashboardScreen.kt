@@ -147,8 +147,8 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
     /** Holding and dragging cards to rearrange them. */
     val rearrange = Rearrange()
 
-    /** A card was held: rearranging starts, and letting go without a drag opens [menu]. */
-    fun hold(menu: Sheet?) = rearrange.hold(menu)
+    /** A card was held: the cards start to jiggle so they can be moved or tapped to edit. */
+    fun hold() = rearrange.hold()
 
     /** The Homey's Flows that can be started, for Goodnight. */
     suspend fun flows(): List<HomeyFlow> =
@@ -344,6 +344,19 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
     val actions = remember(store) { DashboardActions(store, scope) }
     SideEffect { actions.deviceCards = snapshot.deviceCards }
+    // The chosen display size also goes into the house's memory, so the assistant knows it.
+    val setUiScale: (Float) -> Unit = { scale ->
+        display.setUiScale(scale)
+        scope.launch {
+            runCatching {
+                assistantServices.memory.learn(listOf(app.homeydash.agent.Fact(
+                    subject = "the dashboard tablet",
+                    relation = "display size",
+                    obj = if (scale <= 0f) "fit screen" else "${kotlin.math.round(scale * 100).toInt()}%",
+                )))
+            }
+        }
+    }
     // Counts robot vacuum cleaning hours for the part-wear estimates.
     val appContext = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(store) { app.homeydash.data.VacuumUsage.get(appContext).track(store.snapshot) }
@@ -522,6 +535,8 @@ fun DashboardScreen(
                                 favourites = favourites,
                                 order = overviewOrder,
                                 onOrder = display::setOverviewOrder,
+                                onUnpin = { display.pinToOverview(it, false) },
+                                onHideRoom = { display.setRoomHidden(it, true) },
                                 hasHousehold = moduleOn("home") && (household.people.isNotEmpty() || !household.usersAllowed),
                                     widgetsOff = buildSet {
                                     if (!moduleOn("weather")) add("weather")
@@ -622,7 +637,7 @@ fun DashboardScreen(
                     when (id) {
                         "appearance" -> AppearanceSettings(
                             themeMode, display::setThemeMode, Palette.of(palette), { display.setPalette(it.key) }, flat, display::setFlat,
-                            uiScale, display::setUiScale, accent, display::setAccent, accentOpacity, display::setAccentOpacity, onHomeBackground,
+                            uiScale, setUiScale, accent, display::setAccent, accentOpacity, display::setAccentOpacity, onHomeBackground,
                         )
                         "screen" -> ScreenSettings(
                             dimAfter, display::setDimAfter, wakeOnProximity, display::setWakeOnProximity, kiosk, display::setKiosk,
@@ -664,7 +679,7 @@ fun DashboardScreen(
                 onChooseRooms = onChooseRooms,
                 onWeather = onWeather,
                 uiScale = uiScale,
-                onUiScale = display::setUiScale,
+                onUiScale = setUiScale,
                 palette = Palette.of(palette),
                 onPalette = { display.setPalette(it.key) },
                 flat = flat,

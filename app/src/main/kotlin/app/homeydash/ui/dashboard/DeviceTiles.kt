@@ -61,7 +61,7 @@ fun tileSpan(device: Device): Int = when (DashboardLayout.cardKind(device)) {
 fun DeviceTile(device: Device, actions: DashboardActions, modifier: Modifier = Modifier) {
     val tileModifier = modifier.alpha(if (device.available) 1f else 0.55f)
     // Press and hold on the card itself (not its buttons) opens its menu: hide, move, group.
-    val holdForMenu = Modifier.pressable(null, onLongClick = { actions.hold(Sheet.CardMenu(device.id)) })
+    val holdForMenu = Modifier.pressable(null, onLongClick = { actions.hold() })
     when (DashboardLayout.cardKind(device)) {
         CardKind.Light, CardKind.Switch -> LightTile(device, actions, tileModifier)
         CardKind.Thermostat -> ThermostatTile(device, actions, tileModifier.then(holdForMenu))
@@ -157,7 +157,7 @@ private fun LightTile(device: Device, actions: DashboardActions, modifier: Modif
         onTap = toggle?.takeIf { device.available },
         onLevel = setLevel?.takeIf { device.available },
         modifier = modifier,
-        onLongPress = { actions.hold(Sheet.CardMenu(device.id)) },
+        onLongPress = { actions.hold() },
     ) { shown, dragging ->
         val lit = isOn || dragging
         Row(verticalAlignment = Alignment.Top) {
@@ -198,7 +198,7 @@ private fun BlindsTile(device: Device, actions: DashboardActions, modifier: Modi
         onTap = tap?.takeIf { device.available },
         onLevel = setLevel?.takeIf { device.available },
         modifier = modifier,
-        onLongPress = { actions.hold(Sheet.CardMenu(device.id)) },
+        onLongPress = { actions.hold() },
     ) { shown, _ ->
         Row(verticalAlignment = Alignment.Top) {
             Bubble(deviceIcon(device), on = shown > 0.02f, onColor = g.cool)
@@ -288,7 +288,7 @@ private fun LockTile(device: Device, actions: DashboardActions, modifier: Modifi
     TileBox(
         modifier,
         onClick = if (setable && !locked) ({ actions.set(device.id, "locked", JsonPrimitive(true)) }) else null,
-        onLongClick = { actions.hold(Sheet.CardMenu(device.id)) },
+        onLongClick = { actions.hold() },
     ) {
         Bubble(if (locked) Sym.lock else Sym.lockOpen, on = true, onColor = if (locked) g.ok else g.danger)
         Spacer(Modifier.weight(1f))
@@ -308,7 +308,7 @@ private fun LockTile(device: Device, actions: DashboardActions, modifier: Modifi
 
 @Composable
 private fun ButtonTile(device: Device, actions: DashboardActions, modifier: Modifier) {
-    TileBox(modifier, onClick = { actions.set(device.id, "button", JsonPrimitive(true)) }.takeIf { device.available }, onLongClick = { actions.hold(Sheet.CardMenu(device.id)) }) {
+    TileBox(modifier, onClick = { actions.set(device.id, "button", JsonPrimitive(true)) }.takeIf { device.available }, onLongClick = { actions.hold() }) {
         Bubble(deviceIcon(device), on = false)
         Spacer(Modifier.weight(1f))
         TileTitle(device.name)
@@ -333,7 +333,7 @@ private fun SensorTile(device: Device, actions: DashboardActions, modifier: Modi
     TileBox(
         modifier,
         onClick = onoff?.let { cap -> { actions.set(device.id, cap.id, JsonPrimitive(!isOn)) } }?.takeIf { device.available },
-        onLongClick = { actions.hold(Sheet.CardMenu(device.id)) },
+        onLongClick = { actions.hold() },
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Bubble(
