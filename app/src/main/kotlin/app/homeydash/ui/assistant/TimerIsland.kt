@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -71,6 +72,7 @@ import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.glass
 import app.homeydash.ui.components.pressable
+import app.homeydash.ui.components.windowGlass
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
 
@@ -154,17 +156,17 @@ fun TimerIsland(assistant: Assistant, modifier: Modifier = Modifier) {
 private fun IslandPill(timer: KitchenTimer, now: Long, others: Int, onClick: () -> Unit, onStop: () -> Unit) {
     val g = GlassTheme.colors
     // The same glass and height as the chips beside it; the X (or "+2") is the pill's round end.
+    // Sized like GlassChip (9 dp above and below a 20 dp line), so it is exactly as tall as they are.
     Row(
         Modifier
-            .height(PILL_HEIGHT)
             .pressable(onClick)
             .glass(PillShape)
             .animateContentSize()
-            .padding(start = 7.dp, end = 4.dp),
+            .padding(start = 10.dp, end = 4.dp, top = 9.dp, bottom = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        TimerRing(timer.progress(now), if (timer.paused) g.muted else g.on, size = 24.dp)
+        TimerRing(timer.progress(now), if (timer.paused) g.muted else g.on, size = 20.dp)
         Text(
             timer.name(),
             style = MaterialTheme.typography.labelLarge,
@@ -174,19 +176,22 @@ private fun IslandPill(timer: KitchenTimer, now: Long, others: Int, onClick: () 
             modifier = Modifier.widthIn(max = 160.dp),
         )
         TimeText(timer, now, big = false, small = true)
-        if (others > 0) {
-            Box(
-                Modifier.padding(start = 2.dp).height(PILL_END).widthIn(min = PILL_END).clip(PillShape).background(g.on).padding(horizontal = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("+$others", style = MaterialTheme.typography.labelLarge, color = g.onInk, fontWeight = FontWeight.Bold)
-            }
-        } else {
-            Box(
-                Modifier.padding(start = 2.dp).size(PILL_END).clip(CircleShape).background(g.fg.copy(alpha = 0.08f)).pressable(onStop),
-                contentAlignment = Alignment.Center,
-            ) {
-                SymIcon(Sym.close, size = 14.dp, tint = g.muted)
+        // The round end reaches into the padding, so it doesn't make the pill taller.
+        Box(Modifier.height(20.dp).wrapContentHeight(unbounded = true)) {
+            if (others > 0) {
+                Box(
+                    Modifier.padding(start = 2.dp).height(PILL_END).widthIn(min = PILL_END).clip(PillShape).background(g.on).padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("+$others", style = MaterialTheme.typography.labelLarge, color = g.onInk, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Box(
+                    Modifier.padding(start = 2.dp).size(PILL_END).clip(CircleShape).background(g.fg.copy(alpha = 0.08f)).pressable(onStop),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    SymIcon(Sym.close, size = 14.dp, tint = g.muted)
+                }
             }
         }
     }
@@ -203,10 +208,9 @@ private fun RingingPill(timer: KitchenTimer, onStop: () -> Unit, onAdd: (Int) ->
     )
     Row(
         Modifier
-            .height(PILL_HEIGHT)
             .glass(PillShape)
             .drawBehind { drawRect(g.danger.copy(alpha = pulse)) }
-            .padding(start = 12.dp, end = 4.dp),
+            .padding(start = 12.dp, end = 4.dp, top = 9.dp, bottom = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -219,9 +223,14 @@ private fun RingingPill(timer: KitchenTimer, onStop: () -> Unit, onAdd: (Int) ->
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 200.dp).padding(end = 4.dp),
         )
-        TextButton("+1 min", small = true) { onAdd(1) }
-        TextButton("+5 min", small = true) { onAdd(5) }
-        TextButton("Stop", strong = true, small = true, onClick = onStop)
+        Row(
+            Modifier.height(20.dp).wrapContentHeight(unbounded = true),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            TextButton("+1 min", small = true) { onAdd(1) }
+            TextButton("+5 min", small = true) { onAdd(5) }
+            TextButton("Stop", strong = true, small = true, onClick = onStop)
+        }
     }
 }
 
@@ -246,11 +255,8 @@ private fun TimerList(
         Modifier
             .width(460.dp)
             .heightIn(max = 520.dp)
-            // The same glass as the pill (Gabriel, 2026-10-22), over a little of the wall's
-            // colour so the timers read clearly over the cards below.
-            .clip(PanelShape)
-            .background(g.wallBase.copy(alpha = if (g.isDark) 0.55f else 0.6f), PanelShape)
-            .glass(PanelShape)
+            // Exactly the assistant's text window background (Gabriel, 2026-10-21 and 2026-10-22).
+            .windowGlass(PanelShape)
             .pressable(onTouch)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -451,7 +457,7 @@ private fun TextButton(text: String, strong: Boolean = false, small: Boolean = f
 }
 
 private const val TICK_MS = 250L
-/** As tall as the glass chips beside it in the page headers (9 + 20 + 9). */
+/** About as tall as the pill (and the glass chips beside it: 9 + 20 + 9), for where the list drops. */
 private val PILL_HEIGHT = 38.dp
 /** The round end of the pill: its X, or the "+2" for the other timers. */
 private val PILL_END = 30.dp
