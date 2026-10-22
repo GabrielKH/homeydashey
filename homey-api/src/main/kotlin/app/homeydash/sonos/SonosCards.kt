@@ -208,11 +208,14 @@ class SonosCards(
         return own + found.filterNot { f -> own.any { it.name == f.name } }
     }
 
-    /** Spotify's hits for [query]; before anything is typed, the signed-in account's own playlists (or nothing). */
+    /**
+     * Spotify's hits for [query]; before anything is typed, the signed-in account's whole library
+     * (playlists, saved albums, podcasts, liked songs), which Play music sorts into groups by kind.
+     */
     private suspend fun spotifyChoices(query: String): List<AutocompleteItem> {
         val search = spotify ?: return emptyList()
-        if (query.isBlank() && !search.signedIn) return emptyList()
-        return search.search(query).map { hit ->
+        val hits = if (query.isBlank()) search.library() else search.search(query)
+        return hits.map { hit ->
             AutocompleteItem(
                 hit.name, hit.description, hit.art,
                 JsonObject(

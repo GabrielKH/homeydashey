@@ -58,6 +58,8 @@ import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /** Speakers whose apps can play something picked from a list (Sonos favourites, playlists…). */
 fun musicSpeakers(devices: Collection<Device>, actions: DashboardActions): List<Device> =
@@ -155,15 +157,36 @@ fun MusicSheet(
             if (query.isNotEmpty()) delay(350)
             value = actions.musicItems(source, query).also { listed[listKey] = it }
         }
+        // Spotify's library, before anything is typed, comes in groups: playlists, albums, podcasts, liked songs.
+        val groups = if (source.catalogue && query.isBlank()) results.orEmpty().map { libraryGroup(it.second) }.distinct() else emptyList()
+        var groupPicked by rememberSaveable { mutableStateOf<String?>(null) }
+        val group = groupPicked?.takeIf { it in groups } ?: groups.firstOrNull()
+        if (groups.size > 1) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(groups) { name ->
+                    val on = name == group
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (on) g.onInk else g.fg,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .pressable({ groupPicked = name })
+                            .then(if (on) Modifier.background(onBrush(), PillShape) else Modifier.glass(PillShape))
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                    )
+                }
+            }
+        }
         // Read once here: the grid builds its items later, when the list may already be reloading.
-        val list = results
+        val list = results?.let { all -> if (group == null) all else all.filter { libraryGroup(it.second) == group } }
         Box(Modifier.fillMaxWidth().height(440.dp), contentAlignment = Alignment.Center) {
             when {
                 list == null -> CircularProgressIndicator(color = g.fg)
                 list.isEmpty() -> Text(
                     when {
                         query.isNotBlank() -> "Nothing matches \"$query\"."
-                        source.catalogue -> "Search for any song, album, artist or playlist."
+                        source.catalogue -> "Search for any song, album, artist, playlist or podcast."
                         else -> "Nothing in ${source.title.lowercase()} yet."
                     },
                     style = MaterialTheme.typography.bodyLarge,
@@ -186,6 +209,16 @@ fun MusicSheet(
             }
         }
     }
+}
+
+/** The group a Spotify library item is shown under in Play music. */
+private fun libraryGroup(item: AutocompleteItem): String = when (item.raw["kind"]?.jsonPrimitive?.contentOrNull) {
+    "Playlist" -> "Playlists"
+    "Album" -> "Albums"
+    "Show" -> "Podcasts"
+    "Episode" -> "Episodes"
+    "Artist" -> "Artists"
+    else -> "Liked songs"
 }
 
 @Composable
