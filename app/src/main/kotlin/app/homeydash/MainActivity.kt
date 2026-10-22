@@ -12,7 +12,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +52,8 @@ class MainActivity : ComponentActivity() {
         container.assistant.onActive = { screen.wake() }
         // And it stays lit for the whole conversation, follow-up listening included.
         screen.busy = { container.assistant.busy() }
+        // Post-its on the dark screen need a touch more light than the clock alone.
+        screen.dimBrightness = { if (darkNotes(container).isNotEmpty()) ScreenControl.DIM_WITH_NOTES else ScreenControl.DIM }
         handleShare(intent)
         setContent {
             val themeMode by container.display.themeMode.collectAsStateWithLifecycle()
@@ -63,7 +68,13 @@ class MainActivity : ComponentActivity() {
                     Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (dimmed) 0f else 1f }) {
                         AppRoot(container)
                     }
-                    if (dimmed) DimmedScreen()
+                    if (dimmed) {
+                        val notesOnDark by container.display.notesOnDark.collectAsStateWithLifecycle()
+                        val notes by container.notes.notes.collectAsStateWithLifecycle()
+                        val lit = remember(notes, notesOnDark) { darkNotes(container) }
+                        LaunchedEffect(lit.isEmpty()) { screen.refreshDim() }
+                        DimmedScreen(lit)
+                    }
                 }
             }
         }
@@ -125,14 +136,23 @@ class MainActivity : ComponentActivity() {
 
 private val CLOCK = DateTimeFormatter.ofPattern("HH:mm")
 
-/** The dimmed screen: black, with a faint clock so it still tells the time. */
+/** The post-its to light up on the dark screen: the ones still up and marked for it, when that is on. */
+private fun darkNotes(container: AppContainer): List<app.homeydash.notes.PostIt> =
+    if (!container.display.notesOnDark.value || !app.homeydash.modules.AppModules.isOn(container.modules.choices.value, "notes")) emptyList()
+    else container.notes.current().filter { it.dark }
+
+/** The dimmed screen: black, with a faint clock so it still tells the time, and the post-its if there are any. */
 @Composable
-private fun DimmedScreen() {
+private fun DimmedScreen(notes: List<app.homeydash.notes.PostIt>) {
     val time by produceState(LocalTime.now()) {
         while (true) {
             value = LocalTime.now()
             delay(20_000)
         }
+    }
+    if (notes.isNotEmpty()) {
+        app.homeydash.ui.dashboard.DarkScreenNotes(notes, time.format(CLOCK), 64.dp)
+        return
     }
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         Text(

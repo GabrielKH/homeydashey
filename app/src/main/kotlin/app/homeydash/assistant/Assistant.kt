@@ -86,6 +86,9 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     var busy: () -> Boolean = { false }
     /** The recipes and the one being cooked, so the assistant can follow along. */
     var kitchen: app.homeydash.data.Kitchen? = null
+
+    /** The post-its and to-do list. */
+    var notes: app.homeydash.notes.NoteBoard? = null
     /** Spotify search, for signing in to Spotify from the settings. */
     var spotify: app.homeydash.sonos.SpotifySearch? = null
 
@@ -1230,6 +1233,7 @@ class Assistant(
         web = services.web.lookup(v.settings.webSearch()),
         recipes = services.kitchen?.let { k -> app.homeydash.agent.RecipeTools(k.book, k.cooking) { bridge.openPage("recipes") } },
         fridge = services.kitchen?.let { k -> app.homeydash.agent.FridgeTools(k.fridge) { bridge.openPage("fridge") } },
+        notes = services.notes?.let { b -> app.homeydash.agent.NoteTools(b) { bridge.openPage("notes") } },
         routines = app.homeydash.agent.RoutineTools(services.routines),
         memory = app.homeydash.agent.MemoryTools(services.memory),
         knowHow = app.homeydash.agent.KnowHowTools(services.knowHow) { v.settings.batteryReminders },

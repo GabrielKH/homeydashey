@@ -106,8 +106,12 @@ fun OverviewScreen(
     widget: @Composable (String) -> Unit,
     /** Whether Homey has users to show in a who's home card. */
     hasHousehold: Boolean = false,
-    /** Cards whose module is turned off under Modules: weather, calendar, fridge. */
+    /** Cards whose module is turned off under Modules (weather, calendar, fridge), and notes until asked for. */
     widgetsOff: Set<String> = emptySet(),
+    /** Takes a pinned device off the overview. */
+    onUnpin: (String) -> Unit = {},
+    /** Hides a room's card. */
+    onHideRoom: (String) -> Unit = {},
 ) {
     val g = GlassTheme.colors
     val lightsOn = remember(rooms) { rooms.sumOf { it.lightsOn } }
@@ -124,6 +128,7 @@ fun OverviewScreen(
         if ("weather" !in widgetsOff) add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
         if ("calendar" !in widgetsOff) add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
         if ("fridge" !in widgetsOff) add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
+        if ("notes" !in widgetsOff) add(LaneCard("notes", LaneCard.Kind.Info, wide = true, height = 300))
         if (hasHousehold) add(LaneCard("home", LaneCard.Kind.Info, wide = true, height = 200))
         if (hasPlayer) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
         favouritesById.forEach { (key, device) ->
@@ -179,7 +184,7 @@ fun OverviewScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .onGloballyPositioned { drag.viewport = it }
-                .rearrangeable(drag, actions.rearrange, actions::open, onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }),
+                .rearrangeable(drag, actions.rearrange, onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }),
         ) {
             LaneLayout(
                 lanes = lanes,
@@ -193,7 +198,17 @@ fun OverviewScreen(
                     when {
                         room != null -> { { actions.open(Sheet.RoomMenu(room.zone.id)) } }
                         device != null -> { { actions.open(Sheet.CardMenu(device.id)) } }
-                        else -> { {} }
+                        else -> null
+                    }
+                },
+                // The minus takes a pinned device off the overview, or hides a room.
+                remove = { key ->
+                    val room = roomsById[key]
+                    val device = favouritesById[key]
+                    when {
+                        room != null -> { { onHideRoom(room.zone.id) } }
+                        device != null -> { { onUnpin(device.id) } }
+                        else -> null
                     }
                 },
                 modifier = Modifier.fillMaxWidth().verticalScroll(scroll).padding(bottom = 24.dp),
@@ -201,7 +216,7 @@ fun OverviewScreen(
                 val room = roomsById[key]
                 val device = favouritesById[key]
                 when {
-                    room != null -> RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.hold(Sheet.RoomMenu(room.zone.id)) })
+                    room != null -> RoomCard(room, actions, onClick = { onRoom(room.zone.id) }, onLongClick = { actions.hold() })
                     device != null -> DeviceTile(device, actions)
                     key == "player" && player != null -> MediaPlayerCard(player, actions, subtitle = player.zone?.let { zones[it]?.name })
                     else -> Column { widget(key) }
@@ -476,7 +491,7 @@ fun RoomScreen(
             verticalArrangement = Arrangement.spacedBy(GridGap),
             contentPadding = PaddingValues(bottom = 24.dp),
             state = grid,
-            modifier = Modifier.weight(1f).rearrangeable(drag, actions.rearrange, actions::open),
+            modifier = Modifier.weight(1f).rearrangeable(drag, actions.rearrange),
         ) {
             roomSections.forEach { section ->
                 if (roomSections.size > 1) {
@@ -529,7 +544,7 @@ internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () ->
 }
 
 /** The overview's cards that aren't devices or rooms. */
-private val WIDGETS = setOf("weather", "calendar", "player", "fridge", "home")
+private val WIDGETS = setOf("weather", "calendar", "player", "fridge", "home", "notes")
 
 private fun isWidgetKey(key: Any): Boolean = key is String && key in WIDGETS
 
@@ -544,7 +559,7 @@ private const val FAV = "fav:"
 private fun DoneChip(actions: DashboardActions, modifier: Modifier = Modifier, onAutoArrange: (() -> Unit)? = null) {
     val g = GlassTheme.colors
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("Drag cards to move them, tap one for its menu", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        Text("Drag cards to move them, tap one to edit it", style = MaterialTheme.typography.bodyMedium, color = g.muted)
         onAutoArrange?.let { GlassChip(Sym.autoAwesome, "Auto arrange", g.fg, onClick = it) }
         Row(
             Modifier

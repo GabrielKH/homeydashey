@@ -683,6 +683,7 @@ class Agent(
                 val wanted = buildSet {
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
+                    if (NOTE_WORDS.containsMatchIn(said)) addAll(NOTE_TOOLS)
                     if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS + MEMORY_PACK + KNOW_HOW_PACK)
                     if (HOUSEHOLD_WORDS.containsMatchIn(said)) addAll(HOUSEHOLD_TOOLS)
                 }
@@ -1030,6 +1031,7 @@ class Agent(
         )
         val RECIPE_TOOLS = setOf("find_recipes", "open_recipe", "read_recipe", "recipe_step", "close_recipe", "recipe_timers")
         val FRIDGE_TOOLS = setOf("fridge_contents", "add_to_fridge", "update_fridge_item", "remove_from_fridge")
+        val NOTE_TOOLS = setOf("notes", "write_note", "change_note", "add_todo", "change_todo")
         val ROUTINE_TOOLS = setOf("list_routines", "save_routine", "delete_routine", "remember_instruction", "forget_instruction")
         /** Remembering and forgetting facts only come with "kom ihåg", "glöm" and the like; recall is always there. */
         val MEMORY_PACK = setOf("remember", "forget_memory")
@@ -1043,7 +1045,7 @@ class Agent(
         )
         /** Teaching and forgetting a topic's rules by voice. */
         val KNOW_HOW_PACK = setOf("teach", "forget_rule")
-        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK
+        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + NOTE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK
         /** The guide tool, which every AI gets when topic know-how is on; the [Agent] answers it itself. */
         val GUIDE_SPEC = tool(KnowHow.GUIDE, "Get the rules and tools for one of the know-how topics listed in the rules, when the note doesn't have them.") {
             string("topic", "The topic's name, e.g. music or timers")
@@ -1055,6 +1057,7 @@ class Agent(
             RegexOption.IGNORE_CASE,
         )
         val RECIPE_WORDS = Regex("""$W(recept\w*|recipe\w*|laga\w*|cook\w*|baka\w*|middag|lunch|frukost|dinner|ingrediens\w*|ingredient\w*|steg|step|timers?)$E""", RegexOption.IGNORE_CASE)
+        val NOTE_WORDS = Regex("""$W(lapp\w*|post-?it\w*|note\w*|anteckn\w*|todo\w*|to-?do\w*|att göra|att-göra|göra-?list\w*|uppgift\w*|bocka\w*|avbock\w*|tick\w*|task\w*|meddelande\w*|message|skriv upp|skriv en|write (a|it|that|down)|jot)$E""", RegexOption.IGNORE_CASE)
         val FRIDGE_WORDS = Regex("""$W(kyl\w*|frys\w*|skafferi\w*|fridge|freezer|pantry|köpt\w*|bought|åt|ate|slut|utgång\w*|bäst före|expir\w*|öppnat|opened|mat|food|hemma)$E""", RegexOption.IGNORE_CASE)
         val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)

@@ -147,8 +147,8 @@ class DashboardActions(private val store: HomeyStore, private val scope: Corouti
     /** Holding and dragging cards to rearrange them. */
     val rearrange = Rearrange()
 
-    /** A card was held: rearranging starts, and letting go without a drag opens [menu]. */
-    fun hold(menu: Sheet?) = rearrange.hold(menu)
+    /** A card was held: the cards start to jiggle so they can be moved or tapped to edit. */
+    fun hold() = rearrange.hold()
 
     /** The Homey's Flows that can be started, for Goodnight. */
     suspend fun flows(): List<HomeyFlow> =
@@ -300,6 +300,7 @@ private const val MEDIA = "media"
 private const val CALENDAR = "calendar"
 private const val RECIPES = "recipes"
 private const val FRIDGE = "fridge"
+private const val NOTES = "notes"
 private const val ROOM = "room:"
 
 @Composable
@@ -312,6 +313,7 @@ fun DashboardScreen(
     calendar: CalendarRepository,
     assistantServices: AssistantServices,
     kitchen: app.homeydash.data.Kitchen,
+    notes: app.homeydash.notes.NoteBoard,
     modules: app.homeydash.data.Modules,
     onForget: () -> Unit,
 ) {
@@ -342,6 +344,19 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
     val actions = remember(store) { DashboardActions(store, scope) }
     SideEffect { actions.deviceCards = snapshot.deviceCards }
+    // The chosen display size also goes into the house's memory, so the assistant knows it.
+    val setUiScale: (Float) -> Unit = { scale ->
+        display.setUiScale(scale)
+        scope.launch {
+            runCatching {
+                assistantServices.memory.learn(listOf(app.homeydash.agent.Fact(
+                    subject = "the dashboard tablet",
+                    relation = "display size",
+                    obj = if (scale <= 0f) "fit screen" else "${kotlin.math.round(scale * 100).toInt()}%",
+                )))
+            }
+        }
+    }
     // Counts robot vacuum cleaning hours for the part-wear estimates.
     val appContext = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(store) { app.homeydash.data.VacuumUsage.get(appContext).track(store.snapshot) }
@@ -371,6 +386,8 @@ fun DashboardScreen(
     val goodnightFlow by display.goodnightFlow.collectAsStateWithLifecycle()
     val goodnightAsleep by display.goodnightAsleep.collectAsStateWithLifecycle()
     val household by store.household.state.collectAsStateWithLifecycle()
+    val notesCard by display.notesCard.collectAsStateWithLifecycle()
+    val notesOnDark by display.notesOnDark.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
@@ -399,7 +416,7 @@ fun DashboardScreen(
 
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
     // A page whose module was just turned off goes back to the overview.
-    val pageOff = (destination == RECIPES && !moduleOn("recipes")) || (destination == FRIDGE && !moduleOn("fridge")) || (destination == CALENDAR && !moduleOn("calendar"))
+    val pageOff = (destination == RECIPES && !moduleOn("recipes")) || (destination == FRIDGE && !moduleOn("fridge")) || (destination == CALENDAR && !moduleOn("calendar")) || (destination == NOTES && !moduleOn("notes"))
     LaunchedEffect(pageOff) { if (pageOff) destination = OVERVIEW }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showUpdateSheet by rememberSaveable { mutableStateOf(false) }
@@ -453,6 +470,7 @@ fun DashboardScreen(
             hasCalendar = hasCalendar,
             hasRecipes = moduleOn("recipes"),
             hasFridge = moduleOn("fridge"),
+            hasNotes = moduleOn("notes"),
             destination = destination,
             onNavigate = { destination = it },
             onSettings = { showSettings = true },
@@ -477,6 +495,12 @@ fun DashboardScreen(
                             target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
                             target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label, kitchen.cooking.current()?.first?.title ?: "Recept") })
                             target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
+                            target == NOTES -> NotesScreen(
+                                notes,
+                                people = household.people.map { it.name },
+                                onOverview = notesCard,
+                                onOnOverview = display::setNotesCard,
+                            )
                             target == CALENDAR -> CalendarScreen(
                                 hasPermission = calendarAllowed,
                                 events = events,
@@ -511,11 +535,14 @@ fun DashboardScreen(
                                 favourites = favourites,
                                 order = overviewOrder,
                                 onOrder = display::setOverviewOrder,
+                                onUnpin = { display.pinToOverview(it, false) },
+                                onHideRoom = { display.setRoomHidden(it, true) },
                                 hasHousehold = moduleOn("home") && (household.people.isNotEmpty() || !household.usersAllowed),
                                     widgetsOff = buildSet {
                                     if (!moduleOn("weather")) add("weather")
                                     if (!moduleOn("calendar")) add("calendar")
                                     if (!moduleOn("fridge")) add("fridge")
+                                    if (!moduleOn("notes") || !notesCard) add("notes")
                                 },
                                 widget = { key ->
                                     if (key == "fridge") FridgeCard(
@@ -523,6 +550,7 @@ fun DashboardScreen(
                                         onOpen = { destination = FRIDGE },
                                         onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
                                     )
+                                    if (key == "notes") NotesCard(notes) { destination = NOTES }
                                     if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
                                     if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                     if (key == "calendar") CalendarCard(
@@ -609,9 +637,12 @@ fun DashboardScreen(
                     when (id) {
                         "appearance" -> AppearanceSettings(
                             themeMode, display::setThemeMode, Palette.of(palette), { display.setPalette(it.key) }, flat, display::setFlat,
-                            uiScale, display::setUiScale, accent, display::setAccent, accentOpacity, display::setAccentOpacity, onHomeBackground,
+                            uiScale, setUiScale, accent, display::setAccent, accentOpacity, display::setAccentOpacity, onHomeBackground,
                         )
-                        "screen" -> ScreenSettings(dimAfter, display::setDimAfter, wakeOnProximity, display::setWakeOnProximity, kiosk, display::setKiosk)
+                        "screen" -> ScreenSettings(
+                            dimAfter, display::setDimAfter, wakeOnProximity, display::setWakeOnProximity, kiosk, display::setKiosk,
+                            notesOnDark = notesOnDark.takeIf { moduleOn("notes") }, onNotesOnDark = display::setNotesOnDark,
+                        )
                         "homey" -> {
                             HomeySettings(info, onChooseDevices, onChooseRooms, onWeather, onCalendars)
                             ForgetButton(onForgetHomey)
@@ -648,7 +679,7 @@ fun DashboardScreen(
                 onChooseRooms = onChooseRooms,
                 onWeather = onWeather,
                 uiScale = uiScale,
-                onUiScale = display::setUiScale,
+                onUiScale = setUiScale,
                 palette = Palette.of(palette),
                 onPalette = { display.setPalette(it.key) },
                 flat = flat,
@@ -820,6 +851,7 @@ private fun Sidebar(
     hasCalendar: Boolean,
     hasRecipes: Boolean,
     hasFridge: Boolean,
+    hasNotes: Boolean,
     destination: String,
     onNavigate: (String) -> Unit,
     onSettings: () -> Unit,
@@ -873,6 +905,7 @@ private fun Sidebar(
         if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
         if (hasRecipes) NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
         if (hasFridge) NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
+        if (hasNotes) NavItem(Sym.sticker, "Notes", destination == NOTES, compact = compact) { onNavigate(NOTES) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {

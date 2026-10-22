@@ -48,6 +48,7 @@ import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.glass
 import app.homeydash.ui.components.pressable
+import kotlin.math.roundToInt
 import app.homeydash.ui.theme.GlassTheme
 import app.homeydash.ui.theme.ThemeMode
 
@@ -220,27 +221,38 @@ internal fun AppearanceSettings(
             }
         }
         Text("Display size", style = MaterialTheme.typography.labelLarge, color = g.fg)
-        Row(
-            Modifier.fillMaxWidth().glass(PillShape).padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            listOf(0f to "Fit screen", 0.8f to "80%", 0.9f to "90%", 1f to "100%", 1.1f to "110%").forEach { (scale, label) ->
-                val selected = kotlin.math.abs(scale - uiScale) < 0.01f
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (selected) g.wallBase else g.fg,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .weight(1f)
-                        .pressable({ onUiScale(scale) })
-                        .then(if (selected) Modifier.background(g.fg, PillShape) else Modifier)
-                        .padding(vertical = 12.dp),
-                )
-            }
+        // Fit screen, or any size from 50% to 130% in 5% steps (Gabriel wanted to go below Fit, 2026-10-22).
+        val fit = uiScale <= 0f
+        val fitSize = app.homeydash.ui.fitScale(androidx.compose.ui.platform.LocalConfiguration.current)
+        val chosen = if (fit) fitSize else uiScale
+        fun step(by: Float) = onUiScale(((chosen + by) * 20).roundToInt().div(20f).coerceIn(MIN_SCALE, MAX_SCALE))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "Fit screen",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (fit) g.wallBase else g.fg,
+                modifier = Modifier
+                    .pressable({ onUiScale(0f) })
+                    .then(if (fit) Modifier.background(g.fg, PillShape) else Modifier.glass(PillShape))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+            ScaleStep("−", enabled = chosen > MIN_SCALE + 0.01f) { step(-0.05f) }
+            GlassSlider(
+                value = ((chosen - MIN_SCALE) / (MAX_SCALE - MIN_SCALE)).coerceIn(0f, 1f),
+                onValue = { onUiScale(((MIN_SCALE + it * (MAX_SCALE - MIN_SCALE)) * 20).roundToInt() / 20f) },
+                modifier = Modifier.weight(1f),
+            )
+            ScaleStep("+", enabled = chosen < MAX_SCALE - 0.01f) { step(0.05f) }
+            Text(
+                percent(chosen),
+                style = MaterialTheme.typography.labelLarge,
+                color = g.fg,
+                textAlign = TextAlign.End,
+                modifier = Modifier.width(44.dp),
+            )
         }
         Hint(
-            "Fit screen sizes cards and text to this tablet's screen. Press and hold a card to hide it, move it or put it in a group.",
+            "Fit screen sizes cards and text to this tablet's screen. Slide or use − and + to make everything smaller or bigger. Press and hold a card to make the cards wiggle, then drag one to move it or tap it to edit it.",
         )
     }
     SettingsBox("Highlight") {
@@ -361,6 +373,8 @@ internal fun ScreenSettings(
     onWakeOnProximity: (Boolean) -> Unit,
     kiosk: Boolean,
     onKiosk: (Boolean) -> Unit,
+    notesOnDark: Boolean? = null,
+    onNotesOnDark: (Boolean) -> Unit = {},
 ) {
     val g = GlassTheme.colors
     val context = LocalContext.current
@@ -394,6 +408,13 @@ internal fun ScreenSettings(
             on = wakeOnProximity && hasProximity,
             enabled = hasProximity && dimAfter > 0,
             onChange = onWakeOnProximity,
+        )
+        if (notesOnDark != null) SettingSwitch(
+            title = "Post-its on the dark screen",
+            detail = "The post-its glow on black while the screen is dark, everything else stays off. The screen is a touch brighter while any are up.",
+            on = notesOnDark,
+            enabled = dimAfter > 0,
+            onChange = onNotesOnDark,
         )
     }
     SettingsBox("Kiosk") {
@@ -436,5 +457,20 @@ private fun SettingSwitch(title: String, detail: String, on: Boolean, enabled: B
             Hint(detail)
         }
         Toggle(on, onClick = { onChange(!on) }.takeIf { enabled })
+    }
+}
+
+private const val MIN_SCALE = 0.5f
+private const val MAX_SCALE = 1.3f
+
+/** One 5% step of the display size. */
+@Composable
+private fun ScaleStep(text: String, enabled: Boolean, onClick: () -> Unit) {
+    val g = GlassTheme.colors
+    Box(
+        Modifier.size(40.dp).pressable(if (enabled) onClick else null).glass(CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, style = MaterialTheme.typography.titleLarge, color = if (enabled) g.fg else g.muted)
     }
 }

@@ -221,6 +221,9 @@ object Sym {
 
     // Fridge
     val fridge = Ic(R.drawable.ph_fridge, R.drawable.ph_fridge_fill)
+    // Notes
+    val sticker = Ic(R.drawable.ph_sticker, R.drawable.ph_sticker_fill)
+    val checkSquare = Ic(R.drawable.ph_check_square, R.drawable.ph_check_square_fill)
     val barcode = Ic(R.drawable.ph_barcode, R.drawable.ph_barcode_fill)
     val pantry = Ic(R.drawable.ph_package, R.drawable.ph_package_fill)
     val hourglass = Ic(R.drawable.ph_hourglass_medium, R.drawable.ph_hourglass_medium_fill)

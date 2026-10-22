@@ -66,6 +66,7 @@ private val LOOKS: Map<String, Pair<Ic, Color>> = mapOf(
     "home" to (Sym.people to Color(0xFF2BA79B)),
     "fridge" to (Sym.fridge to Color(0xFF3BA3C7)),
     "recipes" to (Sym.chefHat to Color(0xFFE08A3C)),
+    "notes" to (Sym.sticker to Color(0xFFE7B416)),
     "energy" to (Sym.bolt to Color(0xFFC9A227)),
     "departures" to (Sym.clock to Color(0xFFD0457A)),
     "doorbell" to (Sym.doorbell to Color(0xFF5A6B80)),

@@ -82,6 +82,8 @@ class LaneDrag(val scroll: ScrollState) : DragSurface {
 
     override fun holdableAt(position: Offset): Boolean = hit(position)?.let(holdable) == true
 
+    override fun cardAt(position: Offset): Boolean = hit(position) != null
+
     override fun start(position: Offset): Boolean {
         val found = hit(position) ?: return false
         key = found
@@ -167,8 +169,11 @@ fun LaneLayout(
     gap: Dp,
     drag: LaneDrag,
     rearrange: Rearrange,
-    menu: (String) -> (() -> Unit),
+    /** Opens a card's menu while rearranging; null for cards without one. */
+    menu: (String) -> (() -> Unit)?,
     modifier: Modifier = Modifier,
+    /** Takes a card off the page from its minus badge; null for cards that stay. */
+    remove: (String) -> (() -> Unit)? = { null },
     card: @Composable (String) -> Unit,
 ) {
     val g = GlassTheme.colors
@@ -189,7 +194,7 @@ fun LaneLayout(
         },
         content = {
             keys.forEach { k ->
-                key(k) { LaneItem(k, drag, rearrange, menu(k)) { card(k) } }
+                key(k) { LaneItem(k, drag, rearrange, menu(k), remove(k)) { card(k) } }
             }
         },
     ) { measurables, constraints ->
@@ -226,7 +231,7 @@ fun LaneLayout(
 private class Last(var position: Offset? = null)
 
 @Composable
-private fun LaneItem(key: String, drag: LaneDrag, rearrange: Rearrange, menu: () -> Unit, content: @Composable () -> Unit) {
+private fun LaneItem(key: String, drag: LaneDrag, rearrange: Rearrange, menu: (() -> Unit)?, remove: (() -> Unit)?, content: @Composable () -> Unit) {
     val dragging = drag.key == key
     val scope = rememberCoroutineScope()
     val slide = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
@@ -264,7 +269,9 @@ private fun LaneItem(key: String, drag: LaneDrag, rearrange: Rearrange, menu: ()
     ) {
         content()
         if (rearrange.editing) {
-            Box(Modifier.matchParentSize().pressable(menu))
+            // Covers the card so its own buttons rest while rearranging.
+            Box(Modifier.matchParentSize().pressable(menu ?: {}))
+            if (!dragging) EditBadges(onEdit = menu, onRemove = remove)
         }
     }
 }

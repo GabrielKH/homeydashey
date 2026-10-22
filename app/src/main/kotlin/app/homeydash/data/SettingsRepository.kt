@@ -109,6 +109,20 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[COMPACT_SIDEBAR] = compact }
     }
 
+    /** The post-its show on the dark screen. */
+    val notesOnDark: Flow<Boolean> = context.dataStore.data.map { it[NOTES_ON_DARK] ?: true }
+
+    suspend fun setNotesOnDark(on: Boolean) {
+        context.dataStore.edit { it[NOTES_ON_DARK] = on }
+    }
+
+    /** The small Notes card on the overview; off until asked for, since the overview is full. */
+    val notesCard: Flow<Boolean> = context.dataStore.data.map { it[NOTES_CARD] ?: false }
+
+    suspend fun setNotesCard(on: Boolean) {
+        context.dataStore.edit { it[NOTES_CARD] = on }
+    }
+
     /** Rooms left off the dashboard on this tablet, by zone id. */
     val hiddenRooms: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_ROOMS].orEmpty() }
 
@@ -343,6 +357,8 @@ class SettingsRepository(private val context: Context) {
         val MODULES = stringSetPreferencesKey("modules")
         val SEEN_CHANGES = stringSetPreferencesKey("seen_changes")
         val COMPACT_SIDEBAR = booleanPreferencesKey("compact_sidebar")
+        val NOTES_ON_DARK = booleanPreferencesKey("notes_on_dark")
+        val NOTES_CARD = booleanPreferencesKey("notes_card")
         val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
         val ROOM_ORDER = stringPreferencesKey("room_order")
         val ACCENT_OPACITY = floatPreferencesKey("accent_opacity")

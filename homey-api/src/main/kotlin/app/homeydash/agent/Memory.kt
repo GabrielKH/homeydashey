@@ -333,6 +333,56 @@ object Memory {
     }
 
     /**
+     * A post-it someone put up (by hand or through the assistant): how often they leave notes
+     * and for whom, counted like a habit, and what the newest one said, which the next one from
+     * them to the same person replaces, so "what did Anna write for me?" has an answer after the
+     * note is gone.
+     */
+    fun postIt(note: app.homeydash.notes.PostIt, at: ZonedDateTime): List<Fact> {
+        val text = note.text.trim().takeIf { it.isNotEmpty() } ?: return emptyList()
+        val who = note.byId ?: HOUSE
+        val name = note.by.ifBlank { "Someone in the house" }
+        return listOf(
+            Fact(who = who, whoName = note.by, subject = name, relation = "leaves post-its for", obj = note.forWhom ?: "the house",
+                kind = FactKind.Habit, parts = mapOf(partOfDay(at) to 1)),
+            Fact(who = who, whoName = note.by, subject = name, relation = "wrote on a post-it" + (note.forWhom?.let { " for $it" } ?: ""),
+                obj = text + (note.untilDate()?.let { " (until $it)" } ?: ""), kind = FactKind.Said),
+        )
+    }
+
+    /** Something put on the to-do list, counted per person, so things added again and again show up as habits. */
+    fun todoAdded(todo: app.homeydash.notes.Todo, by: Asker?, at: ZonedDateTime): Fact? {
+        val text = todo.text.trim().takeIf { it.isNotEmpty() } ?: return null
+        return Fact(
+            who = by?.id ?: HOUSE,
+            whoName = by?.name.orEmpty(),
+            subject = by?.name ?: "The house",
+            relation = "puts on the to-do list",
+            obj = text + (todo.who?.takeIf { it != by?.name }?.let { " for $it" } ?: ""),
+            kind = FactKind.Habit,
+            parts = mapOf(partOfDay(at) to 1),
+        )
+    }
+
+    /**
+     * A to-do ticked off: who does which chores, at what part of the day, and whether it was
+     * late, so the assistant can say who usually takes the bins out.
+     */
+    fun todoDone(todo: app.homeydash.notes.Todo, by: Asker?, at: ZonedDateTime): Fact? {
+        val text = todo.text.trim().takeIf { it.isNotEmpty() } ?: return null
+        val late = todo.dueDate()?.let { at.toLocalDate().isAfter(it) } == true
+        return Fact(
+            who = by?.id ?: HOUSE,
+            whoName = by?.name.orEmpty(),
+            subject = by?.name ?: todo.who ?: "Someone in the house",
+            relation = if (late) "gets done, late," else "gets done",
+            obj = text,
+            kind = FactKind.Habit,
+            parts = mapOf(partOfDay(at) to 1),
+        )
+    }
+
+    /**
      * The character and voice [person] picked under People, as one fact a new pick replaces, so
      * the assistant can say who they talk with ("Gabriel talks with TARS").
      */

@@ -70,7 +70,6 @@ import app.homeydash.ui.components.PillShape
 import app.homeydash.ui.components.Sym
 import app.homeydash.ui.components.SymIcon
 import app.homeydash.ui.components.glass
-import app.homeydash.ui.components.windowGlass
 import app.homeydash.ui.components.pressable
 import app.homeydash.ui.theme.GlassTheme
 import kotlinx.coroutines.delay
@@ -154,35 +153,41 @@ fun TimerIsland(assistant: Assistant, modifier: Modifier = Modifier) {
 @Composable
 private fun IslandPill(timer: KitchenTimer, now: Long, others: Int, onClick: () -> Unit, onStop: () -> Unit) {
     val g = GlassTheme.colors
+    // The same glass and height as the chips beside it; the X (or "+2") is the pill's round end.
     Row(
         Modifier
             .height(PILL_HEIGHT)
             .pressable(onClick)
-            .windowGlass(PillShape)
+            .glass(PillShape)
             .animateContentSize()
-            .padding(start = 7.dp, end = 7.dp),
+            .padding(start = 7.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        TimerRing(timer.progress(now), if (timer.paused) g.muted else g.on, size = 30.dp)
+        TimerRing(timer.progress(now), if (timer.paused) g.muted else g.on, size = 24.dp)
         Text(
             timer.name(),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.labelLarge,
             color = g.fg,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 160.dp),
         )
-        TimeText(timer, now, big = false)
+        TimeText(timer, now, big = false, small = true)
         if (others > 0) {
             Box(
-                Modifier.clip(PillShape).background(g.on).padding(horizontal = 10.dp, vertical = 3.dp),
+                Modifier.padding(start = 2.dp).height(PILL_END).widthIn(min = PILL_END).clip(PillShape).background(g.on).padding(horizontal = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("+$others", style = MaterialTheme.typography.labelLarge, color = g.onInk, fontWeight = FontWeight.Bold)
             }
         } else {
-            SmallButton(Sym.close, onStop)
+            Box(
+                Modifier.padding(start = 2.dp).size(PILL_END).clip(CircleShape).background(g.fg.copy(alpha = 0.08f)).pressable(onStop),
+                contentAlignment = Alignment.Center,
+            ) {
+                SymIcon(Sym.close, size = 14.dp, tint = g.muted)
+            }
         }
     }
 }
@@ -199,24 +204,24 @@ private fun RingingPill(timer: KitchenTimer, onStop: () -> Unit, onAdd: (Int) ->
     Row(
         Modifier
             .height(PILL_HEIGHT)
-            .windowGlass(PillShape)
+            .glass(PillShape)
             .drawBehind { drawRect(g.danger.copy(alpha = pulse)) }
-            .padding(start = 14.dp, end = 4.dp),
+            .padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        SymIcon(Sym.timer, filled = true, size = 22.dp, tint = g.fg)
+        SymIcon(Sym.timer, filled = true, size = 20.dp, tint = g.fg)
         Text(
             (timer.label?.let { "$it is done" } ?: "Timer done"),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.labelLarge,
             color = g.fg,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 200.dp).padding(end = 4.dp),
         )
-        TextButton("+1 min") { onAdd(1) }
-        TextButton("+5 min") { onAdd(5) }
-        TextButton("Stop", strong = true, onClick = onStop)
+        TextButton("+1 min", small = true) { onAdd(1) }
+        TextButton("+5 min", small = true) { onAdd(5) }
+        TextButton("Stop", strong = true, small = true, onClick = onStop)
     }
 }
 
@@ -241,8 +246,11 @@ private fun TimerList(
         Modifier
             .width(460.dp)
             .heightIn(max = 520.dp)
-            // The same see-through dark as the assistant's side window (Gabriel, 2026-10-21).
-            .windowGlass(PanelShape)
+            // The same glass as the pill (Gabriel, 2026-10-22), over a little of the wall's
+            // colour so the timers read clearly over the cards below.
+            .clip(PanelShape)
+            .background(g.wallBase.copy(alpha = if (g.isDark) 0.55f else 0.6f), PanelShape)
+            .glass(PanelShape)
             .pressable(onTouch)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -286,7 +294,7 @@ private fun TimerList(
         }
         if (timers.size > 1) {
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End) {
-                TextButton("Stop all timers", onClick = onStopAll)
+                TextButton("Stop all timers", tone = Tone.Stop, onClick = onStopAll)
             }
         }
     }
@@ -342,19 +350,24 @@ private fun TimerRow(
         if (renaming) {
             SmallButton(Sym.check, { onRenamed(text) }, primary = true)
         } else {
-            SmallButton(Sym.add, onAdd)
-            if (!timer.ringing) SmallButton(if (timer.paused) Sym.play else Sym.pause, onPause)
+            // The buttons take the theme's colours: more time in the highlight, pause green, stop red.
+            SmallButton(Sym.add, onAdd, tone = Tone.Accent)
+            if (!timer.ringing) SmallButton(if (timer.paused) Sym.play else Sym.pause, onPause, tone = Tone.Go)
             // Quiets the spoken countdown (and the voice when it's done) for this timer only.
             SmallButton(if (timer.muted) Sym.volumeOff else Sym.volumeUp, onMute)
-            SmallButton(Sym.close, onStop)
+            SmallButton(Sym.close, onStop, tone = Tone.Stop)
         }
     }
 }
 
 @Composable
-private fun TimeText(timer: KitchenTimer, now: Long, big: Boolean) {
+private fun TimeText(timer: KitchenTimer, now: Long, big: Boolean, small: Boolean = false) {
     val g = GlassTheme.colors
-    val style = if (big) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
+    val style = when {
+        big -> MaterialTheme.typography.titleLarge
+        small -> MaterialTheme.typography.labelLarge
+        else -> MaterialTheme.typography.titleMedium
+    }
     Text(
         if (timer.ringing) "0:00" else Timers.clock(timer.leftMs(now)),
         style = style.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold),
@@ -375,36 +388,71 @@ private fun TimerRing(progress: Float, color: Color, size: Dp) {
     }
 }
 
+/** A timer button's colour from the theme: plain glass, the highlight, green or red. */
+private enum class Tone { Plain, Accent, Go, Stop }
+
 @Composable
-private fun SmallButton(icon: app.homeydash.ui.components.Ic, onClick: () -> Unit, primary: Boolean = false) {
+private fun toneColors(tone: Tone): Pair<Color, Color>? {
     val g = GlassTheme.colors
+    return when (tone) {
+        Tone.Plain -> null
+        Tone.Accent -> g.onSoft to g.fg
+        Tone.Go -> g.ok.copy(alpha = 0.2f) to g.ok
+        Tone.Stop -> g.danger.copy(alpha = 0.18f) to g.danger
+    }
+}
+
+@Composable
+private fun SmallButton(icon: app.homeydash.ui.components.Ic, onClick: () -> Unit, primary: Boolean = false, tone: Tone = Tone.Plain) {
+    val g = GlassTheme.colors
+    val colors = toneColors(tone)
     Box(
         Modifier
             .size(36.dp)
             .pressable(onClick)
-            .then(if (primary) Modifier.clip(CircleShape).background(g.on) else Modifier.glass(CircleShape)),
+            .then(
+                when {
+                    primary -> Modifier.clip(CircleShape).background(g.on)
+                    colors != null -> Modifier.clip(CircleShape).background(colors.first)
+                    else -> Modifier.glass(CircleShape)
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        SymIcon(icon, size = 16.dp, tint = if (primary) g.onInk else g.fg)
+        SymIcon(icon, size = 16.dp, tint = if (primary) g.onInk else colors?.second ?: g.fg)
     }
 }
 
 @Composable
-private fun TextButton(text: String, strong: Boolean = false, onClick: () -> Unit) {
+private fun TextButton(text: String, strong: Boolean = false, small: Boolean = false, tone: Tone = Tone.Plain, onClick: () -> Unit) {
     val g = GlassTheme.colors
+    val colors = toneColors(tone)
     Box(
         Modifier
-            .heightIn(min = 38.dp)
+            .then(if (small) Modifier.height(30.dp) else Modifier.heightIn(min = 38.dp))
             .pressable(onClick)
-            .then(if (strong) Modifier.clip(PillShape).background(g.danger) else Modifier.glass(PillShape))
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .then(
+                when {
+                    strong -> Modifier.clip(PillShape).background(g.danger)
+                    colors != null -> Modifier.clip(PillShape).background(colors.first)
+                    else -> Modifier.glass(PillShape)
+                },
+            )
+            .padding(horizontal = if (small) 12.dp else 14.dp, vertical = if (small) 0.dp else 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge, color = if (strong) Color.White else g.fg, fontWeight = FontWeight.Bold)
+        Text(
+            text,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (strong) Color.White else colors?.second ?: g.fg,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
 private const val TICK_MS = 250L
-/** As tall as the chips beside it in the overview's header. */
-private val PILL_HEIGHT = 44.dp
+/** As tall as the glass chips beside it in the page headers (9 + 20 + 9). */
+private val PILL_HEIGHT = 38.dp
+/** The round end of the pill: its X, or the "+2" for the other timers. */
+private val PILL_END = 30.dp
 private const val CLOSE_AFTER_MS = 8_000L

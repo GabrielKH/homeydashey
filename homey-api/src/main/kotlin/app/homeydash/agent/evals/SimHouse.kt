@@ -117,6 +117,7 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
     val recipes = RecipeBook(File(dir, "recipes"), http)
     val cooking = Cooking(recipes)
     val fridge = Fridge(File(dir, "fridge"), products = emptyList(), date = today)
+    val notes = app.homeydash.notes.NoteBoard(File(dir, "notes"), date = today)
 
     /** Fills the recipe book and the fridge; once, before the first question. */
     suspend fun open() {
@@ -130,6 +131,7 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
             )
         }
         fridge.load()
+        notes.load()
         file.fridge.forEach { f ->
             val category = FoodRules.classify(f.name)
             fridge.add(

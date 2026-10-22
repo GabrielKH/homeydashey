@@ -47,7 +47,14 @@ data class Given(
     val step: Int? = null,
     /** Devices whose capability calls fail. */
     val failing: List<String> = emptyList(),
+    /** Post-its up on the kitchen screen, by their text. */
+    val notes: List<String> = emptyList(),
+    val todos: List<GivenTodo> = emptyList(),
 )
+
+/** A to-do on the list before the question: for [who] (none for everyone), ticked off when [done]. */
+@Serializable
+data class GivenTodo(val text: String, val who: String? = null, val done: Boolean = false)
 
 @Serializable
 data class GivenTimer(val label: String? = null, val minutes: Double)
@@ -92,6 +99,17 @@ data class Expect(
     @SerialName("fridge_not") val fridgeNot: List<String> = emptyList(),
     /** Where an item in the fridge is: name to Fridge, Freezer or Pantry. */
     @SerialName("fridge_place") val fridgePlace: Map<String, String> = emptyMap(),
+    /** Words a post-it must say, and words no post-it may say any more. */
+    @SerialName("note_has") val noteHas: List<String> = emptyList(),
+    @SerialName("note_not") val noteNot: List<String> = emptyList(),
+    /** Who a post-it naming these words is for: words to person. */
+    @SerialName("note_for") val noteFor: Map<String, String> = emptyMap(),
+    /** Open to-dos that must be on the list, ticked off ones, and ones that must be gone or ticked. */
+    @SerialName("todo_has") val todoHas: List<String> = emptyList(),
+    @SerialName("todo_done") val todoDone: List<String> = emptyList(),
+    @SerialName("todo_not") val todoNot: List<String> = emptyList(),
+    /** Who an open to-do naming these words is for: words to person, or `everyone`. */
+    @SerialName("todo_who") val todoWho: Map<String, String> = emptyMap(),
     /** The open recipe's title, or `none` for none open, and its step from 1. */
     val recipe: String? = null,
     val step: Int? = null,
@@ -115,7 +133,7 @@ data class EventCheck(val title: String, val date: String? = null, val time: Str
 
 object SkillCases {
     /** The case files in `evals/cases/`, in the order they run. */
-    val FILES = listOf("lights", "moods", "music", "timers", "recipes", "fridge", "calendar", "goodnight", "home", "safety")
+    val FILES = listOf("lights", "moods", "music", "timers", "recipes", "fridge", "notes", "calendar", "goodnight", "home", "safety")
 
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     private val json = Json { ignoreUnknownKeys = false; allowComments = true; allowTrailingComma = true }

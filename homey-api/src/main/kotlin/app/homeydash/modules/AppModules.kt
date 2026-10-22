@@ -234,6 +234,21 @@ object AppModules {
             assistant = "Answers \"do we have milk?\" and learns how fast the house goes through things.",
         ),
         AppModule(
+            id = "notes",
+            name = "Notes",
+            summary = "Post-its for the house and a shared to-do list.",
+            kind = ModuleKind.Feature,
+            sources = listOf(
+                ModuleSource(
+                    "board", "Built in: post-its and to-dos",
+                    "Kept on this tablet. Post-its also glow on the dark screen.",
+                    SourceKind.BuiltIn,
+                ),
+            ),
+            showsOn = listOf("Notes page", "Dark screen", "Notes card on the overview (turn on from the Notes page)"),
+            assistant = "Writes post-its, adds and ticks off to-dos, and learns who does which chores.",
+        ),
+        AppModule(
             id = "recipes",
             name = "Recipes",
             summary = "Your recipes on the tablet, with step-by-step cooking and timers.",

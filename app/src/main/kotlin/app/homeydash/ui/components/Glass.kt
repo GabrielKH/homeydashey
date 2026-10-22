@@ -94,7 +94,7 @@ fun Modifier.glass(shape: Shape = PanelShape): Modifier = composed {
 
 /**
  * The assistant's side window look: the wall's own dark (or light) colour, a little
- * see-through, under the glass. The kitchen timers wear it too, so they match.
+ * see-through, under the glass.
  */
 fun Modifier.windowGlass(shape: Shape = PanelShape): Modifier = composed {
     val g = GlassTheme.colors

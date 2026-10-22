@@ -26,6 +26,8 @@ class DisplaySettings(
     val accentOpacity: StateFlow<Float> = settings.accentOpacity.stateIn(scope, SharingStarted.Eagerly, 1f)
     val hiddenDevices: StateFlow<Set<String>> = settings.hiddenDevices.stateIn(scope, SharingStarted.Eagerly, emptySet())
     val compactSidebar: StateFlow<Boolean> = settings.compactSidebar.stateIn(scope, SharingStarted.Eagerly, false)
+    val notesOnDark: StateFlow<Boolean> = settings.notesOnDark.stateIn(scope, SharingStarted.Eagerly, true)
+    val notesCard: StateFlow<Boolean> = settings.notesCard.stateIn(scope, SharingStarted.Eagerly, false)
     val hiddenRooms: StateFlow<Set<String>> = settings.hiddenRooms.stateIn(scope, SharingStarted.Eagerly, emptySet())
     val roomOrder: StateFlow<List<String>> = settings.roomOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val backgrounds: StateFlow<Map<String, String>> = settings.backgrounds.stateIn(scope, SharingStarted.Eagerly, emptyMap())
@@ -157,6 +159,14 @@ class DisplaySettings(
 
     fun setCompactSidebar(compact: Boolean) {
         scope.launch { settings.setCompactSidebar(compact) }
+    }
+
+    fun setNotesOnDark(on: Boolean) {
+        scope.launch { settings.setNotesOnDark(on) }
+    }
+
+    fun setNotesCard(on: Boolean) {
+        scope.launch { settings.setNotesCard(on) }
     }
 
     fun setRoomHidden(zoneId: String, hidden: Boolean) {

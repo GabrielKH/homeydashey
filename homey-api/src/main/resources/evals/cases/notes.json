@@ -1,0 +1,61 @@
+{
+  "skill": "notes",
+  "title": "Post-its and to-dos",
+  "cases": [
+    {
+      "id": "notes.write_for_someone",
+      "about": "A post-it for someone else goes up on the screen, for them.",
+      "tags": ["smoke"],
+      "say": {"sv": ["skriv en lapp till Alex att middagen står i kylen", "lämna ett meddelande till Alex: middagen står i kylen"], "en": ["leave a note for Alex that dinner is in the fridge"]},
+      "expect": {"note_has": ["middag|dinner"], "note_for": {"middag|dinner": "Alex"}, "tools": ["write_note"], "tools_never": ["add_todo", "remember", "add_to_fridge"]}
+    },
+    {
+      "id": "notes.write_plain",
+      "about": "A post-it for the house, without a person.",
+      "say": {"sv": ["sätt upp en lapp: ring rörmokaren"], "en": ["put up a post-it saying call the plumber"]},
+      "expect": {"note_has": ["rormokar|plumber"], "tools": ["write_note"], "tools_never": ["add_todo"]}
+    },
+    {
+      "id": "notes.take_down",
+      "about": "A post-it comes down; the others stay.",
+      "given": {"notes": ["Köp blommor till mormor", "Wifi för gäster: sommar2026"]},
+      "say": {"sv": ["ta bort lappen om blommorna"], "en": ["take down the note about the flowers"]},
+      "expect": {"note_not": ["blommor"], "note_has": ["wifi"], "tools": ["change_note"]}
+    },
+    {
+      "id": "notes.read",
+      "about": "Reading the post-its out, without changing them.",
+      "given": {"notes": ["Köp blommor till mormor"]},
+      "say": {"sv": ["vad står det på lapparna?"], "en": ["what do the post-its say?"]},
+      "expect": {"reply": ["blommor|flowers"], "note_has": ["blommor"], "tools": ["notes"], "tools_never": ["write_note", "change_note"]}
+    },
+    {
+      "id": "notes.todo_add_mine",
+      "about": "\"My\" to-do is the asker's own.",
+      "tags": ["smoke"],
+      "say": {"sv": ["lägg till boka bilservice på min att göra-lista"], "en": ["add book the car service to my to-do list"]},
+      "expect": {"todo_has": ["bilservice|car service"], "todo_who": {"bilservice|car service": "Gabriel"}, "tools": ["add_todo"], "tools_never": ["add_event", "write_note"]}
+    },
+    {
+      "id": "notes.todo_add_everyone",
+      "about": "A to-do without a person is for everyone.",
+      "say": {"sv": ["vi måste byta glödlampan i hallen, lägg det på att göra-listan"], "en": ["put change the hallway bulb on the to-do list"]},
+      "expect": {"todo_has": ["glodlamp|lampa|bulb"], "todo_who": {"glodlamp|lampa|bulb": "everyone"}, "tools": ["add_todo"]}
+    },
+    {
+      "id": "notes.todo_done",
+      "about": "Saying it's done ticks it off.",
+      "tags": ["smoke"],
+      "given": {"todos": [{"text": "Boka bilservice", "who": "Gabriel"}, {"text": "Vattna blommorna"}]},
+      "say": {"sv": ["jag har bokat bilservicen", "bocka av bilservice"], "en": ["I booked the car service, tick it off"]},
+      "expect": {"todo_done": ["bilservice"], "todo_has": ["vattna"], "tools": ["change_todo"]}
+    },
+    {
+      "id": "notes.todo_what_to_do",
+      "about": "Reading one's own to-dos.",
+      "given": {"todos": [{"text": "Boka bilservice", "who": "Gabriel"}, {"text": "Lämna paketet", "who": "Alex"}]},
+      "say": {"sv": ["vad har jag att göra?"], "en": ["what's on my to-do list?"]},
+      "expect": {"reply": ["bilservice|car service"], "reply_not": ["paket|parcel"], "tools": ["notes"], "tools_never": ["calendar"]}
+    }
+  ]
+}

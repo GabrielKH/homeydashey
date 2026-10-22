@@ -159,6 +159,21 @@ object KnowHow {
             ),
         ),
         Skill(
+            id = "notes", title = "Post-its and to-dos", about = "post-it notes on the kitchen screen and the family's to-do list",
+            words = listOf(
+                "lapp*", "post-it*", "postit*", "note*", "anteckn*", "todo*", "to-do*", "att göra", "göralist*", "uppgift*", "bocka*",
+                "avbock*", "klar med", "done with", "tick*", "task*", "meddelande*", "message*", "skriv upp", "skriv en", "write down",
+                "påminnelse*", "reminder*", "glöm inte", "don't forget",
+            ),
+            tools = listOf("notes", "write_note", "change_note", "add_todo", "change_todo"),
+            rules = listOf(
+                "A post-it (\"skriv en lapp\", \"lämna ett meddelande till Anna\", \"put a note up\") goes on the kitchen screen with write_note: short text in the user's words, for whom if said, until a day if said. It also shows on the dark screen at night.",
+                "Things to do (\"lägg till … på att göra-listan\", \"add … to my to-dos\") go through add_todo: \"min/my\" is who mine, a name is that person, nothing said is everyone; a day said is due.",
+                "When someone says they did a to-do (\"jag har bokat bilservicen\", \"done with the bins\"), tick it off with change_todo; \"what do I have to do\" reads notes with who mine.",
+                "Never put a to-do in the calendar or a post-it in memory; use these tools, and say the post-it or to-do back in a few words.",
+            ),
+        ),
+        Skill(
             id = "calendar", title = "Calendar", about = "plans, events and appointments on any day",
             words = listOf(
                 "kalender*", "calendar*", "händer", "happening", "plan*", "möte*", "meeting*", "event*", "evenemang*", "bokat", "booked",
