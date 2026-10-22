@@ -123,6 +123,22 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[NOTES_CARD] = on }
     }
 
+    /** Readings picked to show on a device's card, by device id (one "id<TAB>cap,cap" line each). */
+    val cardReadings: Flow<Map<String, List<String>>> = context.dataStore.data.map { prefs ->
+        prefs[CARD_READINGS].orEmpty().lines().mapNotNull { line ->
+            val (id, caps) = line.split('\t', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+            id to caps.split(',').filter { it.isNotBlank() }
+        }.toMap()
+    }
+
+    suspend fun setCardReadings(deviceId: String, capabilities: List<String>) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[CARD_READINGS].orEmpty().lines().filter { it.isNotBlank() && !it.startsWith(deviceId + "\t") }
+            val next = if (capabilities.isEmpty()) current else current + (deviceId + "\t" + capabilities.joinToString(","))
+            prefs[CARD_READINGS] = next.joinToString("\n")
+        }
+    }
+
     /** Rooms left off the dashboard on this tablet, by zone id. */
     val hiddenRooms: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_ROOMS].orEmpty() }
 
@@ -371,6 +387,7 @@ class SettingsRepository(private val context: Context) {
         val NOTES_CARD = booleanPreferencesKey("notes_card")
         val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
         val OVERVIEW_OFF = stringSetPreferencesKey("overview_off")
+        val CARD_READINGS = stringPreferencesKey("card_readings")
         val ROOM_ORDER = stringPreferencesKey("room_order")
         val ACCENT_OPACITY = floatPreferencesKey("accent_opacity")
 

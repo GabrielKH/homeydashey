@@ -127,12 +127,21 @@ sealed interface Sheet {
     data object Household : Sheet
     /** The overview's + Add card list: widgets, rooms and devices with a switch each. */
     data object AddCards : Sheet
+    /** Everything a sensor, smoke detector or other device reports, with a 24-hour line. */
+    data class DeviceInfo(val deviceId: String) : Sheet
 }
 
 /** Everything a card can do to the Homey. One instance per dashboard. */
 @Stable
 class DashboardActions(private val store: HomeyStore, private val scope: CoroutineScope) {
     var sheet by mutableStateOf<Sheet?>(null)
+
+    /** Readings picked to show on each device's card, kept in step with the settings by the dashboard. */
+    var cardReadings by mutableStateOf<Map<String, List<String>>>(emptyMap())
+        internal set
+
+    /** A reading's last 24 hours from Homey Insights (empty without the Insights permission). */
+    suspend fun history(deviceId: String, capabilityId: String): List<Double> = store.history(deviceId, capabilityId)
 
     /** Flow cards per device, kept in step with the store by the dashboard. */
     var deviceCards by mutableStateOf<Map<String, List<FlowCardAction>>>(emptyMap())
@@ -345,7 +354,11 @@ fun DashboardScreen(
     val connection by store.connection.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val actions = remember(store) { DashboardActions(store, scope) }
-    SideEffect { actions.deviceCards = snapshot.deviceCards }
+    val cardReadings by display.cardReadings.collectAsStateWithLifecycle()
+    SideEffect {
+        actions.deviceCards = snapshot.deviceCards
+        actions.cardReadings = cardReadings
+    }
     // The chosen display size also goes into the house's memory, so the assistant knows it.
     val setUiScale: (Float) -> Unit = { scale ->
         display.setUiScale(scale)
@@ -827,6 +840,28 @@ fun DashboardScreen(
             onDismiss = actions::close,
         )
         Sheet.Household -> HouseholdDialog(store.household, onDismiss = actions::close)
+        is Sheet.DeviceInfo -> snapshot.devices[sheet.deviceId]?.let { device ->
+            DeviceSheet(
+                device = device,
+                room = device.zone?.let(snapshot.zones::get)?.name,
+                actions = actions,
+                onCard = { picked ->
+                    display.setCardReadings(device.id, picked)
+                    // Which readings matter on this card goes into the house's memory too.
+                    val titles = picked.mapNotNull { id -> device.capability(id)?.let { it.title ?: it.id } }
+                    scope.launch {
+                        runCatching {
+                            assistantServices.memory.learn(listOf(app.homeydash.agent.Fact(
+                                subject = device.name,
+                                relation = "card shows",
+                                obj = titles.joinToString(", ").ifEmpty { "the usual reading" },
+                            )))
+                        }
+                    }
+                },
+                onDismiss = actions::close,
+            )
+        } ?: SideEffect { actions.close() }
         Sheet.AddCards -> AddCardsDialog(
             widgets = buildList {
                 if (moduleOn("weather")) add(OverviewWidget("weather", Sym.wbSunny, "Weather", "Now and the next days"))

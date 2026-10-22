@@ -129,9 +129,9 @@ fun AddCardsDialog(
 }
 
 @Composable
-private fun <T> CardList(items: List<T>, key: (T) -> Any, row: @Composable (T) -> Unit) {
+private fun <T> CardList(rows: List<T>, key: (T) -> Any, row: @Composable (T) -> Unit) {
     LazyColumn(Modifier.heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        items(items, key = key) { row(it) }
+        items(rows, key = key) { row(it) }
     }
 }
 

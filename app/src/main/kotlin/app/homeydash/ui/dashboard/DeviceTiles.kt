@@ -32,6 +32,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import app.homeydash.ui.components.bubbleSize
+import app.homeydash.ui.components.SymIcon
+import app.homeydash.ui.components.PillShape
+import app.homeydash.ui.components.LocalTileWidth
+import androidx.compose.ui.unit.Dp
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.BoxWithConstraints
 import app.homeydash.homey.CardKind
 import app.homeydash.homey.Capability
 import app.homeydash.homey.DashboardLayout
@@ -108,7 +117,7 @@ private fun LevelTile(
     } else {
         Modifier
     }
-    Box(
+    BoxWithConstraints(
         modifier
             .fillMaxWidth()
             .height(TileHeight)
@@ -116,6 +125,7 @@ private fun LevelTile(
             .glass(TileShape)
             .then(gesture),
     ) {
+        val tileWidth = maxWidth
         val edge = if (animated in 0.005f..0.995f) 2.dp else 0.dp
         Row(Modifier.fillMaxSize()) {
             Box(
@@ -126,9 +136,14 @@ private fun LevelTile(
             )
             Box(Modifier.fillMaxHeight().width(edge).background(fillColor.copy(alpha = 0.9f)))
         }
-        Column(Modifier.fillMaxSize().padding(16.dp)) { content(shown, drag != null) }
+        CompositionLocalProvider(LocalTileWidth provides tileWidth) {
+            Column(Modifier.fillMaxSize().padding(tilePadding(tileWidth))) { content(shown, drag != null) }
+        }
     }
 }
+
+/** 16 dp inside a tile, a little less on a narrow one. */
+private fun tilePadding(width: Dp): Dp = if (width < 190.dp) 12.dp else 16.dp
 
 @Composable
 private fun LightTile(device: Device, actions: DashboardActions, modifier: Modifier) {
@@ -166,7 +181,7 @@ private fun LightTile(device: Device, actions: DashboardActions, modifier: Modif
             device.capability("measure_power")?.numberValue?.takeIf { lit && it > 0.5 && openSheet == null }?.let {
                 Text(formatValue(device.capability("measure_power")!!), style = MaterialTheme.typography.bodyMedium, color = g.muted)
             }
-            openSheet?.let { RoundButton(Sym.sliders, it, size = 38.dp, filledIcon = false, contentDescription = "Adjust ${device.name}") }
+            openSheet?.let { RoundButton(Sym.sliders, it, size = bubbleSize() * 0.82f, filledIcon = false, contentDescription = "Adjust ${device.name}") }
         }
         Spacer(Modifier.weight(1f))
         TileTitle(device.name)
@@ -204,11 +219,11 @@ private fun BlindsTile(device: Device, actions: DashboardActions, modifier: Modi
             Bubble(deviceIcon(device), on = shown > 0.02f, onColor = g.cool)
             Spacer(Modifier.weight(1f))
             if (state != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    RoundButton(Sym.keyboardArrowUp, { actions.set(device.id, state.id, JsonPrimitive("up")) }, size = 36.dp, filledIcon = false)
-                    RoundButton(Sym.pause, { actions.set(device.id, state.id, JsonPrimitive("idle")) }, size = 36.dp)
-                    RoundButton(Sym.keyboardArrowDown, { actions.set(device.id, state.id, JsonPrimitive("down")) }, size = 36.dp, filledIcon = false)
-                }
+                CoverControls(
+                    onUp = { actions.set(device.id, state.id, JsonPrimitive("up")) },
+                    onStop = { actions.set(device.id, state.id, JsonPrimitive("idle")) },
+                    onDown = { actions.set(device.id, state.id, JsonPrimitive("down")) },
+                )
             }
         }
         Spacer(Modifier.weight(1f))
@@ -324,15 +339,21 @@ private fun SensorTile(device: Device, actions: DashboardActions, modifier: Modi
         .mapNotNull { device.capability(it) }
         .filter { it.getable && it.value !is JsonNull && it.id != "alarm_battery" && it.id != "measure_battery" }
     val alarm = readings.firstOrNull { it.id.startsWith("alarm_") && it.booleanValue == true }
-    val primary = PRIMARY_READINGS.firstNotNullOfOrNull { id -> readings.firstOrNull { it.id == id } }
+    // Readings ticked in the device's sheet come first: the first large, the second under the name.
+    val picked = actions.cardReadings[device.id].orEmpty().mapNotNull { id -> device.capability(id)?.takeIf { it.value !is JsonNull } }
+    val primary = picked.firstOrNull()
+        ?: PRIMARY_READINGS.firstNotNullOfOrNull { id -> readings.firstOrNull { it.id == id } }
         ?: readings.firstOrNull { it.id.startsWith("measure_") }
     val contact = readings.firstOrNull { it.id == "alarm_contact" }
     val motion = readings.firstOrNull { it.id == "alarm_motion" }
     val onoff = device.capability("onoff")?.takeIf { it.setable }
     val isOn = onoff?.booleanValue == true
+    val openSheet = { actions.open(Sheet.DeviceInfo(device.id)) }
+    // A tap switches what can be switched; everything else opens the device's sheet.
+    val toggle = onoff?.let { cap -> { actions.set(device.id, cap.id, JsonPrimitive(!isOn)) } }?.takeIf { device.available }
     TileBox(
         modifier,
-        onClick = onoff?.let { cap -> { actions.set(device.id, cap.id, JsonPrimitive(!isOn)) } }?.takeIf { device.available },
+        onClick = toggle ?: openSheet,
         onLongClick = { actions.hold() },
     ) {
         Row(verticalAlignment = Alignment.Top) {
@@ -342,18 +363,33 @@ private fun SensorTile(device: Device, actions: DashboardActions, modifier: Modi
                 onColor = if (alarm != null) g.danger else null,
                 tint = if (primary?.id == "measure_temperature") g.cool else null,
             )
-            Spacer(Modifier.weight(1f))
             if (primary != null) {
-                Text(formatValue(primary), style = MaterialTheme.typography.headlineMedium, color = g.fg, maxLines = 1)
+                // Smaller on a narrow tile, and never over the icon or the name.
+                val narrow = LocalTileWidth.current.let { it != Dp.Unspecified && it < 210.dp }
+                Text(
+                    formatValue(primary),
+                    style = if (narrow) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                    color = g.fg,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f).padding(start = 8.dp),
+                )
+            }
+            if (primary == null) Spacer(Modifier.weight(1f))
+            if (toggle != null) {
+                RoundButton(Sym.chevronRight, openSheet, Modifier.padding(start = 6.dp), size = bubbleSize() * 0.72f, filledIcon = false, contentDescription = "More about ${device.name}")
             }
         }
         Spacer(Modifier.weight(1f))
         TileTitle(device.name)
         val status = when {
             !device.available -> "Unavailable"
+            alarm != null -> alarm.title ?: "Alert"
+            picked.size > 1 -> formatValue(picked[1])
             contact != null -> if (contact.booleanValue == true) "Open" else "Closed"
             motion != null -> if (motion.booleanValue == true) "Motion" else "No motion"
-            alarm != null -> alarm.title ?: "Alert"
             else -> readings.filter { it != primary && it.numberValue != null }.take(2).joinToString(" · ") { formatValue(it) }
                 .ifEmpty { if (onoff != null) (if (isOn) "On" else "Off") else "" }
         }
@@ -373,15 +409,18 @@ private fun TileBox(
     onLongClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
+    BoxWithConstraints(
         modifier
             .fillMaxWidth()
             .height(TileHeight)
             .pressable(onClick, onLongClick)
-            .glass(TileShape)
-            .padding(16.dp),
-        content = content,
-    )
+            .glass(TileShape),
+    ) {
+        val tileWidth = maxWidth
+        CompositionLocalProvider(LocalTileWidth provides tileWidth) {
+            Column(Modifier.fillMaxSize().padding(tilePadding(tileWidth)), content = content)
+        }
+    }
 }
 
 @Composable
@@ -407,4 +446,23 @@ fun TileStatus(text: String, strong: Boolean, color: Color? = null) {
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.padding(top = 2.dp),
     )
+}
+
+/**
+ * Up, stop and down for blinds and curtains as one slim glass pill that shrinks with the
+ * tile, instead of three round buttons that didn't fit a narrow tile (Gabriel, 2026-10-22).
+ */
+@Composable
+private fun CoverControls(onUp: () -> Unit, onStop: () -> Unit, onDown: () -> Unit) {
+    val g = GlassTheme.colors
+    val width = LocalTileWidth.current
+    val button = if (width == Dp.Unspecified) 38.dp else (width * 0.15f).coerceIn(28.dp, 38.dp)
+    Row(Modifier.glass(PillShape), verticalAlignment = Alignment.CenterVertically) {
+        listOf(Sym.keyboardArrowUp to onUp, Sym.stop to onStop, Sym.keyboardArrowDown to onDown).forEachIndexed { i, (icon, onClick) ->
+            if (i > 0) Box(Modifier.width(1.dp).height(button * 0.55f).background(g.glassLine))
+            Box(Modifier.size(button).pressable(onClick), contentAlignment = Alignment.Center) {
+                SymIcon(icon, filled = icon == Sym.stop, size = button * 0.5f, tint = g.fg)
+            }
+        }
+    }
 }
