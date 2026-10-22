@@ -544,7 +544,9 @@ class AgentTools(
         )
         val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         lastPlayer = d.id
-        return ok("Playing $played on ${d.name}.")
+        // The room too, so "Vardagsrum" played on "Beam" isn't taken for the wrong speaker.
+        val room = d.room?.takeIf { r -> !NameMatch.normalize(d.name).contains(NameMatch.normalize(r)) }
+        return ok("Playing $played on ${d.name}${room?.let { " ($it)" }.orEmpty()}.")
     }
 
     /**
