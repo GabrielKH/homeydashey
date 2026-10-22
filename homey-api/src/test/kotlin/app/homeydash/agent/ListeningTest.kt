@@ -100,6 +100,45 @@ class ListeningTest {
         assertTrue(MicSensitivity.alpha(50) in 0.015..0.017)
     }
 
+    @Test
+    fun aHeldSoundIsNoName() {
+        // "aaaaa" held in the right voice: spotter and voice both back it, the held sound stops it.
+        val aaa = voiced(1.5, 140.0)
+        val hiss = Random(4).let { r -> ShortArray(24000) { r.nextInt(-5000, 5000).toShort() } }
+        val held = HeldSound.change(aaa)!!
+        assertTrue("held vowel $held", held < 0.9)
+        assertTrue("hiss", HeldSound.change(hiss)!! < 0.9)
+        // A word moves from sound to sound: a hiss, a vowel, a low hum, another vowel.
+        val word = listOf(hiss.copyOf(2400), voiced(0.15, 140.0), voiced(0.12, 140.0, bright = 0.6), hiss.copyOf(1600), voiced(0.2, 180.0, bright = 0.98)).let { parts ->
+            ShortArray(parts.sumOf { it.size }).also { out -> var at = 0; for (p in parts) { p.copyInto(out, at); at += p.size } }
+        }
+        assertTrue("word ${HeldSound.change(word)}", HeldSound.change(word)!! > 1.0)
+        val v = WakeJudge().judge(
+            WakeJudge.prior(mediaPlaying = false, nobodyHome = false, faceKnown = true),
+            listOf(
+                WakeJudge.Witness { WakeJudge.spotter(withGreeting = false) },
+                WakeJudge.Witness { WakeJudge.held(held) },
+                WakeJudge.Witness { WakeJudge.voice(margin = 0.2f, who = "Gabriel") },
+            ),
+        )
+        assertFalse(v.line(), v.wake)
+        assertEquals(0.2, WakeJudge.held(1.8)!!.lambda, 1e-9)
+    }
+
+    /** A voice holding a vowel: a slightly unsteady pulse train, its brightness set by [bright], and a little room noise. */
+    private fun voiced(seconds: Double, hz: Double, bright: Double = 0.9, seed: Int = 1): ShortArray {
+        val r = Random(seed)
+        val n = (seconds * 16000).toInt()
+        var phase = 0.0
+        var y = 0.0
+        return ShortArray(n) { i ->
+            phase += hz * (1 + 0.01 * r.nextDouble(-1.0, 1.0)) / 16000
+            val pulse = if (phase >= 1) { phase -= 1; 8000.0 } else 0.0
+            y = bright * y + pulse
+            (y * (1 - bright) * 10 + r.nextDouble(-60.0, 60.0)).toInt().coerceIn(-32768, 32767).toShort()
+        }
+    }
+
     /** A note as an instrument plays it: many harmonics, a little vibrato and tremolo, plus the room's noise. */
     private fun tone(seconds: Double, hz: Double, amplitude: Double = 6000.0, seed: Int = 1, noise: Double = 200.0): ShortArray {
         val r = Random(seed)
@@ -409,4 +448,5 @@ class SaidNameTest {
             assertTrue(ThinkingSounds.everything(p, sv).containsAll(acks + ThinkingSounds.all(p, sv) + ThinkingSounds.answers(p, sv)))
         }
     }
+
 }

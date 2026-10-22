@@ -85,7 +85,7 @@ internal object CallCheck {
      * unless it was named, a pause sent to play_music, a song "set" on a speaker, two minutes
      * more for a running timer, the fridge page for "visa kylen", and "vi måste…" for everyone.
      */
-    fun rewrite(call: ToolCall, question: String, tools: Collection<String>): ToolCall? {
+    fun rewrite(call: ToolCall, question: String, tools: Collection<String>, view: HomeView? = null): ToolCall? {
         val a = call.arguments
         val folded = NameMatch.normalize(question)
         fun with(vararg pairs: Pair<String, String?>): JsonObject {
@@ -112,11 +112,20 @@ internal object CallCheck {
                 val device = str(a, "player").ifBlank { str(a, "device") }
                 return call.copy(name = "set_device", arguments = JsonObject(mapOf("device" to JsonPrimitive(device), "capability" to JsonPrimitive(cap), "value" to JsonPrimitive(value))))
             }
-            "set_device" -> {
+            "set_device", "set_room" -> {
                 if (str(a, "capability") != "speaker_playing" || "play_music" !in tools) return null
                 val v = str(a, "value")
-                if (v.isBlank() || v.lowercase() in SWITCH_WORDS) return null
-                return call.copy(name = "play_music", arguments = JsonObject(mapOf("player" to JsonPrimitive(str(a, "device")), "query" to JsonPrimitive(v))))
+                if (v.isBlank()) return null
+                if (v.lowercase() !in SWITCH_WORDS) {
+                    val player = if (call.name == "set_device") str(a, "device") else view?.let { speakerIn(it, str(a, "room")) } ?: return null
+                    return call.copy(name = "play_music", arguments = JsonObject(mapOf("player" to JsonPrimitive(player), "query" to JsonPrimitive(v))))
+                }
+                // "sätt på lite morgonjazz i vardagsrummet" as speaker_playing true: what to play is in the question.
+                if (v.lowercase() !in setOf("true", "on", "play", "1", "yes") || view == null) return null
+                val player = if (call.name == "set_device") view.device(str(a, "device"))?.name else speakerIn(view, str(a, "room"))
+                if (player == null) return null
+                val query = musicAsked(question, view, player) ?: return null
+                return call.copy(name = "play_music", arguments = JsonObject(mapOf("player" to JsonPrimitive(player), "query" to JsonPrimitive(query))))
             }
             "timer" -> {
                 if (str(a, "action").lowercase() !in setOf("start", "set") || !MORE_TIME.containsMatchIn(folded)) return null
@@ -134,6 +143,27 @@ internal object CallCheck {
         }
         return null
     }
+
+    /** The one speaker in [room], by name. */
+    private fun speakerIn(view: HomeView, room: String): String? {
+        val id = view.room(room) ?: return null
+        return view.devices.filter { d -> view.inRoom(d, id) && d.capabilities.any { it.id == "speaker_playing" } }.singleOrNull()?.name
+    }
+
+    /** What [question] asks to play once the asking words, rooms and the speaker's name are gone; null when nothing is left. */
+    private fun musicAsked(question: String, view: HomeView, player: String): String? {
+        val place = (view.rooms.values + player).flatMap { NameMatch.normalize(it).split(' ') }.filter { it.length > 2 }
+        val rest = question.trim().split(Regex("""\s+""")).map { it.trim(',', '.', '?', '!', '"') }.filter { w ->
+            val n = NameMatch.normalize(w)
+            n.isNotBlank() && n !in PLAY_WORDS && place.none { NameMatch.sameWord(n, it) || n.startsWith(it) }
+        }
+        return rest.joinToString(" ").ifBlank { null }
+    }
+
+    private val PLAY_WORDS = setOf(
+        "satt", "pa", "spela", "lite", "nagon", "nagot", "i", "pa", "kan", "du", "snalla", "starta", "musik", "musiken", "lat", "oss", "hora", "nova", "tars",
+        "put", "on", "some", "play", "the", "in", "a", "music", "please", "can", "you", "start", "let's", "lets", "us", "hear", "turn", "sonos", "hogtalaren", "speaker",
+    )
 
     /**
      * open_page "recipes" for "öppna lasagnen": the recipe itself is opened instead, by what
@@ -160,7 +190,7 @@ internal object CallCheck {
         val t = NameMatch.normalize(question)
         val mine = listOf(settings.wakeName, "nova", "tars").map(NameMatch::normalize).filter { it.isNotBlank() }
         if (mine.any { Regex("""(^| )${Regex.escape(it)}( |$)""").containsMatchIn(t) }) return false
-        if (ENDEARMENT.containsMatchIn(t)) return true
+        if (ENDEARMENT.containsMatchIn(t) || ERRAND.containsMatchIn(t)) return true
         val asker = settings.asker?.name?.let(NameMatch::normalize)
         // Called by name with a comma ("Alex, har du…", "…ikväll, Alex?"), so "spela Alex och Sigge" isn't.
         return settings.people.values.filter { it.isNotBlank() && NameMatch.normalize(it) != asker }.any { name ->
@@ -168,6 +198,9 @@ internal object CallCheck {
             Regex("""^\s*$n\s*,|,\s*$n\s*[?.!]*\s*$""", RegexOption.IGNORE_CASE).containsMatchIn(question)
         }
     }
+
+    // Errands only a person can run ("kan du hämta barnen idag?"), so they are to someone in the room.
+    private val ERRAND = Regex("""^\s*(och |men )?(kan|kommer|ska|orkar) du (hamta|kopa|handla|diska|ga ut med|ga och|lamna|skjutsa|mata)|^\s*(and |but )?(can|could|will|would) you (pick up|buy|grab|walk|take out the|take the kids|feed|do the dishes|drop off|go and)""")
 
     private val ENDEARMENT = Regex("""(^| )(alskling|alsklingen|gubben|gumman|hjartat|sotnos|raring|honey|darling|babe|sweetie|sweetheart)( |$)""")
 

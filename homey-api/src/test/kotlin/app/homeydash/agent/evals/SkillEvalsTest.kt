@@ -275,6 +275,19 @@ class SkillEvalsTest {
         assertTrue(CallCheck.toSomeoneElse("Alex, har du sett nycklarna?", home))
         assertFalse(CallCheck.toSomeoneElse("spela Alex och Sigge", home))
         assertFalse(CallCheck.toSomeoneElse("Nova, älskling, tänd i köket", home))
+        assertTrue(CallCheck.toSomeoneElse("kan du hämta barnen idag?", home))
+        assertTrue(CallCheck.toSomeoneElse("could you pick up milk on the way home?", home))
+        assertFalse(CallCheck.toSomeoneElse("kan du tända i köket?", home))
+        val play = listOf("set_room", "set_device", "play_music")
+        val jazz = CallCheck.rewrite(call("set_room", "room" to "Vardagsrum", "capability" to "speaker_playing", "value" to "true"), "sätt på lite morgonjazz i vardagsrummet", play, view)
+        assertEquals("play_music", jazz?.name)
+        assertEquals("Vardagsrum Sonos", arg(jazz, "player"))
+        assertEquals("morgonjazz", arg(jazz, "query"))
+        assertEquals("morgonjazz", arg(CallCheck.rewrite(call("set_device", "device" to "Vardagsrum Sonos", "capability" to "speaker_playing", "value" to "true"), "spela morgonjazz på vardagsrummets sonos", play, view), "query"))
+        assertNull(CallCheck.rewrite(call("set_room", "room" to "Vardagsrum", "capability" to "speaker_playing", "value" to "true"), "sätt på musiken i vardagsrummet", play, view))
+        assertTrue(app.homeydash.agent.Agent.inOtherLanguage("Jag har tänt lampan i köket.", swedish = false, view))
+        assertFalse(app.homeydash.agent.Agent.inOtherLanguage("I turned on the light in Kök, it is on now.", swedish = false, view))
+        assertFalse(app.homeydash.agent.Agent.inOtherLanguage("Klart.", swedish = false, view))
     }
 
     @Test fun `the plan picks phrasings, languages and tags`() {

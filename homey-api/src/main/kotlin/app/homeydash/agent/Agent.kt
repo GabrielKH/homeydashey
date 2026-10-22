@@ -243,6 +243,7 @@ class Agent(
             var changed = false
             var nudged = false
             var emptied = false
+            var relanguaged = false
             var reasked = false
             // Calls it asked for again after they were done: twice means it's going round in circles.
             var repeats = 0
@@ -333,6 +334,15 @@ class Agent(
                             actions += "The AI said it changed something, but no tool changed anything."
                             return AgentReply(nothingDone(text, settings), brain, actions = actions, error = true)
                         }
+                        // Set to one language but answered in the other, as the local AI does after a Swedish question.
+                        val wrongLanguage = answersSwedish(settings)?.let { sv -> inOtherLanguage(said, sv, homeView) } == true
+                        if (wrongLanguage && !relanguaged && live?.spokeThisRound != true) {
+                            relanguaged = true
+                            val sv = answersSwedish(settings) == true
+                            heard.trace("guard", "Answered in the wrong language; asked for it in ${if (sv) "Swedish" else "English"}.")
+                            turn += ChatMessage.user(if (sv) NUDGE_SWEDISH else NUDGE_ENGLISH)
+                            return@repeat
+                        }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
                         live?.finish()
@@ -343,7 +353,7 @@ class Agent(
                         val names = specs.map { it.name }
                         val call = lightsOnly(asked, text)?.let { c ->
                             CallCheck.recipeInstead(c, text, names)?.also { heard.trace("guard", "Opened the recipe instead of the recipes page.") }
-                                ?: CallCheck.rewrite(c, text, names)?.also { heard.trace("guard", "Asked for ${c.name} ${c.arguments}; ran ${it.name} ${it.arguments}, as the question said.") }
+                                ?: CallCheck.rewrite(c, text, names, homeView)?.also { heard.trace("guard", "Asked for ${c.name} ${c.arguments}; ran ${it.name} ${it.arguments}, as the question said.") }
                                 ?: c
                         }
                         if (call == null) {
@@ -852,8 +862,8 @@ class Agent(
                 settings.persona == Persona.Tars ->
                     "Always answer in English, even when the user speaks Swedish or any other language; understand them, but reply in English.\n"
                 settings.language == Language.Auto -> "Answer in the language the user spoke: Swedish or English.\n"
-                settings.language == Language.Swedish -> "Always answer in Swedish.\n"
-                else -> "Always answer in English.\n"
+                settings.language == Language.Swedish -> "Always answer in Swedish, even when the user speaks English; understand them, but reply in Swedish.\n"
+                else -> "Always answer in English, even when the user speaks Swedish; understand them, but reply in English.\n"
             },
         )
         val own = settings.traits[settings.persona]?.trim().orEmpty()
@@ -993,6 +1003,13 @@ class Agent(
     }
 
     internal companion object {
+        /** Whether [answer] is plainly in the language the owner didn't pick, once the home's own names are left out. */
+        internal fun inOtherLanguage(answer: String, swedish: Boolean, view: HomeView): Boolean {
+            val names = (view.devices.map { it.name } + view.rooms.values).filter { it.length > 2 }.sortedByDescending { it.length }
+            val bare = names.fold(answer) { t, n -> t.replace(n, " ", ignoreCase = true) }
+            return app.homeydash.agent.evals.Lang.of(bare) == if (swedish) "en" else "sv"
+        }
+
         const val MAX_ROUNDS = 6
         const val IGNORE = "[ignore]"
         const val QUESTION_LABEL = "The user said:"
@@ -1019,6 +1036,8 @@ class Agent(
         fun alreadySaid(said: String) = "(From the app: the user already heard you say \"$said\" Don't say that again; " +
             "answer with only what these results add, in a few words, or just confirm it briefly.)"
         const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
+        const val NUDGE_ENGLISH = "(From the app, not the user: the user set answers to English only. Say your last answer again in English, and nothing else.)"
+        const val NUDGE_SWEDISH = "(From the app, not the user: the user set answers to Swedish only. Say your last answer again in Swedish, and nothing else.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
         const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +
             "like CALL play_music {\"player\": \"player_1\"}, never in <tool_call> tags; or answer the user in words.)"

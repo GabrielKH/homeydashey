@@ -40,8 +40,11 @@ object Fbank {
         }
     }
 
-    /** Features of 16 kHz [samples] (16-bit scale), one row of [BANDS] per 10 ms; empty when shorter than a frame. */
-    fun features(samples: ShortArray): Array<FloatArray> {
+    /**
+     * Features of 16 kHz [samples] (16-bit scale), one row of [BANDS] per 10 ms; empty when
+     * shorter than a frame. [centred] false keeps each band's own level instead.
+     */
+    fun features(samples: ShortArray, centred: Boolean = true): Array<FloatArray> {
         if (samples.size < FRAME) return emptyArray()
         val frames = 1 + (samples.size - FRAME) / SHIFT
         val re = DoubleArray(FFT)
@@ -71,6 +74,7 @@ object Fbank {
                 out[t][b] = ln(max(e, FLOOR)).toFloat()
             }
         }
+        if (!centred) return out
         for (b in 0 until BANDS) {
             var m = 0.0
             for (row in out) m += row[b]

@@ -257,6 +257,8 @@ private suspend fun judgeHit(
     val t = taught.getOrNull(names.indexOf(name))
     val witnesses = listOf(
         WakeJudge.Witness { if (hit.spotted) WakeJudge.spotter(hit.greeting) else null },
+        // Before the voice: a held "aaaaa" in the right voice must not get its two backers.
+        WakeJudge.Witness { hit.sound?.let { WakeJudge.held(app.homeydash.agent.HeldSound.change(it)) } },
         WakeJudge.Witness {
             when {
                 hit.said != null -> WakeJudge.said(hit.said, hit.bar)

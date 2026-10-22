@@ -141,6 +141,21 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, stri
         fun share(verdict: Verdict, judge: WakeJudge): Int =
             (((verdict.score - judge.lower) / (judge.upper - judge.lower)) * 100).toInt().coerceIn(0, 100)
 
+        /**
+         * How much the sound moved ([HeldSound.change]): a name goes from sound to sound, so one
+         * held "aaaaa" or "ssss" is evidence against however right the voice is. Held sounds
+         * measured under 0.9 when a second or longer, names over 1.1 but for one in a noisy room.
+         */
+        fun held(change: Double?): Evidence? = when {
+            change == null -> null
+            change < HELD -> Evidence("sound", -5.0, "one held sound, %.2f".format(change))
+            change < HELD_MAYBE -> Evidence("sound", -2.0, "hardly changes, %.2f".format(change))
+            else -> Evidence("sound", 0.2, "moves like words, %.2f".format(change))
+        }
+
+        private const val HELD = 0.9
+        private const val HELD_MAYBE = 1.0
+
         /** The tablet's own voice (its text-to-speech is a taught voice too): near-certain evidence against. */
         fun itself(): Evidence = Evidence("voice", -8.0, "its own")
 
