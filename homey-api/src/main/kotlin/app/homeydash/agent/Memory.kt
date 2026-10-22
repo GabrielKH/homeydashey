@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.time.ZonedDateTime
 import java.util.UUID
@@ -281,7 +282,7 @@ object Memory {
      * mood, which Flow, which lamp. Null for calls that only look, or that changed nothing.
      */
     fun habit(call: ToolCall, view: HomeView, asker: Asker?, at: ZonedDateTime): Fact? {
-        fun arg(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
+        fun arg(k: String) = (call.arguments[k] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
         fun name(alias: String) = view.named(alias).trim()
         val (relation, obj) = when (call.name) {
             // "listens to the podcast Alex och Sigge on Kök": what kind it was says more than the words alone.
@@ -667,7 +668,7 @@ class MemoryTools(private val book: MemoryBook, private val clock: () -> Long = 
     }
 
     suspend fun run(call: ToolCall, asker: Asker?, local: Boolean): ToolResult? {
-        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
+        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
         return when (call.name) {
             "recall" -> {
                 val found = Memory.recall(book.data.value, str("about"), asker?.id, local, clock())

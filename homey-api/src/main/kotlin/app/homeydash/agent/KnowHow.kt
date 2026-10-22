@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import kotlin.math.ln
 
@@ -540,7 +541,7 @@ class KnowHowTools(private val book: KnowHowBook, private val batteryReminders: 
     )
 
     suspend fun run(call: ToolCall): ToolResult? {
-        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
+        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
         val skills = skills()
         return when (call.name) {
             "teach" -> {

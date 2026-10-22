@@ -160,4 +160,82 @@ class PhonesTest {
         assertTrue(Phones.named("Gabriel’s iPad", "Gabriel Khalaf"))
         assertFalse(Phones.named("Gabrielle iPhone", "Gabriel"))
     }
+
+    @Test
+    fun locateAndHittaRingTheyDontOnlyLook() = runTest {
+        // The AI sent {"phone":null,"action":"locate"} for "Kan du hitta min telefon?" and nothing rang.
+        val home = Home()
+        val r = AgentTools(view(settings()), home, Dash()).run(
+            ToolCall("c1", "find_phone", JsonObject(mapOf("phone" to kotlinx.serialization.json.JsonNull, "action" to JsonPrimitive("locate")))),
+        )
+        assertEquals(listOf("homey:device:p1:play_sound"), home.rang)
+        assertTrue(r.text, r.text.contains("Ringing Gabriels iPhone"))
+        assertEquals(listOf("Gabriels iPhone"), r.hunt?.names)
+        find(AgentTools(view(settings()), home, Dash()), action = "hitta")
+        assertEquals(2, home.rang.count { it.endsWith("play_sound") })
+    }
+
+    @Test
+    fun theStepNamesTheAskerNotNull() {
+        val call = ToolCall("c1", "find_phone", JsonObject(mapOf("phone" to kotlinx.serialization.json.JsonNull, "action" to JsonPrimitive("ring"))))
+        assertEquals("Ringing Gabriel's phone", StepText.of(call, view(settings())))
+        assertEquals("Ringing your phone", StepText.of(call, view(settings(asker = null, sharing = PhoneSharing.Anyone))))
+    }
+
+    @Test
+    fun aRingThatFailsIsSaidAndNotHunted() = runTest {
+        val home = object : HomeControl by Home() {
+            override suspend fun runAction(card: FlowCardAction, args: JsonObject): Unit = throw java.io.IOException("timeout")
+        }
+        val r = find(AgentTools(view(settings()), home, Dash()))
+        assertTrue(r.text, r.text.contains("didn't ring"))
+        assertEquals(null, r.hunt)
+    }
+
+    @Test
+    fun aPhoneNamedAsADeviceIsSentToFindPhone() = runTest {
+        val r = AgentTools(view(settings()), Home(), Dash()).run(
+            ToolCall("c1", "device_actions", JsonObject(mapOf("device" to JsonPrimitive("Gabriels iPhone")))),
+        )
+        assertTrue(r.text, r.text.contains("find_phone"))
+    }
+
+    @Test
+    fun theHuntAsksThenRingsAgainThenGivesUp() = runTest {
+        var clock = 0L
+        var rings = 0
+        val hunt = PhoneHunt(listOf("Gabriels iPhone"), { clock }) { rings++; true }
+        assertEquals(null, hunt.next())
+        clock += PhoneHunt.ASK_AFTER_MS
+        assertEquals(PhoneHunt.Next.Ask, hunt.next())
+        assertEquals(null, hunt.next())
+        clock += PhoneHunt.ANSWER_MS
+        assertEquals(PhoneHunt.Next.RingAgain, hunt.next())
+        hunt.ringAgain()
+        assertEquals(1, rings)
+        clock += PhoneHunt.ASK_AFTER_MS
+        assertEquals(PhoneHunt.Next.Ask, hunt.next())
+        clock += PhoneHunt.ANSWER_MS
+        hunt.ringAgain()
+        clock += PhoneHunt.ASK_AFTER_MS + PhoneHunt.ANSWER_MS
+        assertEquals(PhoneHunt.Next.Ask, hunt.next())
+        clock += PhoneHunt.ANSWER_MS
+        assertEquals(PhoneHunt.Next.GiveUp, hunt.next())
+    }
+
+    @Test
+    fun whatIsSaidDuringTheHunt() {
+        assertEquals(PhoneHunt.Heard.Found, PhoneHunt.heard("Ja, jag hittade den!", asked = false))
+        assertEquals(PhoneHunt.Heard.Found, PhoneHunt.heard("Found it", asked = false))
+        assertEquals(PhoneHunt.Heard.Found, PhoneHunt.heard("ja", asked = true))
+        assertEquals(null, PhoneHunt.heard("ja", asked = false))
+        assertEquals(PhoneHunt.Heard.Again, PhoneHunt.heard("nej", asked = true))
+        assertEquals(PhoneHunt.Heard.Again, PhoneHunt.heard("Nej, jag har inte hittat den", asked = false))
+        assertEquals(PhoneHunt.Heard.Again, PhoneHunt.heard("Kan du ringa den?", asked = false))
+        assertEquals(PhoneHunt.Heard.Again, PhoneHunt.heard("igen", asked = false))
+        assertEquals(PhoneHunt.Heard.Stop, PhoneHunt.heard("Sluta leta", asked = false))
+        // Something else goes to the AI and the hunt goes on.
+        assertEquals(null, PhoneHunt.heard("Spela låten igen i köket", asked = false))
+        assertEquals(null, PhoneHunt.heard("Tänd lampan i köket", asked = true))
+    }
 }
