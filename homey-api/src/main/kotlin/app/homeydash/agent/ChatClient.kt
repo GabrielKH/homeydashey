@@ -550,7 +550,9 @@ class ChatClient(http: OkHttpClient) {
         }
 
         /** Reasoning models served by Ollama may put their thinking in the answer. */
-        fun stripThinking(text: String): String = text.replace(Regex("<think>[\\s\\S]*?</think>"), "").trim()
+        // A lone tag left over ("<think>    Done, …", seen in the skill tests) goes too, keeping the answer after it.
+        fun stripThinking(text: String): String =
+            text.replace(Regex("<think>[\\s\\S]*?</think>"), "").replace("<think>", "").replace("</think>", "").trim()
 
         private fun errorText(body: String): String {
             val parsed = runCatching { Lenient.parseToJsonElement(body) }.getOrNull()

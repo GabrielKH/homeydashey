@@ -249,6 +249,8 @@ class Agent(
             val actions = mutableListOf<String>()
             // What each call did this turn, so the same change asked for twice isn't done twice.
             val done = mutableMapOf<String, ToolResult>()
+            // Calls CallCheck doubted once; asked for again, they run.
+            val warned = mutableSetOf<String>()
             val out = voice?.let { SpeechStream(it, homeView::named) }
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
@@ -338,18 +340,21 @@ class Agent(
                     }
                     for (asked in answer.toolCalls) {
                         acted = true
+                        val names = specs.map { it.name }
                         val call = lightsOnly(asked, text)?.let { c ->
-                            CallCheck.recipeInstead(c, text, specs.map { it.name })?.also { heard.trace("guard", "Opened the recipe instead of the recipes page.") } ?: c
+                            CallCheck.recipeInstead(c, text, names)?.also { heard.trace("guard", "Opened the recipe instead of the recipes page.") }
+                                ?: CallCheck.rewrite(c, text, names)?.also { heard.trace("guard", "Asked for ${c.name} ${c.arguments}; ran ${it.name} ${it.arguments}, as the question said.") }
+                                ?: c
                         }
                         if (call == null) {
                             heard.trace("guard", "Skipped ${asked.name} ${asked.arguments}: the user only asked about lights.")
                             turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
                             continue
                         }
-                        val refused = CallCheck.refuse(call, text, homeView)
+                        val refused = CallCheck.refuse(call, text, homeView, names)?.takeUnless { it.soft && !warned.add("${call.name} ${call.arguments}") }
                         if (refused != null) {
-                            heard.trace("guard", "Skipped ${call.name} ${call.arguments}: $refused")
-                            turn += ChatMessage.tool(asked.id, refused)
+                            heard.trace("guard", "Skipped ${call.name} ${call.arguments}: ${refused.text}")
+                            turn += ChatMessage.tool(asked.id, refused.text)
                             continue
                         }
                         val key = "${call.name} ${call.arguments}"

@@ -10,17 +10,33 @@ import kotlinx.serialization.json.JsonPrimitive
  * is answered with what to do instead, so nothing is changed and the AI can answer or ask.
  */
 internal object CallCheck {
+    /** Why [call] wasn't run, for the AI; a [soft] one runs when the AI asks for it again. */
+    data class Refusal(val text: String, val soft: Boolean = false)
+
     /** What to tell the AI instead of running [call] for [question], or null when it may run. */
-    fun refuse(call: ToolCall, question: String, view: HomeView): String? {
-        if (call.name !in Agent.SETS) return null
+    fun refuse(call: ToolCall, question: String, view: HomeView, tools: Collection<String> = emptyList()): Refusal? {
         val q = question.trim().replace(LEAD, "")
-        if (STATUS.containsMatchIn(q) && !ASKS_TO_CHANGE.containsMatchIn(q)) return STATUS_ONLY
-        if (call.name == "set_room" && allRooms(call.arguments) && turnsOn(call.arguments) && !ALL.containsMatchIn(q)) return WHICH
+        val folded = NameMatch.normalize(q)
+        if (call.name in RECIPE_ACTIONS && WHICH_RECIPES.containsMatchIn(folded)) return Refusal(RECIPES_ONLY)
+        if ("goodnight" in tools && GOODNIGHT.containsMatchIn(folded) && (call.name in Agent.SETS || call.name == "set_presence")) return Refusal(USE_GOODNIGHT)
+        if (call.name == "remove_from_fridge") {
+            val item = str(call.arguments, "item")
+            val said = NameMatch.tokens(q)
+            val named = NameMatch.tokens(item).any { w -> said.any { NameMatch.sameWord(w, it) || (w.length >= 4 && it.contains(w)) } }
+            return if (named || item.isBlank()) null else Refusal(
+                "Not done: the user said \"$question\", which doesn't name $item. If they meant something else, find it with fridge_contents " +
+                    "and take that out; if $item is right after all, call it again.",
+                soft = true,
+            )
+        }
+        if (call.name !in Agent.SETS) return null
+        if (STATUS.containsMatchIn(q) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(STATUS_ONLY)
+        if (call.name == "set_room" && allRooms(call.arguments) && turnsOn(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH)
         if (call.name in DEVICE_CALLS) {
             val wanted = APPLIANCES.firstOrNull { it.words.containsMatchIn(NameMatch.normalize(q)) } ?: return null
             val target = view.device(str(call.arguments, "device"))
             if (target != null && !wanted.isIn(target) && view.devices.none { wanted.isIn(it) }) {
-                return "There is no ${wanted.name} in the home, so nothing was switched; ${target.name} is something else. Tell the user there's no ${wanted.name} you can reach."
+                return Refusal("There is no ${wanted.name} in the home, so nothing was switched; ${target.name} is something else. Tell the user there's no ${wanted.name} you can reach.")
             }
         }
         return null
@@ -64,6 +80,62 @@ internal object CallCheck {
     )
 
     /**
+     * [call] as the question meant it, or null when it stands as it is: the day said in words
+     * instead of a date the AI worked out (it put Saturday a week late), no "family" calendar
+     * unless it was named, a pause sent to play_music, a song "set" on a speaker, two minutes
+     * more for a running timer, the fridge page for "visa kylen", and "vi måste…" for everyone.
+     */
+    fun rewrite(call: ToolCall, question: String, tools: Collection<String>): ToolCall? {
+        val a = call.arguments
+        val folded = NameMatch.normalize(question)
+        fun with(vararg pairs: Pair<String, String?>): JsonObject {
+            val m = a.toMutableMap()
+            for ((k, v) in pairs) if (v == null) m.remove(k) else m[k] = JsonPrimitive(v)
+            return JsonObject(m)
+        }
+        when (call.name) {
+            "calendar", "add_event" -> {
+                val key = if (call.name == "calendar") "start_date" else "date"
+                val day = DAY.find(question)?.value?.trim()
+                val dropFamily = call.name == "calendar" && NameMatch.normalize(str(a, "calendar")) in setOf("family", "familj", "familjen") && !FAMILY.containsMatchIn(folded)
+                val newDay = day?.takeIf { it != str(a, key) }
+                if (newDay == null && !dropFamily) return null
+                var args = a
+                if (newDay != null) args = JsonObject(args + (key to JsonPrimitive(newDay)))
+                if (dropFamily) args = JsonObject(args - "calendar")
+                return call.copy(arguments = args)
+            }
+            "play_music" -> {
+                val cap = str(a, "capability")
+                if (cap.isBlank() || !a.containsKey("value") || "set_device" !in tools) return null
+                val value = when (str(a, "value").lowercase()) { "pause", "stop", "off" -> "false"; "play", "on" -> "true"; else -> str(a, "value") }
+                val device = str(a, "player").ifBlank { str(a, "device") }
+                return call.copy(name = "set_device", arguments = JsonObject(mapOf("device" to JsonPrimitive(device), "capability" to JsonPrimitive(cap), "value" to JsonPrimitive(value))))
+            }
+            "set_device" -> {
+                if (str(a, "capability") != "speaker_playing" || "play_music" !in tools) return null
+                val v = str(a, "value")
+                if (v.isBlank() || v.lowercase() in SWITCH_WORDS) return null
+                return call.copy(name = "play_music", arguments = JsonObject(mapOf("player" to JsonPrimitive(str(a, "device")), "query" to JsonPrimitive(v))))
+            }
+            "timer" -> {
+                if (str(a, "action").lowercase() !in setOf("start", "set") || !MORE_TIME.containsMatchIn(folded)) return null
+                return call.copy(arguments = with("action" to "add"))
+            }
+            "fridge_contents" -> {
+                if ("open_page" !in tools || !SHOW_FRIDGE.containsMatchIn(folded)) return null
+                return call.copy(name = "open_page", arguments = JsonObject(mapOf("page" to JsonPrimitive("fridge"))))
+            }
+            "add_todo" -> {
+                val who = NameMatch.normalize(str(a, "who"))
+                if (who.isBlank() || !WE.containsMatchIn(folded)) return null
+                return call.copy(arguments = with("who" to null))
+            }
+        }
+        return null
+    }
+
+    /**
      * open_page "recipes" for "öppna lasagnen": the recipe itself is opened instead, by what
      * is left of the question once the asking words are gone. Null when nothing names one.
      */
@@ -99,6 +171,25 @@ internal object CallCheck {
 
     private val ENDEARMENT = Regex("""(^| )(alskling|alsklingen|gubben|gumman|hjartat|sotnos|raring|honey|darling|babe|sweetie|sweetheart)( |$)""")
 
+    private val DAY = Regex(
+        """(?<![\p{L}])((nästa|next)\s+)?(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|""" +
+            """i övermorgon|övermorgon|day after tomorrow|i morgon|imorgon|tomorrow|i dag|idag|today|ikväll|tonight""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val FAMILY = Regex("""famil""")
+    private val SWITCH_WORDS = setOf("true", "false", "on", "off", "pause", "play", "stop", "1", "0", "yes", "no")
+    /** "Två minuter till på pastan", "two more minutes", "lägg till två minuter", "förläng". */
+    private val MORE_TIME = Regex("""(minut\w* till|min till|minuter? extra|lagg till|forlang|more minutes?|minutes? more|extra minutes?|add \w+ minutes?|extend)""")
+    private val SHOW_FRIDGE = Regex("""^\s*(visa|oppna|ta fram|show|open|pull up)( mig| me)? (kylen|kylskapet|frysen|skafferiet|the fridge|the freezer|the pantry|fridge|freezer)\s*$""")
+    /** "Vi måste…", "we need to…": for everyone, not only the one who said it. */
+    private val WE = Regex("""^\s*(vi (maste|behover|ska)|we (need|have|must|should))""")
+    private val RECIPE_ACTIONS = setOf("open_recipe", "recipe_step", "recipe_timers")
+    /** "Vad kan jag laga med kyckling?", "har vi något recept med…", "what can I cook with…": names, not cooking. */
+    private val WHICH_RECIPES = Regex("""^\s*(vad kan (jag|vi) (laga|gora|koka)|har vi (nagot|nagra) recept|finns det (nagot|nagra) recept|what can (i|we) (cook|make)|do we have (a|any) recipes?|any recipes)""")
+    private val GOODNIGHT = Regex("""(^| )(godnatt|god natt|good night|goodnight|nu gar vi och lagger oss|vi gar och lagger oss)( |$)""")
+
+    const val RECIPES_ONLY = "Not done: the user only asked which recipes there are. Tell them the names from find_recipes; don't open one or start anything."
+    const val USE_GOODNIGHT = "Not done: for goodnight, call the goodnight tool alone; it asks the user first and then turns things off itself."
     const val STATUS_ONLY = "The user only asked how it is right now, so nothing was changed. Answer from get_device or the device list."
     const val WHICH = "The user didn't say all of them, so nothing was switched on. Ask which lamp or room they mean."
 }

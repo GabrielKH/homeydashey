@@ -273,7 +273,9 @@ class AgentTools(
             "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
             "vacuum" -> vacuum(a.str("device"), a.str("action"), a.list("rooms"))
             "goodnight" -> goodnight()
-            "timer" -> timer(a.str("action"), a.num("minutes"), Timers.realName(a.str("label")), a.str("new_label"), a.str("several"))
+            // "several": false is a model filling in every field, not a list of timers called "false".
+            "timer" -> timer(a.str("action"), a.num("minutes"), Timers.realName(a.str("label")), a.str("new_label"),
+                a.str("several").takeUnless { it.trim().lowercase() in setOf("false", "true", "null", "none", "no") }.orEmpty())
             "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")

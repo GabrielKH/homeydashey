@@ -315,13 +315,19 @@ class NoteTools(
 
     /** How much of what was said is found in [text]: 1 when every word is in it. */
     private fun words(said: String, text: String): Double {
-        val q = NameMatch.tokens(said)
+        // "lappen om blommorna" is the post-it with "blommor" on it: the words for a note don't count.
+        val q = NameMatch.tokens(said).filter { it !in NOTE_WORDS }
         if (q.isEmpty()) return 0.0
         val t = NameMatch.tokens(text)
         val joined = t.joinToString("")
         val hits = q.count { w -> t.any { NameMatch.sameWord(it, w) } || (w.length >= 4 && joined.contains(w)) }
         return hits.toDouble() / q.size
     }
+
+    private val NOTE_WORDS = setOf(
+        "lapp", "lappen", "lappar", "lapparna", "postit", "post", "it", "om", "med", "pa", "dar", "det", "star",
+        "note", "notes", "the", "about", "with", "on", "that", "says",
+    )
 
     private fun noNote(said: String): ToolResult {
         val notes = board.current()

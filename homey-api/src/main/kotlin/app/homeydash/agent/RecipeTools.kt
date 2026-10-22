@@ -187,6 +187,11 @@ class RecipeTools(
             ?: all.firstOrNull { Text.fold(it.title).contains(q) }
             ?: all.filter { r -> q.split(' ').filter { it.length > 2 }.let { words -> words.isNotEmpty() && words.all { w -> Text.fold(r.title).contains(w) } } }.singleOrNull()
             ?: all.filter { it.matches(name) }.singleOrNull()
+            // "lasagnen" for Lasagne: each word said the way Swedish bends it.
+            ?: all.filter { r ->
+                val title = NameMatch.tokens(r.title)
+                NameMatch.tokens(name).filter { it.length > 2 }.let { words -> words.isNotEmpty() && words.all { w -> title.any { NameMatch.sameWord(w, it) } } }
+            }.singleOrNull()
     }
 
     private fun notFound(name: String): ToolResult {
