@@ -34,7 +34,7 @@ import java.time.ZonedDateTime
 class PendingAction(val question: String, val tapOnly: Boolean, val run: suspend () -> String)
 
 /** What one tool call did. [localOnly] results must never reach a brain on the internet. */
-data class ToolResult(val text: String, val localOnly: Boolean = false, val pending: PendingAction? = null)
+data class ToolResult(val text: String, val localOnly: Boolean = false, val pending: PendingAction? = null, val hunt: PhoneHunt? = null)
 
 /**
  * The assistant's tools. Every call is checked against the [view]: a device, mood or
@@ -203,7 +203,7 @@ class AgentTools(
                 "Leave phone out for the asker's own phone.",
         ) {
             string("phone", "Whose phone, or its name, e.g. \"Anna\" or \"iPad\"; omit for the asker's own")
-            string("action", "ring (default) or where (only say whether it is home)")
+            string("action", "ring (default; also for find, hitta, locate) or where (only when asked whether it is home or its battery, no ring)")
         })
         if (view.allows(Secret.Variables)) add(tool("variables", "Homey Logic variables and their values.") {})
         if (web != null) add(tool(
@@ -1141,6 +1141,7 @@ class AgentTools(
                 .ifEmpty { return ok("I can't find a phone called \"$asked\". The phones are: " + phones.joinToString { "\"${it.name}\"" } + ".") }
         }
         val onlyWhere = action.trim().lowercase() in WHERE_WORDS
+        val rung = mutableListOf<Pair<AgentDevice, FlowCardAction>>()
         val lines = chosen.map { p ->
             val right = Phones.rightTo(p, s)
             val ownerName = owner(p)?.let { s.people[it] }
@@ -1152,13 +1153,29 @@ class AgentTools(
                 else -> {
                     val card = home.deviceActions(p.id).let(Phones::ringCard)
                         ?: return@map "${p.name} can't ring: its Homey app has no \"Play sound\" card."
-                    home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
+                    if (!ring(card, s)) return@map "${p.name} didn't ring: Homey's Find My app didn't answer. Say so; don't say it rings."
+                    rung += p to card
                     // Ringing never asks Apple where the phone is: that is what wakes its GPS and drains it.
                     "Ringing ${p.name}" + if (right == Phones.Right.All) " (last known: ${Phones.status(p)})." else "."
                 }
             }
         }
-        return ToolResult(lines.joinToString("\n"), localOnly(Secret.Phones))
+        // Rung: the assistant asks later whether it was found and rings again when nobody answers.
+        val hunt = rung.takeIf { it.isNotEmpty() }?.let { phones ->
+            PhoneHunt(phones.map { it.first.name }) { phones.map { (_, card) -> ring(card, s) }.any { it } }
+        }
+        val tell = if (hunt != null) "\nTell the user it rings now and to say when they've found it; you'll ask again if they don't." else ""
+        return ToolResult(lines.joinToString("\n") + tell, localOnly(Secret.Phones), hunt = hunt)
+    }
+
+    /** Plays the phone's sound; false when Homey or Apple didn't take it. */
+    private suspend fun ring(card: FlowCardAction, s: AgentSettings): Boolean = try {
+        home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
+        true
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
     }
 
     /**
@@ -1198,6 +1215,10 @@ class AgentTools(
     }
 
     private fun unknown(alias: String): ToolResult {
+        // Phones aren't in the device list: "Gabriels iPhone" must not turn into a lamp named Gabriel.
+        view.phones.firstOrNull { NameMatch.score(alias, it.name) >= 0.8 }?.let { p ->
+            return ok("\"${p.name}\" is a phone: use find_phone to ring it.")
+        }
         val near = view.similarDevices(alias)
         return ok(
             if (near.isEmpty()) "I can't see a device called $alias. Use a name from the list."
@@ -1235,7 +1256,8 @@ class AgentTools(
         /** What an alarm the assistant makes is called, with the asker's name after it. */
         const val DEFAULT_ALARM = "Väckning"
         private val EVERYONE = Regex("""(?i)(everyone|everybody|all|alla|allihop|allihopa|hela familjen|the whole family)""")
-        private val WHERE_WORDS = setOf("where", "var", "status", "locate", "find", "hitta", "home", "hemma")
+        // Not "locate", "find" or "hitta": finding a phone means ringing it (the AI sent "locate" for "hitta min telefon").
+        private val WHERE_WORDS = setOf("where", "var", "status", "home", "hemma", "battery", "batteri")
         /** Guests may use the actions of TVs and speakers, nothing else's. */
         private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")
         private const val MAX_ACTIONS = 40
