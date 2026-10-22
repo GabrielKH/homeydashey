@@ -1,6 +1,7 @@
 package app.homeydash.agent.evals
 
 import app.homeydash.agent.AgentSettings
+import app.homeydash.agent.CallCheck
 import app.homeydash.agent.AgentTools
 import app.homeydash.agent.ChatClient
 import app.homeydash.agent.Connection
@@ -217,6 +218,34 @@ class SkillEvalsTest {
         assertEquals(12 * 60, sim.timers.timers.value.single().seconds)
         val lamp = view.devices.first { it.name == house.devices.first { d -> d.id == "bedroom_lamp" }.name }
         assertEquals(lamp, view.device("${lamp.alias}, ${lamp.room}"))
+    }
+
+    @Test fun `calls the question didn't ask for are refused, and the recipe is opened instead of the list`() = runBlocking {
+        val sim = SimHouse(house, File(work, "checks"), http).also { it.open() }
+        val view = HomeView.build(sim.zones, sim.devices, sim.moods, emptySet(), AgentSettings(), local = true)
+        fun call(name: String, vararg a: Pair<String, String>) =
+            app.homeydash.agent.ToolCall("1", name, kotlinx.serialization.json.JsonObject(a.associate { it.first to JsonPrimitive(it.second) }))
+        val hall = call("set_device", "device" to "Hallampa", "capability" to "onoff", "value" to "true")
+        assertEquals(CallCheck.STATUS_ONLY, CallCheck.refuse(hall, "är lampan i hallen tänd?", view))
+        assertEquals(CallCheck.STATUS_ONLY, CallCheck.refuse(hall, "is the hall light on?", view))
+        assertNull(CallCheck.refuse(hall, "är du snäll och tänd i hallen", view))
+        assertNull(CallCheck.refuse(hall, "tänd i hallen", view))
+        val allOn = call("set_room", "room" to "all", "capability" to "onoff", "value" to "true")
+        assertEquals(CallCheck.WHICH, CallCheck.refuse(allOn, "tänd lampan", view))
+        assertNull(CallCheck.refuse(allOn, "tänd alla lampor", view))
+        assertNull(CallCheck.refuse(call("set_room", "room" to "all", "capability" to "onoff", "value" to "false"), "släck", view))
+        val coffee = call("set_device", "device" to "Kaffebryggare, Kök", "capability" to "onoff", "value" to "true")
+        assertTrue(CallCheck.refuse(coffee, "sätt på diskmaskinen", view).orEmpty().contains("no dishwasher"))
+        assertNull(CallCheck.refuse(coffee, "sätt på kaffebryggaren", view))
+        val names = listOf("open_page", "open_recipe")
+        assertEquals("lasagnen", CallCheck.recipeInstead(call("open_page", "page" to "recipes"), "öppna lasagnen", names)?.arguments?.get("recipe")?.let { (it as JsonPrimitive).content })
+        assertNull(CallCheck.recipeInstead(call("open_page", "page" to "recipes"), "öppna recepten", names))
+        val home = AgentSettings(people = mapOf("p-gabriel" to "Gabriel", "p-alex" to "Alex"), asker = app.homeydash.agent.Asker("p-gabriel", "Gabriel"))
+        assertTrue(CallCheck.toSomeoneElse("vad ska vi äta ikväll, älskling?", home))
+        assertTrue(CallCheck.toSomeoneElse("honey, did you feed the cat?", home))
+        assertTrue(CallCheck.toSomeoneElse("Alex, har du sett nycklarna?", home))
+        assertFalse(CallCheck.toSomeoneElse("spela Alex och Sigge", home))
+        assertFalse(CallCheck.toSomeoneElse("Nova, älskling, tänd i köket", home))
     }
 
     @Test fun `the plan picks phrasings, languages and tags`() {

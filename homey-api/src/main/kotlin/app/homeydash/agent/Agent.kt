@@ -150,6 +150,11 @@ class Agent(
             )
         }
         heard.trace("question", text)
+        // Heard after an answer and plainly said to someone else ("vad ska vi äta ikväll, älskling?").
+        if (context.followUp && context.routine == null && CallCheck.toSomeoneElse(text, settings)) {
+            heard.trace("guard", "Said to someone else while the microphone stayed open; let it pass.")
+            return AgentReply("", ignored = true)
+        }
         val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech).copy(rounds = heard.rounds.toList())
         heard.trace(
             when {
@@ -333,10 +338,18 @@ class Agent(
                     }
                     for (asked in answer.toolCalls) {
                         acted = true
-                        val call = lightsOnly(asked, text)
+                        val call = lightsOnly(asked, text)?.let { c ->
+                            CallCheck.recipeInstead(c, text, specs.map { it.name })?.also { heard.trace("guard", "Opened the recipe instead of the recipes page.") } ?: c
+                        }
                         if (call == null) {
                             heard.trace("guard", "Skipped ${asked.name} ${asked.arguments}: the user only asked about lights.")
                             turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
+                            continue
+                        }
+                        val refused = CallCheck.refuse(call, text, homeView)
+                        if (refused != null) {
+                            heard.trace("guard", "Skipped ${call.name} ${call.arguments}: $refused")
+                            turn += ChatMessage.tool(asked.id, refused)
                             continue
                         }
                         val key = "${call.name} ${call.arguments}"
