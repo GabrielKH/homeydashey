@@ -56,7 +56,7 @@ class SkillEvalsTest {
         val books = File(work, "names-books")
         val tools = AgentTools(
             view, sim, sim.dashboard,
-            recipes = RecipeTools(sim.recipes, sim.cooking) {}, fridge = FridgeTools(sim.fridge),
+            recipes = RecipeTools(sim.recipes, sim.cooking) {}, fridge = FridgeTools(sim.fridge), notes = app.homeydash.agent.NoteTools(sim.notes),
             routines = RoutineTools(RoutineBook(books)), memory = MemoryTools(MemoryBook(books)), knowHow = KnowHowTools(KnowHowBook(books)),
         )
         return tools.specs().map { it.name }.toSet() + KnowHow.GUIDE

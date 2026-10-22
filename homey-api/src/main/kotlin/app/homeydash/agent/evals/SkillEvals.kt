@@ -192,6 +192,7 @@ class SkillEvals(
                     v, sim, sim.dashboard, today = today,
                     recipes = RecipeTools(sim.recipes, sim.cooking) { sim.dashboard.openPage("recipes") },
                     fridge = FridgeTools(sim.fridge) { sim.dashboard.openPage("fridge") },
+                    notes = app.homeydash.agent.NoteTools(sim.notes) { sim.dashboard.openPage("notes") },
                     routines = RoutineTools(routines),
                     memory = MemoryTools(memory),
                     knowHow = KnowHowTools(knowHow),
@@ -256,6 +257,11 @@ class SkillEvals(
         sim.given(given.devices)
         sim.failing = given.failing.toSet()
         for (t in given.timers) sim.timers.start((t.minutes * 60).toInt(), t.label)
+        for (n in given.notes) sim.notes.write(app.homeydash.notes.PostIt(text = n, by = "Alex"))
+        for (t in given.todos) {
+            val todo = sim.notes.add(app.homeydash.notes.Todo(text = t.text, who = t.who))
+            if (t.done) sim.notes.tick(todo.id)
+        }
         given.recipe?.let { title ->
             val recipe = sim.recipes.recipes.value.firstOrNull { NameMatch.normalize(it.title) == NameMatch.normalize(title) }
                 ?: error("No recipe called $title in the house")
@@ -405,6 +411,27 @@ object Graders {
         for ((name, place) in e.fridgePlace) {
             val item = food.firstOrNull { NameMatch.normalize(it.name).contains(NameMatch.normalize(name)) }
             if (item == null || !item.place.name.equals(place, ignoreCase = true)) p += "Expected $name in the ${place.lowercase()}; it is ${item?.place?.name?.lowercase() ?: "not there"}."
+        }
+
+        val notes = sim.notes.current()
+        fun noteSays(words: String) = notes.filter { n -> words.split('|').any { NameMatch.normalize(n.text).contains(NameMatch.normalize(it)) } }
+        for (entry in e.noteHas) if (noteSays(entry).isEmpty()) p += "Expected a post-it saying $entry; up: ${notes.joinToString { "\"${it.text}\"" }.ifEmpty { "none" }}."
+        for (entry in e.noteNot) if (noteSays(entry).isNotEmpty()) p += "No post-it should say $entry any more."
+        for ((words, who) in e.noteFor) {
+            if (noteSays(words).none { NameMatch.normalize(it.forWhom.orEmpty()) == NameMatch.normalize(who) }) {
+                p += "Expected the post-it saying $words to be for $who; it is for ${noteSays(words).firstOrNull()?.forWhom ?: "nobody"}."
+            }
+        }
+        val todos = sim.notes.todos.value
+        fun todosSaying(words: String) = todos.filter { t -> words.split('|').any { NameMatch.normalize(t.text).contains(NameMatch.normalize(it)) } }
+        for (entry in e.todoHas) if (todosSaying(entry).none { it.done == null }) p += "Expected an open to-do $entry; the list: ${todos.joinToString { it.text + if (it.done != null) " (done)" else "" }.ifEmpty { "empty" }}."
+        for (entry in e.todoDone) if (todosSaying(entry).none { it.done != null }) p += "Expected $entry ticked off."
+        for (entry in e.todoNot) if (todosSaying(entry).any { it.done == null }) p += "$entry should be ticked off or gone."
+        for ((words, who) in e.todoWho) {
+            val wanted = who.takeIf { !it.equals("everyone", ignoreCase = true) }
+            if (todosSaying(words).none { it.done == null && NameMatch.normalize(it.who.orEmpty()) == NameMatch.normalize(wanted.orEmpty()) }) {
+                p += "Expected the to-do $words to be for ${wanted ?: "everyone"}; it is for ${todosSaying(words).firstOrNull()?.who ?: "everyone"}."
+            }
         }
 
         val open = sim.cooking.current()
