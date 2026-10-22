@@ -117,7 +117,8 @@ class SpeechStream(private val say: (String) -> Unit, private val polish: (Strin
 object ThinkingSounds {
     // Real words only: a voice reads "Hmm" or "Mm" letter by letter ("h, m, m").
     private val NOVA_SV = listOf("Mja, låt se.", "Ehm, ett ögonblick.", "Låt mig kolla.")
-    private val NOVA_EN = listOf("Um, let me see.", "One moment.", "Let me check.")
+    // Plain words: "Um, let me see" came out as something nobody could make out (Gabriel, 2026-10-22).
+    private val NOVA_EN = listOf("One moment.", "Let me check.", "Just a second.")
     private val TARS = listOf("Processing.", "Give me a second.", "Thinking. It happens.")
 
     // Said the moment someone stops talking, while the question is written down and thought
