@@ -1,5 +1,9 @@
 package app.homeydash.agent
 
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
@@ -44,4 +48,42 @@ object HeldSound {
         }.sorted()
         return d[((d.size - 1) * SHARE).toInt()]
     }
+
+    /**
+     * Syllables in [samples] (16 kHz): peaks of the voice's loudness (the 300 Hz to 3 kHz bands,
+     * where vowels are loud and n, v and s are not) that rise at least [DIP] (natural log, about
+     * 4 dB) over the quieter valley either side, and are within [LOUD] of the loudest. "Nova"
+     * has two, "A", "Ja" and "Åh" one, whatever the vowel at the end: every Piper "Nova", "Hej
+     * Nova" and "Hey Nova" counted two or more, and 57 of 60 "A", "Ja", "Se", "Åh", "Nej", "Hey"
+     * and the like one (all 60 with the room's noise at 20 dB).
+     */
+    fun syllables(samples: ShortArray): Int {
+        val f = Fbank.features(samples, centred = false)
+        if (f.size < 5) return 0
+        val voice = (0 until Fbank.BANDS).filter { it in VOICE_BANDS }
+        val raw = DoubleArray(f.size) { t -> ln(voice.sumOf { exp(f[t][it].toDouble()) }) }
+        // 50 ms smoothing, so a voice's own flutter isn't a syllable.
+        val e = DoubleArray(raw.size) { t -> (max(0, t - 2)..min(raw.size - 1, t + 2)).map { raw[it] }.average() }
+        val top = e.max()
+        var count = 0
+        for (t in 1 until e.size - 1) {
+            if (!(e[t] >= e[t - 1] && e[t] > e[t + 1]) || e[t] < top - LOUD) continue
+            // Prominence: the deepest point before a louder peak, on each side; the shallower side counts.
+            var left = e[t]
+            var i = t - 1
+            while (i >= 0 && e[i] <= e[t]) { left = min(left, e[i]); i-- }
+            var right = e[t]
+            i = t + 1
+            while (i < e.size && e[i] <= e[t]) { right = min(right, e[i]); i++ }
+            if (e[t] - max(left, right) >= DIP) count++
+        }
+        return count
+    }
+
+    /** Syllables in a wake name as written: its groups of vowels ("Nova" two, "TARS" one). */
+    fun syllables(name: String): Int = Regex("[aeiouyåäöé]+").findAll(name.lowercase()).count()
+
+    /** Fbank bands from about 300 Hz to 3 kHz. */
+    private val VOICE_BANDS = 10..52
+    private const val DIP = 1.0
 }

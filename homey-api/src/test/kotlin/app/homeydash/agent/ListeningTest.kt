@@ -125,6 +125,22 @@ class ListeningTest {
         assertEquals(0.2, WakeJudge.held(1.8)!!.lambda, 1e-9)
     }
 
+    @Test
+    fun oneSyllableIsNotNova() {
+        val quiet = ShortArray(1600)
+        fun join(vararg parts: ShortArray) = ShortArray(parts.sumOf { it.size }).also { out -> var at = 0; for (p in parts) { p.copyInto(out, at); at += p.size } }
+        // "A" or "Ja": one vowel; "Nova": two vowels with a quieter consonant between.
+        val a = join(quiet, voiced(0.35, 150.0), quiet)
+        val nova = join(quiet, voiced(0.2, 150.0), voiced(0.08, 140.0, bright = 0.97).map { (it / 6).toShort() }.toShortArray(), voiced(0.25, 135.0, seed = 2), quiet)
+        assertEquals(1, HeldSound.syllables(a))
+        assertEquals(2, HeldSound.syllables(nova))
+        assertEquals(2, HeldSound.syllables("Nova"))
+        assertEquals(1, HeldSound.syllables("TARS"))
+        assertEquals(-5.0, WakeJudge.syllables(1, "Nova")!!.lambda, 1e-9)
+        assertEquals(0.0, WakeJudge.syllables(2, "Nova")!!.lambda, 1e-9)
+        assertNull(WakeJudge.syllables(1, "TARS"))
+    }
+
     /** A voice holding a vowel: a slightly unsteady pulse train, its brightness set by [bright], and a little room noise. */
     private fun voiced(seconds: Double, hz: Double, bright: Double = 0.9, seed: Int = 1): ShortArray {
         val r = Random(seed)

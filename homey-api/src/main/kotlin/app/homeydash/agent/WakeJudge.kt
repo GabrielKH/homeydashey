@@ -153,6 +153,17 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, stri
             else -> Evidence("sound", 0.2, "moves like words, %.2f".format(change))
         }
 
+        /**
+         * Syllables heard against the name's own: "A", "Ja" or "Åh" can sit close to the end of
+         * "Nova" as taught, but have one syllable where the name has two. Fewer than the name is
+         * evidence against; enough says nothing either way (a cough before it counts too).
+         */
+        fun syllables(heard: Int, name: String): Evidence? {
+            val needed = HeldSound.syllables(name)
+            if (needed < 2) return null
+            return if (heard < needed) Evidence("syllables", -5.0, "$heard, $name has $needed") else Evidence("syllables", 0.0, "$heard")
+        }
+
         private const val HELD = 0.9
         private const val HELD_MAYBE = 1.0
 
