@@ -77,7 +77,9 @@ class AppContainer(context: Context) {
             }
         },
         market = Locale.getDefault().country.takeIf { it.length == 2 } ?: "SE",
-    )
+        user = { assistant.settings.value.spotifyUser.ifBlank { null } },
+        onUser = { refresh -> assistant.settingsStore.update { it.copy(spotifyUser = refresh) } },
+    ).also { assistant.spotify = it }
     private val sonos = SonosCards(SonosClient(http), SonosFinder(context, http)::find, spotify)
 
     /** Recipes, and the one being cooked; the voice assistant reads it too. */

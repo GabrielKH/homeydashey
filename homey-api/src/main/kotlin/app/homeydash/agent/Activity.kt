@@ -2,6 +2,7 @@ package app.homeydash.agent
 
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /** One thing the assistant is doing, shown while it works: "Turning on Kitchen lamp". */
 data class AgentStep(
@@ -56,7 +57,7 @@ object StepText {
 
     fun of(call: ToolCall, view: HomeView): String {
         val a = call.arguments
-        fun str(key: String) = (a[key] as? JsonPrimitive)?.content.orEmpty().trim()
+        fun str(key: String) = (a[key] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
         fun device(key: String = "device") = str(key).let { alias -> view.device(alias)?.name ?: view.named(alias) }
         return when (call.name) {
             "set_device" -> setText(device(), str("capability"), str("value"))
@@ -66,6 +67,7 @@ object StepText {
             "list_flows" -> "Looking through your Flows"
             "run_flow" -> "Starting the Flow ${str("name")}"
             "play_music" -> str("query").let { q -> if (q.isEmpty()) "Picking music for ${device("player")}" else "Finding \"$q\" for ${device("player")}" }
+            "save_favourite" -> str("query").let { q -> if (q.isEmpty()) "Adding it to the Sonos favourites" else "Adding \"$q\" to the Sonos favourites" }
             "device_actions" -> "Looking at what ${device()} can do"
             "run_device_action" -> "${device()}: ${str("action")}" + (str("value").takeIf { it.isNotEmpty() }?.let { " $it" } ?: "")
             "press_remote" -> "Pressing ${str("keys")} on ${device()}"
@@ -101,8 +103,15 @@ object StepText {
                 "delete", "remove" -> "Deleting ${str("name").ifBlank { "the alarm" }}"
                 else -> "Checking the alarms"
             }
-            "find_phone" -> (if (str("action").lowercase() in setOf("where", "var")) "Looking for " else "Ringing ") +
-                str("phone").ifBlank { "your phone" }.let { if (it.contains("phone", true) || it.contains("telefon", true) || it.contains("mobil", true)) it else "$it's phone" }
+            // A JSON null "phone" is the asker's own (it used to show as "null's phone").
+            "find_phone" -> (if (str("action").lowercase() in setOf("where", "var", "status", "home", "hemma")) "Looking for " else "Ringing ") +
+                str("phone").ifBlank { view.settings.asker?.name ?: "" }.let {
+                    when {
+                        it.isEmpty() -> "your phone"
+                        it.contains("phone", true) || it.contains("telefon", true) || it.contains("mobil", true) || it.contains("ipad", true) -> it
+                        else -> "$it's phone"
+                    }
+                }
             "variables" -> "Reading Homey's variables"
             "ask_internet" -> "Searching the internet"
             "run_routine" -> "Running ${str("name")}"

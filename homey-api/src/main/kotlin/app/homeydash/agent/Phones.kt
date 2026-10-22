@@ -122,3 +122,103 @@ object Phones {
     private val RING_ARG_TYPES = setOf("text", "dropdown", "checkbox")
     private val COORDINATES = Regex("""(?i)lat|lon|lng|location|address|coord|gps|place""")
 }
+
+/**
+ * A phone that was rung, kept until someone says it was found (Gabriel, 2026-10-22): a ring that
+ * wasn't heard, or an answer cut off, mustn't end the search. After [ASK_AFTER_MS] the assistant
+ * asks whether it was found; no answer within [ANSWER_MS] rings it again, up to [MAX_RINGS] rings.
+ */
+class PhoneHunt(
+    /** "Gabriels iPhone": what is being looked for. */
+    val names: List<String>,
+    private val now: () -> Long = System::currentTimeMillis,
+    private val ringIt: suspend () -> Boolean,
+) {
+    var rings = 1
+        private set
+    /** "Did you find it?" was asked and waits for its answer. */
+    var asked = false
+        private set
+    private var lastAt = now()
+
+    /** The phones as said out loud: "Gabriels iPhone och Annas iPad". */
+    fun name(swedish: Boolean) = names.joinToString(if (swedish) " och " else " and ")
+
+    /** What the assistant does about the hunt now that nobody is talking. */
+    enum class Next { Ask, RingAgain, GiveUp }
+
+    fun next(): Next? {
+        val quiet = now() - lastAt
+        return when {
+            !asked && quiet >= ASK_AFTER_MS -> Next.Ask.also { asked = true; lastAt = now() }
+            asked && quiet >= ANSWER_MS -> if (rings < MAX_RINGS) Next.RingAgain else Next.GiveUp
+            else -> null
+        }
+    }
+
+    /** Rings again; false when Homey couldn't. The next question waits a full [ASK_AFTER_MS]. */
+    suspend fun ringAgain(): Boolean {
+        rings++
+        asked = false
+        lastAt = now()
+        return ringIt()
+    }
+
+    /** What someone said during the hunt. */
+    enum class Heard { Found, Again, Stop }
+
+    companion object {
+        const val ASK_AFTER_MS = 30_000L
+        const val ANSWER_MS = 20_000L
+        const val MAX_RINGS = 3
+
+        private val FOUND = Regex(
+            """(?i)(?<![\p{L}])(hitta(de|t)|fann|har den|har hittat|found|got it|i have it|i've got it|here it is|där är den|här är den)(?![\p{L}])""",
+        )
+        private val AGAIN = Regex(
+            """(?i)^\W*(igen|en gång till|again|once more)\W*$|(?<![\p{L}])(ring(a|er)? (den|it|igen|telefonen|mobilen|the phone)|""" +
+                """hör (den |ingenting )?inte|hörde (den )?inte|can'?t hear|didn'?t hear)(?![\p{L}])""",
+        )
+        private val STOP = Regex("""(?i)^\s*(sluta|stopp|avbryt|strunta i det|glöm det|stop|cancel|never ?mind|forget it)\b""")
+        private val NOT_FOUND = Regex("""(?i)(?<![\p{L}])(inte|not|nej|no|nope|nä|still|fortfarande)(?![\p{L}])""")
+
+        /**
+         * What [text] says about the hunt, or null when it is about something else (the AI then
+         * answers it and the hunt goes on). A plain yes or no counts only once [asked].
+         */
+        fun heard(text: String, asked: Boolean): Heard? {
+            val t = text.trim()
+            if (t.split(Regex("\\s+")).size > 10) return null
+            return when {
+                STOP.containsMatchIn(t) -> Heard.Stop
+                AGAIN.containsMatchIn(t) -> Heard.Again
+                FOUND.containsMatchIn(t) -> if (NOT_FOUND.containsMatchIn(t)) Heard.Again else Heard.Found
+                asked -> when (Confirmation.parse(t)) {
+                    true -> Heard.Found
+                    false -> Heard.Again
+                    null -> null
+                }
+                else -> null
+            }
+        }
+
+        fun ringingLine(name: String, swedish: Boolean) =
+            if (swedish) "Nu ringer $name. Säg till när du har hittat den." else "$name is ringing now. Tell me when you've found it."
+
+        fun askLine(swedish: Boolean) = if (swedish) "Hittade du telefonen?" else "Did you find the phone?"
+
+        fun againLine(name: String, swedish: Boolean) =
+            if (swedish) "Jag ringer $name igen. Säg till när du har hittat den." else "I'm ringing $name again. Tell me when you've found it."
+
+        fun foundLine(swedish: Boolean) = if (swedish) "Vad bra, då slutar jag leta." else "Great, I'll stop looking."
+
+        fun stopLine(swedish: Boolean) = if (swedish) "Okej, jag slutar leta." else "Okay, I'll stop looking."
+
+        fun failedLine(name: String, swedish: Boolean) =
+            if (swedish) "Jag fick inte $name att ringa. Homey svarade inte." else "I couldn't make $name ring. Homey didn't answer."
+
+        fun giveUpLine(swedish: Boolean) =
+            if (swedish) "Jag har ringt tre gånger nu, så jag slutar. Säg till om jag ska ringa igen."
+            else "I've rung it three times now, so I'll stop. Tell me if I should ring it again."
+    }
+}

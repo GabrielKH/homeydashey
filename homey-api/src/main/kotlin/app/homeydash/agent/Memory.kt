@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.time.ZonedDateTime
 import java.util.UUID
@@ -281,10 +282,14 @@ object Memory {
      * mood, which Flow, which lamp. Null for calls that only look, or that changed nothing.
      */
     fun habit(call: ToolCall, view: HomeView, asker: Asker?, at: ZonedDateTime): Fact? {
-        fun arg(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
+        fun arg(k: String) = (call.arguments[k] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
         fun name(alias: String) = view.named(alias).trim()
         val (relation, obj) = when (call.name) {
-            "play_music" -> "plays" to listOf(arg("query").ifBlank { "music" }, "on " + name(arg("player"))).joinToString(" ")
+            // "listens to the podcast Alex och Sigge on Kök": what kind it was says more than the words alone.
+            "play_music" -> (if (arg("kind").lowercase() in setOf("podcast", "episode")) "listens to the podcast" else "plays") to
+                listOf(arg("query").ifBlank { "music" }, "on " + name(arg("player")).ifBlank { "a speaker" }).joinToString(" ")
+            // What someone keeps as a favourite is music they like; "it" alone says nothing.
+            "save_favourite" -> "likes the music" to arg("query")
             "set_scene" -> "sets the lights" to "${arg("look")} in ${arg("room")}"
             "set_mood" -> "turns on the mood" to name(arg("mood"))
             "run_flow" -> "starts the Flow" to arg("name")
@@ -663,7 +668,7 @@ class MemoryTools(private val book: MemoryBook, private val clock: () -> Long = 
     }
 
     suspend fun run(call: ToolCall, asker: Asker?, local: Boolean): ToolResult? {
-        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
+        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
         return when (call.name) {
             "recall" -> {
                 val found = Memory.recall(book.data.value, str("about"), asker?.id, local, clock())

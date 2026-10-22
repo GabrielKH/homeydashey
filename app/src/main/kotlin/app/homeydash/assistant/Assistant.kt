@@ -86,6 +86,8 @@ class AssistantServices(context: Context, http: OkHttpClient, scope: CoroutineSc
     var busy: () -> Boolean = { false }
     /** The recipes and the one being cooked, so the assistant can follow along. */
     var kitchen: app.homeydash.data.Kitchen? = null
+    /** Spotify search, for signing in to Spotify from the settings. */
+    var spotify: app.homeydash.sonos.SpotifySearch? = null
 
     /** What the assistant heard, thought and did, kept until it is sent (Settings → Assistant → Send logs). */
     val log = AgentLog(File(appContext.filesDir, "assistant/log.jsonl"))
@@ -403,6 +405,51 @@ class Assistant(
                 delay(BATTERY_CHECK_MS)
                 runCatching { nagAboutBattery() }
             }
+        }
+        // A rung phone is followed up until someone says it was found.
+        scope.launch {
+            while (true) {
+                delay(HUNT_CHECK_MS)
+                try {
+                    followHunt()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    /**
+     * Asks "Hittade du telefonen?" a while after a phone was rung, and rings it again when nobody
+     * answers, until someone says it was found ([app.homeydash.agent.PhoneHunt]). Never over an
+     * answer or someone talking; an open microphone that hears nothing is fine to speak over.
+     */
+    private suspend fun followHunt() {
+        val h = services.agent.hunt ?: return
+        val quietListening = state == AssistantState.Listening && partial.isBlank() && level < HUNT_QUIET_LEVEL && !waking
+        if (state != AssistantState.Idle && !quietListening) return
+        if (state == AssistantState.Idle && waking) return
+        val next = h.next() ?: return
+        val swedish = lastSwedish
+        val text = when (next) {
+            app.homeydash.agent.PhoneHunt.Next.Ask -> app.homeydash.agent.PhoneHunt.askLine(swedish)
+            app.homeydash.agent.PhoneHunt.Next.RingAgain ->
+                if (h.ringAgain()) app.homeydash.agent.PhoneHunt.againLine(h.name(swedish), swedish)
+                else app.homeydash.agent.PhoneHunt.failedLine(h.name(swedish), swedish).also { services.agent.hunt = null }
+            app.homeydash.agent.PhoneHunt.Next.GiveUp -> app.homeydash.agent.PhoneHunt.giveUpLine(swedish).also { services.agent.hunt = null }
+        }
+        services.trace("phone", "${next.name}: $text", true)
+        if (state == AssistantState.Listening) stopListening()
+        services.onActive?.invoke()
+        open = true
+        lines += Line(false, text)
+        say(text)
+        state = AssistantState.Idle
+        // Listens for "ja, hittade den" or "nej"; a hunt that ended goes quiet like any answer.
+        if (services.agent.hunt != null) {
+            keepConversation()
+            listen()
         }
     }
 
@@ -1142,6 +1189,7 @@ class Assistant(
 
     fun clear() {
         stop()
+        services.agent.hunt = null
         lines.clear()
         services.agent.reset()
         pending = null
@@ -1444,6 +1492,9 @@ class Assistant(
         /** How long a countdown line waits for a conversation to end before it's dropped. */
         const val ANNOUNCE_WAIT_MS = 20_000L
         const val BATTERY_CHECK_MS = 60 * 1000L
+        const val HUNT_CHECK_MS = 1000L
+        /** Below this the open microphone hears nobody talking, so a hunt's question may be said. */
+        const val HUNT_QUIET_LEVEL = 0.05f
         const val RELISTEN_GAP_MS = 300L
         /** Long enough for the face to fade in before the wake sound plays. */
         const val WAKE_SOUND_AFTER_MS = 200L

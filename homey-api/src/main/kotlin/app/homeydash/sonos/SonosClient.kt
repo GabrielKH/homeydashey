@@ -52,6 +52,16 @@ class SonosClient(private val http: OkHttpClient, private val port: Int = PORT) 
         return parseDidl(answer.text("Result").orEmpty(), "http://$host:$port")
     }
 
+    /**
+     * Adds [item] to the household's Sonos favourites, the way the Sonos app's "Add to My
+     * Sonos" does, so it shows up in every Sonos app and can be played by name. Returns the
+     * new favourite's id when the speaker says it.
+     */
+    suspend fun addFavourite(host: String, item: SonosItem): String? {
+        val answer = soap(host, CONTENT, "CreateObject", listOf("ContainerID" to "FV:2", "Elements" to favouriteDidl(item)))
+        return answer.text("ObjectID")
+    }
+
     /** Plays [item] on the group [speaker] is in: radio straight away, anything else through a fresh queue. */
     suspend fun play(speaker: SonosSpeaker, coordinatorHost: String, item: SonosItem) {
         play(speaker, coordinatorHost, listOf(item))
@@ -151,6 +161,23 @@ class SonosClient(private val http: OkHttpClient, private val port: Int = PORT) 
         private val TOPOLOGY = Service("/ZoneGroupTopology/Control", "urn:schemas-upnp-org:service:ZoneGroupTopology:1")
         private val CONTENT = Service("/MediaServer/ContentDirectory/Control", "urn:schemas-upnp-org:service:ContentDirectory:1")
         private val TRANSPORT = Service("/MediaRenderer/AVTransport/Control", "urn:schemas-upnp-org:service:AVTransport:1")
+
+        private const val DIDL =
+            """<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" """ +
+                """xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">"""
+
+        /**
+         * The favourite the Sonos app itself would make for [item]: its title, how to play it,
+         * and the item's own metadata inside, which is what plays it later.
+         */
+        fun favouriteDidl(item: SonosItem): String {
+            val scheme = item.uri.substringBefore(':', "x-rincon-cpcontainer")
+            return DIDL + "<item><dc:title>${escape(item.title)}</dc:title><r:type>instantPlay</r:type>" +
+                """<res protocolInfo="${escape(scheme)}:*:*:*">${escape(item.uri)}</res>""" +
+                (item.art?.let { "<upnp:albumArtURI>${escape(it)}</upnp:albumArtURI>" } ?: "") +
+                "<r:description>${escape(item.description ?: "Spotify")}</r:description>" +
+                "<r:resMD>${escape(item.meta)}</r:resMD></item></DIDL-Lite>"
+        }
 
         /** Radio and other endless streams can't go in a queue; they're set as the source instead. */
         private val STREAMS = listOf(

@@ -108,6 +108,10 @@ class Agent(
     var pending: PendingAction? = null
         private set
 
+    /** A phone that was rung and isn't found yet; the assistant follows it up (see [PhoneHunt]). */
+    @Volatile
+    var hunt: PhoneHunt? = null
+
     /** Hears each step while it works and everything said and done, for the screen and the logs. */
     var listener: AgentListener? = null
 
@@ -163,6 +167,9 @@ class Agent(
         if (clock - lastActivity > FORGET_AFTER_MS) reset()
         lastActivity = clock
         topicsNow.clear()
+
+        // "Hittade den", "ring igen" while a phone is rung: answered straight away, without the AI.
+        hunt?.let { h -> huntReply(h, text, settings)?.let { return it } }
 
         // A spoken yes or no answers the question the assistant just asked.
         pending?.let { p ->
@@ -237,7 +244,9 @@ class Agent(
                     val step = StepIds.next()
                     val thinking = if (brain.local) "Thinking" else "Thinking (${brain.provider.label})"
                     heard.step(AgentStep(step, thinking, StepState.Running, thinking = true))
-                    out?.next()
+                    // Once a tool ran, a round is only heard when it is the answer, not when it is
+                    // the AI talking to itself before its next call.
+                    out?.next(hold = acted)
                     val live = out?.takeIf { !command || changed }
                     // Always streamed, also when nothing is spoken yet, so the first word can be timed.
                     val answer = try {
@@ -346,6 +355,7 @@ class Agent(
                         actions += homeView.named("${call.name} ${call.arguments} → ${result.text.take(140)}")
                         localOnly = localOnly || result.localOnly
                         result.pending?.let { pending = it }
+                        result.hunt?.let { hunt = it }
                         turn += ChatMessage.tool(call.id, result.text)
                     }
                     // It talked before its calls ("Jag tänder lamporna"); the answer after them
@@ -450,6 +460,22 @@ class Agent(
 
     /** Whether a fixed answer to [text] is in Swedish; TARS answers in English whatever was said. */
     /** Whether fixed answers must be Swedish (true) or English (false); null when they follow what was said. */
+    private suspend fun huntReply(h: PhoneHunt, text: String, settings: AgentSettings): AgentReply? {
+        val heard = PhoneHunt.heard(text, h.asked) ?: return null
+        val swedish = answersSwedish(settings) ?: Confirmation.looksSwedish(text)
+        val reply = when (heard) {
+            PhoneHunt.Heard.Found -> PhoneHunt.foundLine(swedish).also { hunt = null }
+            PhoneHunt.Heard.Stop -> PhoneHunt.stopLine(swedish).also { hunt = null }
+            PhoneHunt.Heard.Again ->
+                if (h.ringAgain()) PhoneHunt.againLine(h.name(swedish), swedish)
+                else PhoneHunt.failedLine(h.name(swedish), swedish).also { hunt = null }
+        }
+        // Phone names are as private as the phones themselves.
+        Watch(listener).trace("phone", "${heard.name}: $reply", true)
+        remember(listOf(ChatMessage.user(text), ChatMessage("assistant", reply)), localOnly = true)
+        return AgentReply(reply, actions = listOf("find_phone ${heard.name.lowercase()} (without the AI)"))
+    }
+
     private fun answersSwedish(settings: AgentSettings): Boolean? = when (settings.answers) {
         Language.Swedish -> true
         Language.English -> false
@@ -952,9 +978,9 @@ class Agent(
         const val MAX_REPEATS = 2
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines", KnowHow.GUIDE)
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
-        val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "run_device_action", "press_remote")
+        val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "save_favourite", "run_device_action", "press_remote")
         /** How tool results that changed something begin. */
-        val CHANGED = listOf("Done", "Changed", "Started", "Playing")
+        val CHANGED = listOf("Done", "Changed", "Started", "Playing", "Added")
         const val NUDGE_FAILED = "(From the app, not the user: none of your tool calls changed anything; read their results. " +
             "Call the right tool now, or tell the user plainly what went wrong.)"
         const val TOOLS_LAST = "Whatever the character, the home only changes through your tools: call the tool first, then say what it did; " +

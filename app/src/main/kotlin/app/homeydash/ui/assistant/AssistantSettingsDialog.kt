@@ -205,7 +205,7 @@ internal fun AssistantPage(
         "listen" -> ListenPage(services, settings, update)
         "brain" -> BrainPage(services, settings, update, preview)
         "privacy" -> PrivacyPage(settings, update, onDevices = { nav.page = "devices" }, onPreview = { nav.page = "preview" }, onFaces = onFaces)
-        "spotify" -> Spotify(settings, update)
+        "spotify" -> Spotify(services, settings, update)
         "logs" -> Logs(services, settings, update)
         "memory" -> MemoryPage(services, settings, update)
         else -> Main(services, settings, update, onPage = { nav.page = it }, onRoutines = { nav.page = "routines" }, menu = menu)
@@ -701,7 +701,7 @@ private fun PhonesPage(services: AssistantServices, devices: Map<String, Device>
 
 /** A Spotify developer app's keys, so any song can be searched for and played on the Sonos speakers. */
 @Composable
-private fun Spotify(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+private fun Spotify(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
     Hint(
         "Play any song, album, artist or playlist on Sonos: say \"spela Dancing Queen i köket\", or use the Spotify tab under Play music. " +
@@ -714,6 +714,103 @@ private fun Spotify(settings: AgentSettings, update: ((AgentSettings) -> AgentSe
             "Make an app at developer.spotify.com/dashboard (any name, redirect URI http://127.0.0.1:8888/callback, Web API ticked) " +
                 "with a Spotify Premium account, then copy its Client ID and Client secret here.",
         )
+    }
+    if (settings.spotifyClientId.isNotBlank() && settings.spotifySecret.isNotBlank()) SpotifyAccount(services, settings, update)
+}
+
+/** What was found in the Spotify library: "34 playlists, 12 albums, 5 podcasts, 180 liked songs found." */
+private suspend fun libraryText(spotify: app.homeydash.sonos.SpotifySearch): String {
+    val all = spotify.library()
+    val counts = listOf(
+        app.homeydash.sonos.SpotifyHit.Kind.Playlist to "playlists", app.homeydash.sonos.SpotifyHit.Kind.Album to "albums",
+        app.homeydash.sonos.SpotifyHit.Kind.Show to "podcasts", app.homeydash.sonos.SpotifyHit.Kind.Track to "liked songs",
+    ).map { (kind, word) -> "${all.count { it.kind == kind }} $word" }.joinToString()
+    return "$counts found." + (spotify.ownTrouble?.let { " Couldn't read everything: $it" } ?: "")
+}
+
+/**
+ * Signing in to the Spotify account, so its own playlists (private ones too) are found: the
+ * catalogue search only finds public playlists, and seldom your own.
+ */
+@Composable
+private fun SpotifyAccount(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val scope = rememberCoroutineScope()
+    val state = remember { java.util.UUID.randomUUID().toString() }
+    var status by remember { mutableStateOf<String?>(null) }
+    val signedIn = settings.spotifyUser.isNotBlank()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Spotify's page opens in a window of its own and comes back with the address it was sent to.
+    val signIn = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val back = result.data?.data ?: return@rememberLauncherForActivityResult
+        val code = back.getQueryParameter("code")
+        val ours = back.getQueryParameter("state") == state
+        status = when {
+            !ours -> "Couldn't sign in: the answer wasn't for this sign-in."
+            code == null -> "Couldn't sign in: " + (back.getQueryParameter("error") ?: "Spotify sent no code") + "."
+            else -> "Signing in…"
+        }
+        if (code != null && ours) scope.launch {
+            status = try {
+                val spotify = services.spotify ?: throw java.io.IOException("Spotify isn't ready yet")
+                val (refresh, name) = spotify.finishSignIn(code)
+                update { it.copy(spotifyUser = refresh, spotifyUserName = name.orEmpty()) }
+                libraryText(spotify)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                "Couldn't sign in: ${e.message}"
+            }
+        }
+    }
+    SettingsBox("Your playlists") {
+        Hint(
+            "Sign in with the Spotify account that's added in the Sonos app, so Nova and Play music find your own playlists (private ones too), saved albums, podcasts and liked songs (signed in before 22 October? Sign in again for the albums, podcasts and liked songs). " +
+                "The developer app above needs the redirect URI ${app.homeydash.sonos.SpotifySearch.REDIRECT}.",
+        )
+        LaunchedEffect(signedIn) {
+            if (signedIn && status == null) {
+                val spotify = services.spotify ?: return@LaunchedEffect
+                status = libraryText(spotify)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                if (signedIn) "Sign in again" else "Sign in to Spotify",
+                style = MaterialTheme.typography.labelLarge,
+                color = g.fg,
+                modifier = Modifier.pressable({
+                    val url = services.spotify?.signInUrl(state)
+                    if (url == null) {
+                        status = "Add the client ID and secret first."
+                    } else {
+                        status = null
+                        signIn.launch(android.content.Intent(context, app.homeydash.SpotifySignInActivity::class.java).putExtra(app.homeydash.SpotifySignInActivity.EXTRA_URL, url))
+                    }
+                }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+            if (signedIn) {
+                Text(
+                    "Sign out",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = g.fg,
+                    modifier = Modifier.pressable({
+                        update { it.copy(spotifyUser = "", spotifyUserName = "") }
+                        status = null
+                    }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+                )
+            }
+            Text(
+                listOfNotNull(
+                    if (signedIn) "Signed in" + settings.spotifyUserName.ifBlank { null }?.let { " as $it" }.orEmpty() + "." else "Not signed in.",
+                    status,
+                ).joinToString(" "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (status?.startsWith("Couldn't") == true) g.danger else g.muted,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 

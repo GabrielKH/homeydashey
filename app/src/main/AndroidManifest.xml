@@ -58,6 +58,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Spotify's sign-in page, so the account's own playlists are found. -->
+        <activity
+            android:name=".SpotifySignInActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Kiosk mode turns this on so the dashboard can be chosen as the tablet's home app. -->
         <activity-alias
             android:name=".HomeScreen"

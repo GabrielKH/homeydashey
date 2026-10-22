@@ -215,8 +215,9 @@ class StoreHomeControl(
                 runCatching { choices(source.card, source.arg, "$word $query") }.onFailure { trouble = it }.getOrDefault(emptyList()).map { source to it }
             }
             val hit = NameMatch.best(query, hits) { score(it.second) }
-            // The home's own near match beats a catalogue's guess.
-            best = listOfNotNull(ownBest, hit).maxByOrNull { score(it.second) } ?: hits.firstOrNull()
+            // Spotify's own order is its best answer ("the best hiphop right now" has no name to match);
+            // the home's near match only when Spotify finds nothing. A clear match was taken above.
+            best = hit ?: hits.firstOrNull() ?: ownBest
         }
         best = best ?: ownBest ?: found.firstOrNull { it.first.arg.type == "autocomplete" }
             ?: trouble?.let { throw java.io.IOException("Searching for \"$query\" failed: ${it.message}", it) }
@@ -247,6 +248,7 @@ class StoreHomeControl(
         /** play_music's kinds, as the words Spotify search knows them by. */
         private val KIND_WORDS = mapOf(
             "playlist" to "playlist", "album" to "album", "song" to "song", "track" to "song", "artist" to "artist",
+            "podcast" to "podcast", "show" to "podcast", "episode" to "episode",
         )
 
         /** Words that make a request a radio station. */

@@ -34,7 +34,7 @@ import java.time.ZonedDateTime
 class PendingAction(val question: String, val tapOnly: Boolean, val run: suspend () -> String)
 
 /** What one tool call did. [localOnly] results must never reach a brain on the internet. */
-data class ToolResult(val text: String, val localOnly: Boolean = false, val pending: PendingAction? = null)
+data class ToolResult(val text: String, val localOnly: Boolean = false, val pending: PendingAction? = null, val hunt: PhoneHunt? = null)
 
 /**
  * The assistant's tools. Every call is checked against the [view]: a device, mood or
@@ -104,7 +104,12 @@ class AgentTools(
         add(tool("play_music", "Play a song, album, artist, playlist, favourite or radio station on a player (e.g. a Sonos); finds anything on Spotify when set up.") {
             string("player", "Player alias")
             string("query", "What they asked for in their words: a title with the artist if said (\"Dancing Queen ABBA\"), or a genre, mood or chart (\"swedish top 50\", \"calm female vocals\"); empty only when they let you choose")
-            string("kind", "playlist (moods, genres, charts, \"hits\", \"something calm\"), album, song, artist (only the artist named), radio for a station (\"P1\", \"radio P3\"), or omit for a favourite")
+            string("kind", "what they asked for: song (a song or track), album, artist (only the artist named), playlist (a list or a mood), podcast (plays its newest episode), episode, radio for a station (\"P1\", \"radio P3\"), or omit for a favourite")
+            required("player")
+        })
+        if (!guest) add(tool("save_favourite", "Add music to the Sonos favourites: what was just played, or a playlist, album or song by name.") {
+            string("player", "Player alias")
+            string("query", "Its name, e.g. the playlist play_music just played; empty for the last thing played on the player")
             required("player")
         })
         add(tool("device_actions", "What else a device's app can do in Homey: TV channels, open an app, Sonos favourites, playlists and radio, remote buttons.") {
@@ -198,7 +203,7 @@ class AgentTools(
                 "Leave phone out for the asker's own phone.",
         ) {
             string("phone", "Whose phone, or its name, e.g. \"Anna\" or \"iPad\"; omit for the asker's own")
-            string("action", "ring (default) or where (only say whether it is home)")
+            string("action", "ring (default; also for find, hitta, locate) or where (only when asked whether it is home or its battery, no ring)")
         })
         if (view.allows(Secret.Variables)) add(tool("variables", "Homey Logic variables and their values.") {})
         if (web != null) add(tool(
@@ -257,6 +262,7 @@ class AgentTools(
             "list_flows" -> ToolResult(home.flows().joinToString("\n") { it.name }.ifBlank { "No Flows can be started." })
             "run_flow" -> runFlow(a.str("name"))
             "play_music" -> playMusic(a.str("player"), a.str("query"), a.str("kind").ifBlank { null })
+            "save_favourite" -> saveFavourite(a.str("player"), a.str("query"))
             "device_actions" -> deviceActions(a.str("device"))
             "run_device_action" -> runDeviceAction(a.str("device"), a.str("action"), a.str("value").ifBlank { null })
             "open_page" -> openPage(a.str("page"))
@@ -517,14 +523,50 @@ class AgentTools(
         return ok("Started ${flow.name}.")
     }
 
+    /**
+     * The player meant when the model names none ("play a chill playlist", "save it"): the one
+     * music was last played on, else one playing now, else one that can search Spotify, in the
+     * kitchen (where the tablet hangs) first.
+     */
+    private fun defaultPlayer(): AgentDevice? {
+        val players = view.devices.filter { sources(it.id).isNotEmpty() }
+        lastPlayer?.let { id -> players.firstOrNull { it.id == id } }?.let { return it }
+        players.firstOrNull { it.capability("speaker_playing")?.value?.toString() == "true" }?.let { return it }
+        val spotify = players.filter { p -> sources(p.id).any { it.catalogue } }.ifEmpty { players }
+        return spotify.firstOrNull { NameMatch.normalize(it.room.orEmpty()) in KITCHEN } ?: spotify.firstOrNull()
+    }
+
     private suspend fun playMusic(alias: String, query: String, kind: String? = null): ToolResult {
-        val asked = view.device(alias) ?: return unknown(alias)
+        val asked = (if (alias.isBlank()) defaultPlayer() else view.device(alias)) ?: return unknown(alias)
         val d = musicPlayer(asked) ?: return ok(
             "${asked.name} can't play music. These can: " +
                 view.devices.filter { sources(it.id).isNotEmpty() }.joinToString { "${it.alias} (${it.name}${it.room?.let { r -> ", $r" }.orEmpty()})" } + ".",
         )
         val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
-        return ok("Playing $played on ${d.name}.")
+        lastPlayer = d.id
+        // The room too, so "Vardagsrum" played on "Beam" isn't taken for the wrong speaker.
+        val room = d.room?.takeIf { r -> !NameMatch.normalize(d.name).contains(NameMatch.normalize(r)) }
+        return ok("Playing $played on ${d.name}${room?.let { " ($it)" }.orEmpty()}.")
+    }
+
+    /**
+     * Adds what [query] names (or what was played last) to the household's Sonos favourites
+     * through a Sonos speaker's "Add to Sonos favourites"; favourites belong to every speaker,
+     * so any speaker that has the card will do, the one asked for first.
+     */
+    private suspend fun saveFavourite(alias: String, query: String): ToolResult {
+        val asked = (if (alias.isBlank()) defaultPlayer() else view.device(alias)) ?: return unknown(alias)
+        val first = listOfNotNull(musicPlayer(asked), asked) + view.devices
+        val holder = first.firstOrNull { dev -> home.deviceActions(dev.id).any { it.cardId == app.homeydash.sonos.SonosCards.SAVE } }
+            ?: return ok("No Sonos speaker was found on the Wi-Fi, so nothing can be added to the Sonos favourites." + (home.missingActions(asked.id)?.let { " ($it)" }.orEmpty()))
+        val card = home.deviceActions(holder.id).first { it.cardId == app.homeydash.sonos.SonosCards.SAVE }
+        val arg = card.inputArgs.first()
+        val q = query.trim()
+        val items = home.choices(card, arg, q)
+        val item = (if (q.isEmpty()) items.firstOrNull() else NameMatch.best(q, items) { NameMatch.score(q, it.name) } ?: items.firstOrNull())
+            ?: return ok(if (q.isEmpty()) "Nothing has been played from here yet; ask what to add." else "Couldn't find \"$q\" to add.")
+        home.runAction(card, JsonObject(mapOf(arg.name to FlowCards.argValue(arg, item))))
+        return ok("Added ${item.name}" + (item.description?.let { " ($it)" }.orEmpty()) + " to the Sonos favourites.")
     }
 
     private fun sources(deviceId: String) = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }
@@ -1101,6 +1143,7 @@ class AgentTools(
                 .ifEmpty { return ok("I can't find a phone called \"$asked\". The phones are: " + phones.joinToString { "\"${it.name}\"" } + ".") }
         }
         val onlyWhere = action.trim().lowercase() in WHERE_WORDS
+        val rung = mutableListOf<Pair<AgentDevice, FlowCardAction>>()
         val lines = chosen.map { p ->
             val right = Phones.rightTo(p, s)
             val ownerName = owner(p)?.let { s.people[it] }
@@ -1112,13 +1155,29 @@ class AgentTools(
                 else -> {
                     val card = home.deviceActions(p.id).let(Phones::ringCard)
                         ?: return@map "${p.name} can't ring: its Homey app has no \"Play sound\" card."
-                    home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
+                    if (!ring(card, s)) return@map "${p.name} didn't ring: Homey's Find My app didn't answer. Say so; don't say it rings."
+                    rung += p to card
                     // Ringing never asks Apple where the phone is: that is what wakes its GPS and drains it.
                     "Ringing ${p.name}" + if (right == Phones.Right.All) " (last known: ${Phones.status(p)})." else "."
                 }
             }
         }
-        return ToolResult(lines.joinToString("\n"), localOnly(Secret.Phones))
+        // Rung: the assistant asks later whether it was found and rings again when nobody answers.
+        val hunt = rung.takeIf { it.isNotEmpty() }?.let { phones ->
+            PhoneHunt(phones.map { it.first.name }) { phones.map { (_, card) -> ring(card, s) }.any { it } }
+        }
+        val tell = if (hunt != null) "\nTell the user it rings now and to say when they've found it; you'll ask again if they don't." else ""
+        return ToolResult(lines.joinToString("\n") + tell, localOnly(Secret.Phones), hunt = hunt)
+    }
+
+    /** Plays the phone's sound; false when Homey or Apple didn't take it. */
+    private suspend fun ring(card: FlowCardAction, s: AgentSettings): Boolean = try {
+        home.runAction(card, Phones.ringArgs(card, s.nameOf(s.persona)))
+        true
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
     }
 
     /**
@@ -1158,6 +1217,10 @@ class AgentTools(
     }
 
     private fun unknown(alias: String): ToolResult {
+        // Phones aren't in the device list: "Gabriels iPhone" must not turn into a lamp named Gabriel.
+        view.phones.firstOrNull { NameMatch.score(alias, it.name) >= 0.8 }?.let { p ->
+            return ok("\"${p.name}\" is a phone: use find_phone to ring it.")
+        }
         val near = view.similarDevices(alias)
         return ok(
             if (near.isEmpty()) "I can't see a device called $alias. Use a name from the list."
@@ -1178,6 +1241,10 @@ class AgentTools(
         /** How a tool asks for a device: by name, since small models mix up alias numbers. */
         private const val DEVICE = "The device's name as listed, with its room after a comma when several share the name, e.g. \"Taklampa, Sovrum\""
 
+        /** The player music was last played on, for a play_music or save_favourite that names none. */
+        @Volatile private var lastPlayer: String? = null
+        private val KITCHEN = setOf("kok", "koket", "kitchen")
+
         /** What a model calls a speaker's favourites when it guesses an action name. */
         private val FAVOURITE = Regex("""(?i)(play_?)?(favou?rites?|favorit(er)?|radio|station|kanal)""")
 
@@ -1191,7 +1258,8 @@ class AgentTools(
         /** What an alarm the assistant makes is called, with the asker's name after it. */
         const val DEFAULT_ALARM = "Väckning"
         private val EVERYONE = Regex("""(?i)(everyone|everybody|all|alla|allihop|allihopa|hela familjen|the whole family)""")
-        private val WHERE_WORDS = setOf("where", "var", "status", "locate", "find", "hitta", "home", "hemma")
+        // Not "locate", "find" or "hitta": finding a phone means ringing it (the AI sent "locate" for "hitta min telefon").
+        private val WHERE_WORDS = setOf("where", "var", "status", "home", "hemma", "battery", "batteri")
         /** Guests may use the actions of TVs and speakers, nothing else's. */
         private val GUEST_MEDIA = setOf("tv", "speaker", "amplifier")
         private const val MAX_ACTIONS = 40

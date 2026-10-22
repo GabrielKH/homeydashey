@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import kotlin.math.ln
 
@@ -88,15 +89,18 @@ object KnowHow {
                 "spel*", "play*", "musik*", "music", "låt", "låten", "låtar*", "song*", "radio*", "kanal*", "station*", "p1", "p2", "p3", "p4",
                 "spotify", "sonos", "album*", "artist*", "spellist*", "playlist*", "favorit*", "favourite*", "favorite*", "volym*", "volume",
                 "högre", "lägre", "louder", "quieter", "pausa", "paus", "pause", "nästa", "next", "skip*", "hoppa", "lyssna*", "listen*",
-                "högtalar*", "speaker*", "podd*", "podcast*", "hits", "topplista*", "chart*",
+                "högtalar*", "speaker*", "podd*", "podcast*", "hits", "topplista*", "chart*", "avsnitt*", "episode*", "genre*", "top",
             ),
             classes = listOf("speaker", "amplifier"),
-            tools = listOf("play_music", "device_actions", "run_device_action"),
+            tools = listOf("play_music", "save_favourite", "device_actions", "run_device_action"),
             rules = listOf(
                 "For music, radio stations (\"P1\", \"P3\"), Sonos favourites and playlists, call play_music with the name: it searches the speaker's favourites, playlists and radio, and also plays any song, album or artist asked for (\"spela Dancing Queen\").",
-                "For music, keep what they asked for in play_music's query and give its kind: a mood, genre, chart or \"hits\" is a playlist.",
+                "For music, put their own words in play_music's query (\"bästa hiphop just nu\", \"topplistan\") and give the kind they asked for: song for a song or track, album, artist, podcast, or playlist for a list or a mood. Spotify does the searching.",
                 "Speech to text sometimes translates an English title into Swedish (\"spela dåligt med Michael Jackson\" is Bad by Michael Jackson): search the real title.",
                 "When they let you choose the music (\"spela något\", \"play something\"), call play_music with an empty query.",
+                "A podcast (\"spela podden …\", \"senaste avsnittet av …\") is kind podcast: it plays the newest episode; a named episode is kind episode.",
+                "\"My …\" / \"min …\" (playlist, album, podcast, liked songs) is in their own Spotify library: keep \"my\" in the query.",
+                "To add music to the Sonos favourites (\"lägg till den i mina favoriter\", \"save it\"), call save_favourite with its name, e.g. the playlist play_music just played; never run_device_action for that.",
                 "Never make up a stream URL.",
             ),
         ),
@@ -537,7 +541,7 @@ class KnowHowTools(private val book: KnowHowBook, private val batteryReminders: 
     )
 
     suspend fun run(call: ToolCall): ToolResult? {
-        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.content.orEmpty().trim()
+        fun str(k: String) = (call.arguments[k] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
         val skills = skills()
         return when (call.name) {
             "teach" -> {

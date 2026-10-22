@@ -19,11 +19,31 @@ import okhttp3.Request
 import java.io.IOException
 
 /** Something found on Spotify: a song, an album, a playlist or an artist. */
-data class SpotifyHit(val kind: Kind, val id: String, val name: String, val by: String? = null, val art: String? = null) {
-    enum class Kind(val label: String) { Track("Song"), Album("Album"), Playlist("Playlist"), Artist("Artist") }
+data class SpotifyHit(
+    val kind: Kind,
+    val id: String,
+    val name: String,
+    val by: String? = null,
+    val art: String? = null,
+    /** In the signed-in account's library (its playlists, saved albums and podcasts, liked songs), not just found in the catalogue. */
+    val mine: Boolean = false,
+) {
+    enum class Kind(val label: String, val type: String) {
+        Track("Song", "track"), Album("Album", "album"), Playlist("Playlist", "playlist"), Artist("Artist", "artist"),
+        /** A podcast; it plays its newest episode. */
+        Show("Podcast", "show"),
+        Episode("Episode", "episode"),
+    }
 
-    /** "Song · ABBA", shown under the name. */
-    val description: String get() = listOfNotNull(kind.label, by).joinToString(" · ")
+    /** "Song · ABBA", or "Your playlist · Gabriel", "Liked song · ABBA", shown under the name. */
+    val description: String get() = listOfNotNull(
+        when {
+            !mine -> kind.label
+            kind == Kind.Track -> "Liked song"
+            else -> "Your ${kind.label.lowercase()}"
+        },
+        by,
+    ).joinToString(" · ")
 }
 
 /** A Spotify developer app's client ID and secret. */
@@ -33,6 +53,10 @@ data class SpotifyApp(val clientId: String, val secret: String)
  * Searches Spotify's catalogue with the Web API. Only finding things goes through Spotify:
  * the speakers play them with the Spotify account already added in the Sonos app.
  * [app] is read on every call, so new keys work at once.
+ *
+ * Signed in ([user] gives the sign-in's refresh token), it also finds the account's own
+ * playlists, private ones too, which the catalogue search doesn't find. Spotify may hand out
+ * a new refresh token when the old one is used; [onUser] keeps it.
  */
 class SpotifySearch(
     private val http: OkHttpClient,
@@ -40,28 +64,133 @@ class SpotifySearch(
     private val market: String = "SE",
     private val accounts: String = "https://accounts.spotify.com",
     private val api: String = "https://api.spotify.com",
+    private val user: () -> String? = { null },
+    private val onUser: (String) -> Unit = {},
 ) {
-    private class Token(val forApp: SpotifyApp, val value: String, val until: Long)
+    private class Token(val forApp: SpotifyApp, val value: String, val until: Long, val refresh: String? = null)
 
     @Volatile private var token: Token? = null
+    @Volatile private var userToken: Token? = null
+    @Volatile private var own: Pair<Long, List<SpotifyHit>>? = null
+
+    /** Why the account's own playlists couldn't be read the last time, for the log; null when they could. */
+    @Volatile var ownTrouble: String? = null
+        private set
 
     val configured: Boolean get() = app() != null
 
+    val signedIn: Boolean get() = configured && !user().isNullOrBlank()
+
+    /** The page where the account owner lets the app read their playlists; it comes back to [REDIRECT] with a code. */
+    fun signInUrl(state: String): String? {
+        val keys = app() ?: return null
+        return "$accounts/authorize".toHttpUrl().newBuilder()
+            .addQueryParameter("client_id", keys.clientId.trim())
+            .addQueryParameter("response_type", "code")
+            .addQueryParameter("redirect_uri", REDIRECT)
+            .addQueryParameter("scope", SCOPES)
+            .addQueryParameter("state", state)
+            .addQueryParameter("show_dialog", "true")
+            .build().toString()
+    }
+
+    /** Swaps the code from [signInUrl]'s page for a refresh token; returns it and the account's name. */
+    suspend fun finishSignIn(code: String): Pair<String, String?> {
+        val json = tokenCall(FormBody.Builder().add("grant_type", "authorization_code").add("code", code).add("redirect_uri", REDIRECT).build())
+        val access = json.str("access_token") ?: throw IOException("Spotify sent no access token")
+        val refresh = json.str("refresh_token") ?: throw IOException("Spotify sent no refresh token")
+        val seconds = (json["expires_in"] as? JsonPrimitive)?.longOrNull ?: 3600
+        userToken = app()?.let { Token(it, access, System.currentTimeMillis() + (seconds - 60) * 1000, refresh) }
+        own = null
+        val name = runCatching { (get("/v1/me", access = access) as? JsonObject)?.str("display_name") }.getOrNull()
+        return refresh to name
+    }
+
+    /**
+     * The signed-in account's library: its playlists (made or followed), saved albums, saved
+     * podcasts and liked songs, read again after a few minutes. Empty when nobody signed in;
+     * what Spotify refused is in [ownTrouble] (an older sign-in may only allow playlists).
+     */
+    suspend fun library(): List<SpotifyHit> {
+        if (!signedIn) return emptyList()
+        own?.takeIf { System.currentTimeMillis() - it.first < OWN_FOR_MS }?.let { return it.second }
+        val access = try {
+            userAccess()
+        } catch (e: IOException) {
+            ownTrouble = e.message
+            return emptyList()
+        }
+        val troubles = mutableListOf<String>()
+        suspend fun pages(path: String, read: (JsonObject) -> SpotifyHit?): List<SpotifyHit> = try {
+            val all = mutableListOf<SpotifyHit>()
+            for (page in 0 until OWN_PAGES) {
+                val json = get(path, "limit" to "50", "offset" to (page * 50).toString(), access = access) as? JsonObject ?: break
+                val items = (json["items"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>()
+                all += items.mapNotNull(read).map { it.copy(mine = true) }
+                if (items.size < 50 || (json["next"] as? JsonPrimitive)?.contentOrNull == null) break
+            }
+            all
+        } catch (e: IOException) {
+            troubles += e.message.orEmpty()
+            emptyList()
+        }
+        fun inner(o: JsonObject, key: String) = o[key] as? JsonObject
+        val playlists = pages("/v1/me/playlists") { p -> hit(SpotifyHit.Kind.Playlist, p, (p["owner"] as? JsonObject)?.str("display_name"), image(p["images"])) }
+        val albums = pages("/v1/me/albums") { o -> inner(o, "album")?.let { a -> hit(SpotifyHit.Kind.Album, a, artists(a), image(a["images"])) } }
+        val shows = pages("/v1/me/shows") { o -> inner(o, "show")?.let { sh -> hit(SpotifyHit.Kind.Show, sh, null, image(sh["images"])) } }
+        val liked = pages("/v1/me/tracks") { o ->
+            inner(o, "track")?.let { t -> hit(SpotifyHit.Kind.Track, t, artists(t), image((t["album"] as? JsonObject)?.get("images"))) }
+        }
+        ownTrouble = troubles.firstOrNull()?.let { "$it (sign in again to let the app read your albums, podcasts and liked songs)" }
+        return (playlists + albums + shows + liked).also { own = System.currentTimeMillis() to it }
+    }
+
+    /** The library's [kind] (any kind when null) that [query] names, best first, with how well; all of it for an empty query. */
+    suspend fun library(query: String, kind: SpotifyHit.Kind?): List<Pair<SpotifyHit, Double>> {
+        val mine = library().filter { kind == null || it.kind == kind }
+        if (query.isBlank()) return mine.map { it to 1.0 }
+        val q = NameMatch.normalize(query)
+        return mine.map { h ->
+            val text = listOfNotNull(h.name, h.by).joinToString(" ")
+            h to maxOf(NameMatch.score(query, h.name), NameMatch.score(query, text), if (q.length >= 3 && NameMatch.normalize(h.name).contains(q)) 0.7 else 0.0)
+        }
+            .filter { it.second >= 0.5 }
+            .sortedByDescending { it.second }
+    }
+
     /**
      * What Spotify finds for [text], in the order to offer it. "Album …", "låten …",
-     * "spellistan …" and "artisten …" look for that kind only.
+     * "spellistan …", "podden …" and "artisten …" look for that kind only. The account's
+     * library comes first when it clearly has what was named, or when "my …" was said;
+     * otherwise the whole catalogue comes first, so "the best hiphop right now" isn't
+     * answered with a hiphop playlist of your own.
      */
     suspend fun search(text: String): List<SpotifyHit> {
         val (kind, query) = parse(text)
+        val mineAsked = MINE.containsMatchIn(text) || LIKED.containsMatchIn(text)
+        val mine = library(query, kind)
+        // "min spellista Sommar", "mina poddar", "mina gillade låtar": only the library, when it has them.
+        if (signedIn && mineAsked && mine.isNotEmpty()) return mine.map { it.first }
         if (query.isBlank()) return emptyList()
-        val kinds = kind?.let(::listOf) ?: SpotifyHit.Kind.entries
+        // Podcasts are searched too (episodes only when asked for), so a show is found by its name.
+        val kinds = kind?.let(::listOf)
+            ?: listOf(SpotifyHit.Kind.Track, SpotifyHit.Kind.Album, SpotifyHit.Kind.Artist, SpotifyHit.Kind.Playlist, SpotifyHit.Kind.Show)
         val json = get(
             "/v1/search",
-            "q" to query, "type" to kinds.joinToString(",") { it.name.lowercase() },
+            "q" to query, "type" to kinds.joinToString(",") { it.type },
             // Apps in development mode get at most 10 a kind.
             "limit" to (if (kind == null) "6" else "10"), "market" to market,
         )
-        return order(query, parseSearch(json), kind)
+        val (strong, weak) = mine.partition { it.second >= OWN_IS_CLEAR }.let { (a, b) -> a.map { it.first } to b.map { it.first } }
+        val found = order(query, parseSearch(json), kind).filterNot { hit -> mine.any { it.first.id == hit.id } }
+        return strong + found + weak
+    }
+
+    /** The podcast [showId]'s newest episode, to play when someone asks for the podcast; null when Spotify lists none. */
+    suspend fun newestEpisode(showId: String): SpotifyHit? {
+        val json = get("/v1/shows/$showId/episodes", "limit" to "1", "market" to market) as? JsonObject ?: return null
+        val episode = (json["items"] as? JsonArray)?.filterIsInstance<JsonObject>()?.firstOrNull() ?: return null
+        return hit(SpotifyHit.Kind.Episode, episode, null, image(episode["images"]))
     }
 
     /** Popular songs by the artist called [name], to play when someone asks for the artist. */
@@ -72,13 +201,15 @@ class SpotifySearch(
         return songs.filter { s -> s.by.orEmpty().split(", ").any { NameMatch.normalize(it) == NameMatch.normalize(name) } }.ifEmpty { songs }
     }
 
-    private suspend fun get(path: String, vararg params: Pair<String, String>): JsonElement {
+    private suspend fun get(path: String, vararg params: Pair<String, String>, access: String? = null): JsonElement {
         val url = (api + path).toHttpUrl().newBuilder().apply { params.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
-        val request = Request.Builder().url(url).header("Authorization", "Bearer ${token()}").build()
+        val request = Request.Builder().url(url).header("Authorization", "Bearer ${access ?: token()}").build()
         return withContext(Dispatchers.IO) {
             http.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                if (response.code == 401) token = null
+                if (response.code == 401) {
+                    if (access == null) token = null else userToken = null
+                }
                 if (!response.isSuccessful) throw IOException(problem(response.code, body))
                 Json.parseToJsonElement(body)
             }
@@ -108,14 +239,65 @@ class SpotifySearch(
         }
     }
 
+    /** An access token for the signed-in account, from its refresh token, kept until it runs out. */
+    private suspend fun userAccess(): String {
+        val keys = app() ?: throw IOException("Add a Spotify client ID and secret in Settings → Assistant → Spotify")
+        val refresh = user()?.takeIf { it.isNotBlank() } ?: throw IOException("Nobody is signed in to Spotify")
+        userToken?.takeIf { it.forApp == keys && it.until > System.currentTimeMillis() }?.let { return it.value }
+        val json = try {
+            tokenCall(FormBody.Builder().add("grant_type", "refresh_token").add("refresh_token", refresh).build())
+        } catch (e: IOException) {
+            throw IOException("Spotify sign-in no longer works; sign in again in Settings → Spotify on Sonos (${e.message})", e)
+        }
+        val value = json.str("access_token") ?: throw IOException("Spotify sent no access token")
+        val seconds = (json["expires_in"] as? JsonPrimitive)?.longOrNull ?: 3600
+        json.str("refresh_token")?.takeIf { it != refresh }?.let(onUser)
+        return Token(keys, value, System.currentTimeMillis() + (seconds - 60) * 1000).also { userToken = it }.value
+    }
+
+    private suspend fun tokenCall(form: FormBody): JsonObject {
+        val keys = app() ?: throw IOException("Add a Spotify client ID and secret in Settings → Assistant → Spotify")
+        val request = Request.Builder()
+            .url("$accounts/api/token")
+            .header("Authorization", Credentials.basic(keys.clientId.trim(), keys.secret.trim()))
+            .post(form)
+            .build()
+        return withContext(Dispatchers.IO) {
+            http.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) throw IOException(problem(response.code, body))
+                Json.parseToJsonElement(body) as? JsonObject ?: throw IOException("Spotify sent something unreadable")
+            }
+        }
+    }
+
     companion object {
+        /** Where Spotify sends the sign-in back to; the same address the settings ask to add to the developer app. */
+        const val REDIRECT = "http://127.0.0.1:8888/callback"
+        private const val SCOPES = "playlist-read-private playlist-read-collaborative user-library-read"
+        private const val OWN_FOR_MS = 5 * 60 * 1000L
+        private const val OWN_PAGES = 4
+
+        /** "my", "min", "mina", "egna": the account's own playlists are meant. */
+        private val MINE = Regex("(?<!\\S)(my|mine|own|min|mina|mitt|egna)(?!\\S)", RegexOption.IGNORE_CASE)
+
+        /** How well a library item must match before it comes ahead of the whole catalogue. */
+        private const val OWN_IS_CLEAR = 0.9
+
+        /** "Liked songs", "gillade låtar": the account's liked songs. */
+        private val LIKED = Regex("(?i)(liked songs|liked tracks|gillade (låtar|spår)|låtar jag gillat|mina låtar|my songs)")
+
         private val KIND_WORDS = listOf(
             SpotifyHit.Kind.Artist to "(songs by|music by|something by|låtar (med|av)|musik (med|av)|nå(go)?t (med|av)|the artist|the band|artisten|artist|bandet)",
             SpotifyHit.Kind.Album to "(the album|albumet|album|skivan|plattan)",
             SpotifyHit.Kind.Playlist to "(the playlist|playlist|spellistan|spellista)",
             SpotifyHit.Kind.Track to "(the song|song|the track|track|låten|låt|singeln)",
+            // "Senaste avsnittet av X" is the podcast X, which plays its newest episode.
+            SpotifyHit.Kind.Show to "((the )?(latest|newest|new) episode of|(det )?(senaste|nya|nyaste) avsnittet( av| med| i)?|the podcast|podcast|poddcasten|poddcast|podden|podd)",
+            SpotifyHit.Kind.Episode to "(the episode|episode|avsnittet|avsnitt)",
         ).map { (kind, words) -> kind to Regex("(^|\\s)$words(\\s|$)", RegexOption.IGNORE_CASE) }
         private val SPACES = Regex("\\s+")
+        private val FILLER = Regex("(?i)(?<!\\S)(the best|best|bästa|right now|just nu|at the moment|för tillfället|currently)(?!\\S)")
         private val LEAD = Regex("^(play|spela( upp)?|put on|sätt på|starta)\\s+", RegexOption.IGNORE_CASE)
         private val TAIL = Regex("\\s+(on|from|på|från|i) spotify$", RegexOption.IGNORE_CASE)
         private val BY = Regex("\\s+(by|med|av)\\s+", RegexOption.IGNORE_CASE)
@@ -131,6 +313,14 @@ class SpotifySearch(
                     break
                 }
             }
+            // "liked songs" are songs; "min spellista Sommar" looks for "Sommar".
+            if (LIKED.containsMatchIn(q)) {
+                kind = kind ?: SpotifyHit.Kind.Track
+                q = q.replace(LIKED, " ").trim()
+            }
+            if (kind != null) q = q.replace(MINE, " ").trim()
+            // Words that only say "something good" search badly: "the best hiphop right now" is hiphop.
+            q = q.replace(FILLER, " ").trim()
             q = q.replace(BY, " ").replace(SPACES, " ").trim()
             return kind to q
         }
@@ -163,7 +353,9 @@ class SpotifySearch(
             val playlists = items("playlists").mapNotNull { p ->
                 hit(SpotifyHit.Kind.Playlist, p, (p["owner"] as? JsonObject)?.str("display_name"), image(p["images"]))
             }
-            return tracks + albums + artists + playlists
+            val shows = items("shows").mapNotNull { sh -> hit(SpotifyHit.Kind.Show, sh, null, image(sh["images"])) }
+            val episodes = items("episodes").mapNotNull { e -> hit(SpotifyHit.Kind.Episode, e, null, image(e["images"])) }
+            return tracks + albums + artists + playlists + shows + episodes
         }
 
         private fun hit(kind: SpotifyHit.Kind, o: JsonObject, by: String?, art: String?): SpotifyHit? {
@@ -222,7 +414,9 @@ object SpotifyOnSonos {
     fun item(hit: SpotifyHit, service: Int = EUROPE, account: Account? = null): SonosItem {
         val encoded = "spotify%3a${hit.kind.name.lowercase()}%3a${hit.id}"
         val (key, prefix, upnpClass) = when (hit.kind) {
-            SpotifyHit.Kind.Track -> Triple("00032020", "", "object.item.audioItem.musicTrack")
+            SpotifyHit.Kind.Track, SpotifyHit.Kind.Episode -> Triple("00032020", "", "object.item.audioItem.musicTrack")
+            // A podcast queues like a playlist, the way the Sonos app shares one.
+            SpotifyHit.Kind.Show -> Triple("1006206c", "x-rincon-cpcontainer:1006206c", "object.container.playlistContainer")
             SpotifyHit.Kind.Album -> Triple("1004206c", "x-rincon-cpcontainer:1004206c", "object.container.album.musicAlbum")
             SpotifyHit.Kind.Playlist -> Triple("1006206c", "x-rincon-cpcontainer:1006206c", "object.container.playlistContainer")
             SpotifyHit.Kind.Artist -> throw IllegalArgumentException("An artist is played as its songs")
