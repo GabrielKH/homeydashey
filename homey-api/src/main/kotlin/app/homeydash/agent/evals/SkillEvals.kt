@@ -146,13 +146,17 @@ class SkillEvals(
         var stopped = false
         for ((i, p) in planned.withIndex()) {
             if (stop()) { stopped = true; break }
-            val result = runOne(brain, p, options)
+            // A hiccup on the AI's server ("transient engine error") says nothing about the skill: asked once more.
+            val result = runOne(brain, p, options).let { r -> if (serverHiccup(brain, r)) runOne(brain, p, options) else r }
             results += result
             progress(i + 1, planned.size, result)
         }
         return EvalRun(brain.provider.label, brain.model, brain.local, started, System.currentTimeMillis(), options.trials, results, stopped,
             answers = settingsFor(SkillCase("x"), brain, options.base).answers.label)
     }
+
+    private fun serverHiccup(brain: Connection, r: EvalResult) =
+        !r.passed && r.replies.any { it.startsWith("${brain.provider.label} didn't answer") || it.startsWith("(no answer within") }
 
     /** Hears everything the assistant traces, and the tool calls among it. */
     private class Recorder : AgentListener {
@@ -375,7 +379,7 @@ object Graders {
         if (e.asks == true && '?' !in text) p += "It should have asked something back: \"${text.take(160)}\""
         if (e.asks == false && '?' in text) p += "It asked back instead of doing it: \"${text.take(160)}\""
         if (e.lang && !o.reply.ignored && text.isNotBlank()) {
-            Lang.of(text)?.takeIf { it != lang }?.let { p += "It answered in ${Lang.name(it)}, not ${Lang.name(lang)}: \"${text.take(120)}\"" }
+            Lang.of(sim.withoutHouseWords(text))?.takeIf { it != lang }?.let { p += "It answered in ${Lang.name(it)}, not ${Lang.name(lang)}: \"${text.take(120)}\"" }
         }
         e.maxSentences?.let { max -> Lang.sentences(text).let { if (it > max) p += "The answer has $it sentences; at most $max." } }
 
@@ -413,7 +417,7 @@ object Graders {
         e.event?.let { want ->
             val day = want.date?.let { CalendarBook.day(it, today) }
             val hit = sim.added.any { ev ->
-                NameMatch.normalize(ev.title).contains(NameMatch.normalize(want.title)) &&
+                anyIn(want.title, NameMatch.normalize(ev.title)) &&
                     (day == null || ev.date == day) &&
                     (want.time == null || ev.time == SimHouse.time(want.time)) &&
                     (want.calendar == null || ev.calendarId == want.calendar)

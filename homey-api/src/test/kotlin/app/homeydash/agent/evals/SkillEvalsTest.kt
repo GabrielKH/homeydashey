@@ -184,6 +184,30 @@ class SkillEvalsTest {
         server.shutdown()
     }
 
+    @Test fun `the practice house dims like Homey, and its own Swedish words don't count as the answer's language`() = runBlocking {
+        val sim = SimHouse(house, File(work, "dim"), http).also { it.open() }
+        sim.setCapability("kitchen_ceiling", "dim", JsonPrimitive(0.0))
+        assertEquals(JsonPrimitive(false), sim.device("kitchen_ceiling")?.capability("onoff")?.value)
+        sim.setCapability("kitchen_ceiling", "dim", JsonPrimitive(0.4))
+        assertEquals(JsonPrimitive(true), sim.device("kitchen_ceiling")?.capability("onoff")?.value)
+        val step = house.recipes.first { it.title == "Lasagne" }.steps[2]
+        assertEquals("en", Lang.of(sim.withoutHouseWords("Step 3 of 5: $step After that, you are done.")))
+    }
+
+    @Test fun `timer add with nothing running starts one, and an alias may carry its room`() = runBlocking {
+        val sim = SimHouse(house, File(work, "tools"), http).also { it.open() }
+        val settings = AgentSettings()
+        val view = HomeView.build(sim.zones, sim.devices, sim.moods, emptySet(), settings, local = true)
+        val tools = AgentTools(view, sim, sim.dashboard)
+        fun args(vararg pairs: Pair<String, String>) = kotlinx.serialization.json.JsonObject(pairs.associate { it.first to JsonPrimitive(it.second) })
+        tools.run(app.homeydash.agent.ToolCall("1", "timer", args("action" to "add", "minutes" to "10", "label" to "pastan")))
+        assertEquals("Pastan", sim.timers.timers.value.single().label)
+        tools.run(app.homeydash.agent.ToolCall("2", "timer", args("action" to "add_minutes", "minutes" to "2", "label" to "all")))
+        assertEquals(12 * 60, sim.timers.timers.value.single().seconds)
+        val lamp = view.devices.first { it.name == house.devices.first { d -> d.id == "bedroom_lamp" }.name }
+        assertEquals(lamp, view.device("${lamp.alias}, ${lamp.room}"))
+    }
+
     @Test fun `the plan picks phrasings, languages and tags`() {
         val evals = SkillEvals(ChatClient(http), http, work, house)
         val all = evals.plan(files, EvalOptions(trials = 3))

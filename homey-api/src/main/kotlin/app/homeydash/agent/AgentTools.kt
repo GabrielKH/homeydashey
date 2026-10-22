@@ -928,11 +928,13 @@ class AgentTools(
                 if (newLabel.isBlank()) return ok("Ask what to call it.")
                 board.rename(label, newLabel)?.let { learnTimer(it); ok("The timer is now called ${it.label}.") } ?: ok("No timers are running.")
             }
-            "add", "extend", "snooze" -> {
+            "add", "extend", "snooze", "add_minutes", "add_time" -> {
                 val seconds = ((minutes ?: 1.0) * 60).toInt()
                 if (seconds == 0) return ok("Ask how many minutes.")
-                board.add(label, seconds)?.let { ok("${named(it)} now has ${Timers.clock(it.leftMs(System.currentTimeMillis()))} left.") }
-                    ?: ok("No timer like that is running.")
+                // "all" from a model means the one running; with none running, "add a timer" means start one.
+                val which = label.takeUnless { it.equals("all", ignoreCase = true) }.orEmpty()
+                board.add(which, seconds)?.let { ok("${named(it)} now has ${Timers.clock(it.leftMs(System.currentTimeMillis()))} left.") }
+                    ?: if (board.timers.value.isEmpty() && minutes != null) timer("start", minutes, which, newLabel) else ok("No timer like that is running.")
             }
             "mute", "quiet", "silence" -> {
                 val n = board.mute(label.ifBlank { null })

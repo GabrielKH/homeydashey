@@ -148,7 +148,24 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
 
     private fun change(id: String, capability: String, value: JsonElement) {
         val d = devices[id] ?: return
-        devices = devices + (id to d.withCapabilityValue(capability, value))
+        var next = d.withCapabilityValue(capability, value)
+        // As Homey does: a light dimmed to 0 is off, and dimming an off light turns it on.
+        if (capability == "dim" && next.capability("onoff") != null) {
+            val level = (value as? JsonPrimitive)?.content?.toDoubleOrNull()
+            if (level != null) next = next.withCapabilityValue("onoff", JsonPrimitive(level > 0.0))
+        }
+        devices = devices + (id to next)
+    }
+
+    /**
+     * [text] without the home's own words: recipe steps and ingredients, food, device, room and
+     * mood names, which stay Swedish in an English answer ("Step 3 of 5: Gör vitsåsen…").
+     */
+    fun withoutHouseWords(text: String): String {
+        val words = file.recipes.flatMap { it.steps + it.ingredients + it.title } + file.fridge.map { it.name } +
+            file.devices.map { it.name } + file.zones.map { it.name } + file.moods.map { it.name } + file.flows
+        return words.filter { it.isNotBlank() }.sortedByDescending { it.length }
+            .fold(text) { t, w -> t.replace(w, " ", ignoreCase = true) }
     }
 
     override suspend fun setCapability(deviceId: String, capability: String, value: JsonElement) {
