@@ -548,7 +548,9 @@ class AgentTools(
             "${asked.name} can't play music. These can: " +
                 view.devices.filter { sources(it.id).isNotEmpty() }.joinToString { "${it.alias} (${it.name}${it.room?.let { r -> ", $r" }.orEmpty()})" } + ".",
         )
-        val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
+        val played = home.playMusic(d.id, query, kind)
+            ?: translated(d.id, query)?.let { home.playMusic(d.id, it, kind) }
+            ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         lastPlayer = d.id
         // The room too, so "Vardagsrum" played on "Beam" isn't taken for the wrong speaker.
         val room = d.room?.takeIf { r -> !NameMatch.normalize(d.name).contains(NameMatch.normalize(r)) }
@@ -593,6 +595,23 @@ class AgentTools(
     }
 
     /** Some of what the player has, so a miss can be followed by a pick of the model's own. */
+    /**
+     * The one favourite [query] names in the other language, word by word: "morning jazz" is
+     * Morgonjazz (it ends in "jazz", and "morgon" starts like "morning"). Null when none or
+     * several do.
+     */
+    private suspend fun translated(deviceId: String, query: String): String? {
+        val words = NameMatch.normalize(query).split(' ').filter { it.isNotBlank() }
+        if (words.size < 2 || words.last().length < 4) return null
+        val names = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }
+            .flatMap { source -> runCatching { home.choices(source.card, source.arg, "") }.getOrDefault(emptyList()).map { it.name } }.distinct()
+        return names.filter { name ->
+            val joined = NameMatch.normalize(name).replace(" ", "")
+            val rest = joined.removeSuffix(words.last())
+            rest != joined && rest.length >= 3 && rest.take(3) == words.first().take(3)
+        }.singleOrNull()
+    }
+
     private suspend fun musicChoices(deviceId: String): String {
         val lists = mutableListOf<String>()
         for (source in FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }) {

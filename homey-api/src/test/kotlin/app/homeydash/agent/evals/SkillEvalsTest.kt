@@ -25,6 +25,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -224,6 +225,8 @@ class SkillEvalsTest {
         cooking.run(app.homeydash.agent.ToolCall("4", "open_recipe", args("recipe" to "lasagnen")))
         assertEquals("Lasagne", sim.cooking.current()?.first?.title)
         assertEquals("Done, the lights are on.", ChatClient.stripThinking("<think>    Done, the lights are on."))
+        val living = view.devices.first { it.name == "Vardagsrum Sonos" }
+        assertTrue(tools.run(app.homeydash.agent.ToolCall("5", "play_music", args("player" to living.alias, "query" to "morning jazz"))).text.startsWith("Playing Morgonjazz"))
         val lamp = view.devices.first { it.name == house.devices.first { d -> d.id == "bedroom_lamp" }.name }
         assertEquals(lamp, view.device("${lamp.alias}, ${lamp.room}"))
     }
@@ -285,6 +288,61 @@ class SkillEvalsTest {
         assertEquals("morgonjazz", arg(jazz, "query"))
         assertEquals("morgonjazz", arg(CallCheck.rewrite(call("set_device", "device" to "Vardagsrum Sonos", "capability" to "speaker_playing", "value" to "true"), "spela morgonjazz på vardagsrummets sonos", play, view), "query"))
         assertNull(CallCheck.rewrite(call("set_room", "room" to "Vardagsrum", "capability" to "speaker_playing", "value" to "true"), "sätt på musiken i vardagsrummet", play, view))
+        // Run 5: changes nobody asked for, and the tool a question needs.
+        val more = listOf("goodnight", "set_device", "set_room", "set_scene", "set_mood", "play_music", "open_page", "open_recipe", "read_recipe", "find_recipes",
+            "fridge_contents", "update_fridge_item", "remove_from_fridge", "calendar", "add_to_fridge", "write_note", "change_todo", "add_todo")
+        assertEquals(CallCheck.NOT_GOODNIGHT, CallCheck.refuse(call("goodnight"), "släck överallt", view, more)?.text)
+        assertNull(CallCheck.refuse(call("goodnight"), "godnatt", view, more))
+        assertNull(CallCheck.refuse(call("goodnight"), "ja", view, more, before = "Vill du att jag säger godnatt till huset?"))
+        assertEquals(CallCheck.USE_GOODNIGHT, CallCheck.refuse(call("set_mood", "mood" to "Middag"), "godnatt", view, more)?.text)
+        assertEquals(CallCheck.NO_PAGE, CallCheck.refuse(call("open_page", "page" to "overview"), "berätta ett skämt", view, more)?.text)
+        assertNull(CallCheck.refuse(call("open_page", "page" to "fridge"), "visa kylen", view, more))
+        assertEquals(CallCheck.NO_MUSIC, CallCheck.refuse(call("play_music", "player" to "Vardagsrum Sonos", "query" to "dags för film"), "dags för film i vardagsrummet", view, more)?.text)
+        assertNull(CallCheck.refuse(call("play_music", "player" to "Kök Sonos", "query" to "Rumours"), "sätt på Rumours med Fleetwood Mac i köket", view, more))
+        assertNull(CallCheck.refuse(call("play_music", "player" to "Kök Sonos", "query" to "P3"), "ja", view, more, before = "Ska jag spela lite musik?"))
+        assertNotNull(CallCheck.refuse(call("set_device", "device" to "Vardagsrum Sonos", "capability" to "volume_set", "value" to "0.5"), "dags för film i vardagsrummet", view, more))
+        assertNull(CallCheck.refuse(call("set_device", "device" to "Kök Sonos", "capability" to "volume_set", "value" to "0.5"), "lite högre i köket", view, more))
+        assertNotNull(CallCheck.refuse(call("set_device", "device" to "Taklampa kök", "capability" to "dim", "value" to "0.9"), "lite högre i köket", view, more))
+        assertNotNull(CallCheck.refuse(call("set_room", "room" to "all", "capability" to "light_hue", "value" to "0"), "släck överallt", view, more))
+        assertNotNull(CallCheck.refuse(call("set_room", "room" to "all", "capability" to "measure_temperature", "value" to "false"), "släck överallt", view, more))
+        assertNull(CallCheck.refuse(call("set_room", "room" to "Vardagsrum", "capability" to "dim", "value" to "0.3"), "gör det mysigt i vardagsrummet", view, more))
+        assertEquals(CallCheck.WHICH, CallCheck.refuse(call("set_device", "device" to "Taklampa kök", "capability" to "onoff", "value" to "true"), "tänd lampan", view, more)?.text)
+        assertNull(CallCheck.refuse(call("set_device", "device" to "Taklampa kök", "capability" to "onoff", "value" to "true"), "tänd lampan i köket", view, more))
+        assertEquals(CallCheck.WHICH, CallCheck.refuse(call("set_scene", "room" to "all", "look" to "bright"), "kör städläget", view, more)?.text)
+        assertTrue(CallCheck.refuse(call("set_mood", "mood" to "Filmkväll", "room" to "Vardagsrum"), "gör det mysigt i vardagsrummet", view, more)!!.soft)
+        assertNull(CallCheck.refuse(call("set_mood", "mood" to "Filmkväll"), "dags för film i vardagsrummet", view, more))
+        assertTrue(CallCheck.refuse(call("update_fridge_item", "item" to "Yoghurt", "quantity" to "0"), "vi har druckit upp mjölken", view, more)!!.soft)
+        assertEquals("set_mood", CallCheck.rewrite(call("set_scene", "room" to "Vardagsrum", "look" to "movie"), "dags för film i vardagsrummet", more, view)?.name)
+        assertEquals("onoff", arg(CallCheck.rewrite(call("set_room", "room" to "Vardagsrum", "capability" to "light", "value" to "true", "device_class" to "dim"), "mysbelysning i vardagsrummet", more, view), "capability"))
+        val paused = CallCheck.rewrite(call("play_music", "player" to "Kök Sonos", "query" to "", "kind" to "pause"), "pause the music in the kitchen", more, view)
+        assertEquals("set_device", paused?.name)
+        assertEquals("false", arg(paused, "value"))
+        assertEquals("morning jazz", arg(CallCheck.rewrite(call("play_music", "player" to "Vardagsrum Sonos", "query" to "morning jazz living room"), "put on the morning jazz in the living room", more, view), "query"))
+        assertEquals("jazz", arg(CallCheck.rewrite(call("play_music", "player" to "Kök Sonos", "query" to "jazz i köket"), "spela jazz i köket", more, view), "query"))
+        assertNull(arg(CallCheck.rewrite(call("fridge_contents", "place" to "fridge", "within_days" to "0"), "vad finns i kylen?", more, view), "within_days"))
+        assertNull(CallCheck.rewrite(call("fridge_contents", "within_days" to "2"), "vad går ut snart?", more, view))
+        val pancakes = CallCheck.rewrite(call("fridge_contents"), "vad behöver jag till pannkakorna?", more, view)
+        assertEquals("read_recipe", pancakes?.name)
+        assertEquals("pannkakorna", arg(pancakes, "recipe"))
+        assertEquals("kyckling", arg(CallCheck.rewrite(call("fridge_contents"), "vad kan jag laga med kyckling?", more, view), "query"))
+        assertEquals("remove_from_fridge", CallCheck.rewrite(call("update_fridge_item", "item" to "Mjölk", "quantity" to "0"), "mjölken är slut", more, view)?.name)
+        assertEquals("open_recipe", CallCheck.recipeInstead(call("open_page", "page" to "fridge"), "öppna lasagnen", more)?.name)
+        assertNull(CallCheck.recipeInstead(call("open_page", "page" to "fridge"), "öppna kylen", more))
+        assertEquals("set_device", CallCheck.renamed(call("player_1", "device" to "Kök Sonos", "capability" to "speaker_playing", "value" to "Rumours"), more)?.name)
+        assertEquals("update_fridge_item", CallCheck.renamed(call("update_fridge", "item" to "Kycklingfilé", "place" to "freezer"), more)?.name)
+        assertNull(CallCheck.renamed(call("set_device"), more))
+        assertEquals("calendar", CallCheck.shouldCall("vad händer i morgon?", more))
+        assertEquals("calendar", CallCheck.shouldCall("what's on tomorrow?", more))
+        assertEquals("read_recipe", CallCheck.shouldCall("vad behöver jag till pannkakorna?", more))
+        assertEquals("fridge_contents", CallCheck.shouldCall("vad måste vi äta upp först?", more))
+        assertEquals("add_to_fridge", CallCheck.shouldCall("jag har köpt ägg", more))
+        assertEquals("remove_from_fridge", CallCheck.shouldCall("mjölken är slut", more))
+        assertEquals("write_note", CallCheck.shouldCall("lämna ett meddelande till Alex: middagen står i kylen", more))
+        assertEquals("change_todo", CallCheck.shouldCall("jag har bokat bilservicen", more))
+        assertNull(CallCheck.shouldCall("berätta ett skämt", more))
+        val gabriel = HomeView.build(sim.zones, sim.devices, sim.moods, emptySet(), AgentSettings(people = mapOf("p-gabriel" to "Gabriel"), asker = app.homeydash.agent.Asker("p-gabriel", "Gabriel")), local = true)
+        assertNull(arg(CallCheck.rewrite(call("add_todo", "text" to "Change hallway bulb", "who" to "Gabriel"), "put change the hallway bulb on the to-do list", more, gabriel), "who"))
+        assertEquals("Gabriel", arg(CallCheck.rewrite(call("add_todo", "text" to "Ring tandläkaren", "who" to "Gabriel"), "jag måste ringa tandläkaren", more, gabriel) ?: call("add_todo", "who" to "Gabriel"), "who"))
         assertTrue(app.homeydash.agent.Agent.inOtherLanguage("Jag har tänt lampan i köket.", swedish = false, view))
         assertFalse(app.homeydash.agent.Agent.inOtherLanguage("I turned on the light in Kök, it is on now.", swedish = false, view))
         assertFalse(app.homeydash.agent.Agent.inOtherLanguage("Klart.", swedish = false, view))

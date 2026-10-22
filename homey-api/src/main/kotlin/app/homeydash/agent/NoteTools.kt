@@ -331,7 +331,8 @@ class NoteTools(
 
     private fun noNote(said: String): ToolResult {
         val notes = board.current()
-        return ok(if (notes.isEmpty()) "There are no post-its up." else "Which post-it? Up now: " + notes.take(10).joinToString { "\"${it.text}\"" } + ".")
+        return ok(if (notes.isEmpty()) "There are no post-its up." else "No post-it says \"$said\". Up now: " + notes.take(10).joinToString { "\"${it.text}\"" } +
+            ". If one is plainly what the user meant (also in the other language: \"flowers\" for \"blommor\"), call again with its words; ask only when unsure.")
     }
 
     private fun noTodo(said: String): ToolResult {

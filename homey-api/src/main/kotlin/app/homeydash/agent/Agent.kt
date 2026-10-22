@@ -252,6 +252,15 @@ class Agent(
             val done = mutableMapOf<String, ToolResult>()
             // Calls CallCheck doubted once; asked for again, they run.
             val warned = mutableSetOf<String>()
+            // Calls CallCheck refused; asked for again with an answer beside them, the answer stands.
+            val refusedBefore = mutableSetOf<String>()
+            // The target of a change that failed: nothing else is switched instead of it.
+            var failedTarget: String? = null
+            // Looked up since the last change: the same look again only repeats it.
+            val looked = mutableMapOf<String, ToolResult>()
+            var toldToCall = false
+            // What the user may be agreeing to: the question it asked just before, in a follow-up.
+            val lastAsked = if (!context.followUp) "" else history.lastOrNull()?.messages?.lastOrNull { it.role == "assistant" && !it.content.isNullOrBlank() }?.content.orEmpty()
             val out = voice?.let { SpeechStream(it, homeView::named) }
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
@@ -304,6 +313,15 @@ class Agent(
                             }
                             return AgentReply("", brain, ignored = true)
                         }
+                        // "Vad händer i morgon?" answered with the weather: the tool it needs, asked for once.
+                        if (!acted && !toldToCall && context.routine == null) {
+                            CallCheck.shouldCall(text, specs.map { it.name })?.let { tool ->
+                                toldToCall = true
+                                heard.trace("guard", "Answered without $tool; asked it to call it.")
+                                turn += ChatMessage.user(nudgeCall(tool))
+                                return@repeat
+                            }
+                        }
                         // An empty answer: the server hid what the model wrote (vMLX drops tool tags
                         // when no tool schemas were sent), or it wrote nothing. Ask once, then say so.
                         if (answer.content.isNullOrBlank()) {
@@ -348,10 +366,13 @@ class Agent(
                         live?.finish()
                         return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
                     }
+                    var refusedAgain = false
+                    var ran = false
                     for (asked in answer.toolCalls) {
                         acted = true
                         val names = specs.map { it.name }
-                        val call = lightsOnly(asked, text)?.let { c ->
+                        val real = CallCheck.renamed(asked, names)?.also { heard.trace("guard", "No tool called ${asked.name}; ran ${it.name} ${it.arguments}.") } ?: asked
+                        val call = lightsOnly(real, text)?.let { c ->
                             CallCheck.recipeInstead(c, text, names)?.also { heard.trace("guard", "Opened the recipe instead of the recipes page.") }
                                 ?: CallCheck.rewrite(c, text, names, homeView)?.also { heard.trace("guard", "Asked for ${c.name} ${c.arguments}; ran ${it.name} ${it.arguments}, as the question said.") }
                                 ?: c
@@ -361,16 +382,27 @@ class Agent(
                             turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
                             continue
                         }
-                        val refused = CallCheck.refuse(call, text, homeView, names)?.takeUnless { it.soft && !warned.add("${call.name} ${call.arguments}") }
+                        val key = "${call.name} ${call.arguments}"
+                        val refused = (if (context.routine != null) null else CallCheck.refuse(call, text, homeView, names, lastAsked))
+                            ?.takeUnless { it.soft && !warned.add(key) }
+                            ?: failedTarget?.takeIf { call.name in SETS && target(call) != it }?.let {
+                                CallCheck.Refusal("Not done: what the user asked for didn't respond, so nothing else is changed instead. Tell them it didn't respond.")
+                            }
                         if (refused != null) {
+                            if (!refusedBefore.add(key)) refusedAgain = true
                             heard.trace("guard", "Skipped ${call.name} ${call.arguments}: ${refused.text}")
                             turn += ChatMessage.tool(asked.id, refused.text)
                             continue
                         }
-                        val key = "${call.name} ${call.arguments}"
+                        ran = true
+                        val seen = looked[key]?.takeIf { call.name in LOOKS && call.name != KnowHow.GUIDE }
                         val before = done[key]?.takeIf { call.name !in LOOKS }
                         val result = if (call.name == KnowHow.GUIDE) {
                             guide(call, skills, specs, compact, text, homeView, heard)
+                        } else if (seen != null) {
+                            repeats++
+                            heard.trace("guard", "Looked up $key again; nothing changed since.")
+                            ToolResult("You looked this up a moment ago and nothing has changed since: ${seen.text} Answer the user now.", seen.localOnly)
                         } else if (before != null && StepText.failed(before.text)) {
                             // The same failing call over and over only made the user wait (P1 radio: four times).
                             heard.trace("guard", "Asked for $key again after it failed; not tried again.")
@@ -388,6 +420,11 @@ class Agent(
                             else -> true // Timers, pages, recipes and the fridge answer in their own words.
                         }
                         changed = changed || did
+                        if (call.name in LOOKS) looked[key] = result
+                        if (call.name in SETS && seen == null) {
+                            if (StepText.failed(result.text)) failedTarget = target(call)
+                            if (did) looked.clear()
+                        }
                         if (did && before == null && call.name in SETS) learnHabit(call, homeView, settings)
                         actions += homeView.named("${call.name} ${call.arguments} → ${result.text.take(140)}")
                         localOnly = localOnly || result.localOnly
@@ -400,6 +437,13 @@ class Agent(
                     live?.takeIf { it.spokeThisRound && answer.toolCalls.isNotEmpty() }?.heardThisRound()?.takeIf { it.isNotEmpty() }?.let { said ->
                         val last = turn.removeAt(turn.lastIndex)
                         turn += ChatMessage.tool(last.toolCallId.orEmpty(), last.content.orEmpty() + "\n" + alreadySaid(said))
+                    }
+                    // The same refused call again, with an answer beside it ("the hall lamp is off"): the answer is given.
+                    if (refusedAgain && !ran && !answer.content.isNullOrBlank()) {
+                        heard.trace("guard", "Asked again for a call that was refused; gave its answer instead.")
+                        remember(turn, localOnly)
+                        live?.finish()
+                        return AgentReply(homeView.named(answer.content.orEmpty()), brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
                     }
                     if (repeats >= MAX_REPEATS) {
                         heard.trace("guard", "Kept asking for calls already done; stopped.")
@@ -1036,6 +1080,13 @@ class Agent(
         fun alreadySaid(said: String) = "(From the app: the user already heard you say \"$said\" Don't say that again; " +
             "answer with only what these results add, in a few words, or just confirm it briefly.)"
         const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
+        fun nudgeCall(tool: String) = "(From the app, not the user: this needs the $tool tool. Call it now, then answer from what it says.)"
+
+        /** What a change is aimed at: its device, room or player. */
+        fun target(call: ToolCall): String = listOf("device", "room", "player").firstNotNullOfOrNull { k ->
+            (call.arguments[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+        }.orEmpty().lowercase()
+
         const val NUDGE_ENGLISH = "(From the app, not the user: the user set answers to English only. Say your last answer again in English, and nothing else.)"
         const val NUDGE_SWEDISH = "(From the app, not the user: the user set answers to Swedish only. Say your last answer again in Swedish, and nothing else.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"

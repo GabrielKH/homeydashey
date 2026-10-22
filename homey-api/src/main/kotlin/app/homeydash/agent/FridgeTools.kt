@@ -81,8 +81,10 @@ class FridgeTools(
         if (query.isNotBlank()) shown = shown.filter { (item, _) -> score(query, item) > 0 }
         within?.let { d -> shown = shown.filter { it.second.daysLeft <= d.toLong() } }
         if (shown.isEmpty()) return ok("Nothing matches. In there: " + all.take(20).joinToString { it.first.name } + ".")
+        // Small models tell only the warnings; what's there is all of it.
+        val hint = if (query.isBlank() && within == null && shown.size > 1) "\nAsked what's in there, name every item, not just the ones with a warning." else ""
         return ok("Today is ${fridge.today()}.\n" + shown.take(40).joinToString("\n") { (item, e) -> line(item, e) } +
-            if (shown.size > 40) "\n…and ${shown.size - 40} more." else "")
+            (if (shown.size > 40) "\n…and ${shown.size - 40} more." else "") + hint)
     }
 
     private suspend fun add(a: JsonObject): ToolResult {
