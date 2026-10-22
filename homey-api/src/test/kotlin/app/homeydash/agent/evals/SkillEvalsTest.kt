@@ -9,6 +9,7 @@ import app.homeydash.agent.HomeView
 import app.homeydash.agent.KnowHow
 import app.homeydash.agent.KnowHowBook
 import app.homeydash.agent.KnowHowTools
+import app.homeydash.agent.Language
 import app.homeydash.agent.MemoryBook
 import app.homeydash.agent.MemoryTools
 import app.homeydash.agent.Provider
@@ -98,6 +99,26 @@ class SkillEvalsTest {
         assertEquals(listOf("set_room"), r.calls.map { it.substringBefore(' ') })
         assertTrue(r.changes.any { it.startsWith("kitchen_ceiling onoff") })
         assertTrue(r.transcript.any { it.startsWith("question: ") })
+        server.shutdown()
+    }
+
+    @Test fun `answers follow the home's language setting`() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        repeat(2) {
+            server.enqueue(calls("set_room", """{"room":"Kök","capability":"onoff","value":"false"}"""))
+            server.enqueue(says("Done, the kitchen lights are off."))
+        }
+        val (file, c) = case("lights.kitchen_off")
+        val evals = SkillEvals(ChatClient(http), http, work, house)
+        val planned = Planned(file, c, "sv", "släck i köket", 1)
+        // Svenska + English: a Swedish question wants a Swedish answer.
+        val auto = evals.runOne(brain(server), planned, EvalOptions(base = AgentSettings(language = Language.Auto)))
+        assertTrue(auto.problems.joinToString(), auto.problems.any { "answered in English" in it })
+        // English only: the same English answer is right.
+        val english = EvalOptions(base = AgentSettings(language = Language.English))
+        val r = evals.runOne(brain(server), planned, english)
+        assertTrue(r.problems.joinToString(), r.passed)
+        assertEquals(Language.English, evals.settingsFor(c, brain(server), english.base).language)
         server.shutdown()
     }
 

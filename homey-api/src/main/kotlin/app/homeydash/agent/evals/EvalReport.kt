@@ -52,6 +52,7 @@ object EvalReport {
         append(if (run.local) " (local)" else " (internet)")
         append(" · ").append(time.format(Instant.ofEpochMilli(run.started)))
         device?.let { append(" · ").append(it) }
+        if (run.answers.isNotBlank()) append(" · answers in ").append(run.answers)
         append("\n\n")
         append("**${pct(all.caseRate)} of cases passed every try** (${all.casesPassed}/${all.cases}, pass^${run.trials}) · ")
         append("${pct(all.runRate)} of runs passed (${all.runsPassed}/${all.runs})")

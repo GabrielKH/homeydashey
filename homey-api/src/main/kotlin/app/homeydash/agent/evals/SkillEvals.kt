@@ -96,6 +96,8 @@ data class EvalRun(
     val results: List<EvalResult> = emptyList(),
     /** Stopped before every run was done. */
     val stopped: Boolean = false,
+    /** The language setting the answers were held to, as the settings show it. */
+    val answers: String = "",
 ) {
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
@@ -148,7 +150,8 @@ class SkillEvals(
             results += result
             progress(i + 1, planned.size, result)
         }
-        return EvalRun(brain.provider.label, brain.model, brain.local, started, System.currentTimeMillis(), options.trials, results, stopped)
+        return EvalRun(brain.provider.label, brain.model, brain.local, started, System.currentTimeMillis(), options.trials, results, stopped,
+            answers = settingsFor(SkillCase("x"), brain, options.base).answers.label)
     }
 
     /** Hears everything the assistant traces, and the tool calls among it. */
@@ -267,13 +270,15 @@ class SkillEvals(
         topics = if (sim.timers.timers.value.isNotEmpty()) setOf("timers") else emptySet(),
     )
 
-    /** The owner's settings with only [brain] to answer, the secrets the tests need on, and the owner asking. */
+    /**
+     * The owner's settings with only [brain] to answer, their own language (an English-only home
+     * gets English answers to Swedish questions), the secrets the tests need on, and the owner asking.
+     */
     fun settingsFor(case: SkillCase, brain: Connection, base: AgentSettings): AgentSettings {
         val owner = house.people.firstOrNull()
         var s = base.copy(
             local = brain.takeIf { it.local }, internet = brain.takeIf { !it.local },
             mode = if (brain.local) BrainMode.Local else BrainMode.Internet,
-            language = Language.Auto,
             secrets = base.secrets + SECRETS,
             hiddenDevices = emptySet(), seeHiddenDevices = true,
             speakerId = null, sendLogs = false,
