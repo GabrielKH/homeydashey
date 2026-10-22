@@ -51,6 +51,8 @@ class AgentTools(
     private val recipes: RecipeTools? = null,
     /** What is in the fridge, freezer and pantry; null when the dashboard has none. */
     private val fridge: FridgeTools? = null,
+    /** The post-its and to-do list; null when the dashboard has none. */
+    private val notes: NoteTools? = null,
     /** The owner's routines and standing instructions; null when the dashboard has none. */
     private val routines: RoutineTools? = null,
     /** What the assistant remembers from earlier conversations; null when it remembers nothing. */
@@ -133,8 +135,8 @@ class AgentTools(
             string("rooms", "For clean_rooms and go_to: room names, comma-separated, e.g. \"Kitchen, Hall\"")
             required("action")
         })
-        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, or a room name.") {
-            string("page", "overview, moods, media, calendar, recipes, fridge, or a room name")
+        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, notes, or a room name.") {
+            string("page", "overview, moods, media, calendar, recipes, fridge, notes, or a room name")
             required("page")
         })
         add(tool("open_device", "Open a device's controls on the dashboard, e.g. a lamp's colour or a TV remote.") {
@@ -216,6 +218,7 @@ class AgentTools(
         })
         recipes?.let { addAll(it.specs()) }
         fridge?.let { addAll(it.specs()) }
+        notes?.let { addAll(it.specs()) }
         routines?.let { r ->
             if (r.data.routines.any { it.enabled }) add(tool("run_routine", "Run one of the owner's routines now, e.g. God morgon, and follow what it returns.") {
                 string("name", "The routine's name")
@@ -286,6 +289,7 @@ class AgentTools(
             // A small model sometimes calls the device instead of its tool ("vacuum_1 {action: go_to}").
             else -> view.device(call.name)?.takeIf { it.deviceClass == "vacuumcleaner" }?.let { d -> vacuum(d.alias, a.str("action"), a.list("rooms")) }
                 ?: recipes?.run(call) ?: fridge?.run(call)
+                ?: notes?.takeIf { call.name in it.names }?.run(call, view.settings.asker, view.settings.persona.label, view.settings.people)
                 ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
                 ?: memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) && call.name in it.names }?.run(call, view.settings.asker, view.local)
                 ?: knowHow?.takeIf { !guest && call.name in it.names }?.run(call)
@@ -857,6 +861,8 @@ class AgentTools(
             "calendar" to "calendar", "kalender" to "calendar",
             "recipes" to "recipes", "recipe" to "recipes", "recept" to "recipes",
             "fridge" to "fridge", "kylen" to "fridge", "kylskåp" to "fridge", "kylskåpet" to "fridge", "freezer" to "fridge", "frysen" to "fridge",
+            "notes" to "notes", "note" to "notes", "post-its" to "notes", "postits" to "notes", "lappar" to "notes", "lapparna" to "notes",
+            "todo" to "notes", "todos" to "notes", "to-do" to "notes", "to do" to "notes", "att göra" to "notes", "anteckningar" to "notes",
         )
         fixed[p]?.let { return ok(if (dashboard.openPage(it)) "Showing $it." else "Can't show $it.") }
         val roomId = view.room(page) ?: return ok("There's no page or room called $page.")

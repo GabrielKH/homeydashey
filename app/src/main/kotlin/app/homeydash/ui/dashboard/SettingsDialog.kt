@@ -361,6 +361,8 @@ internal fun ScreenSettings(
     onWakeOnProximity: (Boolean) -> Unit,
     kiosk: Boolean,
     onKiosk: (Boolean) -> Unit,
+    notesOnDark: Boolean? = null,
+    onNotesOnDark: (Boolean) -> Unit = {},
 ) {
     val g = GlassTheme.colors
     val context = LocalContext.current
@@ -394,6 +396,13 @@ internal fun ScreenSettings(
             on = wakeOnProximity && hasProximity,
             enabled = hasProximity && dimAfter > 0,
             onChange = onWakeOnProximity,
+        )
+        if (notesOnDark != null) SettingSwitch(
+            title = "Post-its on the dark screen",
+            detail = "The post-its glow on black while the screen is dark, everything else stays off. The screen is a touch brighter while any are up.",
+            on = notesOnDark,
+            enabled = dimAfter > 0,
+            onChange = onNotesOnDark,
         )
     }
     SettingsBox("Kiosk") {

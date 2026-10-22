@@ -106,7 +106,7 @@ fun OverviewScreen(
     widget: @Composable (String) -> Unit,
     /** Whether Homey has users to show in a who's home card. */
     hasHousehold: Boolean = false,
-    /** Cards whose module is turned off under Modules: weather, calendar, fridge. */
+    /** Cards whose module is turned off under Modules (weather, calendar, fridge), and notes until asked for. */
     widgetsOff: Set<String> = emptySet(),
 ) {
     val g = GlassTheme.colors
@@ -124,6 +124,7 @@ fun OverviewScreen(
         if ("weather" !in widgetsOff) add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
         if ("calendar" !in widgetsOff) add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
         if ("fridge" !in widgetsOff) add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
+        if ("notes" !in widgetsOff) add(LaneCard("notes", LaneCard.Kind.Info, wide = true, height = 300))
         if (hasHousehold) add(LaneCard("home", LaneCard.Kind.Info, wide = true, height = 200))
         if (hasPlayer) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
         favouritesById.forEach { (key, device) ->
@@ -529,7 +530,7 @@ internal fun PageHeader(eyebrow: String, title: String, chips: @Composable () ->
 }
 
 /** The overview's cards that aren't devices or rooms. */
-private val WIDGETS = setOf("weather", "calendar", "player", "fridge", "home")
+private val WIDGETS = setOf("weather", "calendar", "player", "fridge", "home", "notes")
 
 private fun isWidgetKey(key: Any): Boolean = key is String && key in WIDGETS
 

@@ -300,6 +300,7 @@ private const val MEDIA = "media"
 private const val CALENDAR = "calendar"
 private const val RECIPES = "recipes"
 private const val FRIDGE = "fridge"
+private const val NOTES = "notes"
 private const val ROOM = "room:"
 
 @Composable
@@ -312,6 +313,7 @@ fun DashboardScreen(
     calendar: CalendarRepository,
     assistantServices: AssistantServices,
     kitchen: app.homeydash.data.Kitchen,
+    notes: app.homeydash.notes.NoteBoard,
     modules: app.homeydash.data.Modules,
     onForget: () -> Unit,
 ) {
@@ -371,6 +373,8 @@ fun DashboardScreen(
     val goodnightFlow by display.goodnightFlow.collectAsStateWithLifecycle()
     val goodnightAsleep by display.goodnightAsleep.collectAsStateWithLifecycle()
     val household by store.household.state.collectAsStateWithLifecycle()
+    val notesCard by display.notesCard.collectAsStateWithLifecycle()
+    val notesOnDark by display.notesOnDark.collectAsStateWithLifecycle()
 
     val hidden = remember(snapshot.hiddenByUser, hiddenOnTablet) { snapshot.hiddenByUser + hiddenOnTablet }
     val hiddenRooms by display.hiddenRooms.collectAsStateWithLifecycle()
@@ -399,7 +403,7 @@ fun DashboardScreen(
 
     var destination by rememberSaveable { mutableStateOf(OVERVIEW) }
     // A page whose module was just turned off goes back to the overview.
-    val pageOff = (destination == RECIPES && !moduleOn("recipes")) || (destination == FRIDGE && !moduleOn("fridge")) || (destination == CALENDAR && !moduleOn("calendar"))
+    val pageOff = (destination == RECIPES && !moduleOn("recipes")) || (destination == FRIDGE && !moduleOn("fridge")) || (destination == CALENDAR && !moduleOn("calendar")) || (destination == NOTES && !moduleOn("notes"))
     LaunchedEffect(pageOff) { if (pageOff) destination = OVERVIEW }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showUpdateSheet by rememberSaveable { mutableStateOf(false) }
@@ -453,6 +457,7 @@ fun DashboardScreen(
             hasCalendar = hasCalendar,
             hasRecipes = moduleOn("recipes"),
             hasFridge = moduleOn("fridge"),
+            hasNotes = moduleOn("notes"),
             destination = destination,
             onNavigate = { destination = it },
             onSettings = { showSettings = true },
@@ -477,6 +482,12 @@ fun DashboardScreen(
                             target == MEDIA -> MediaScreen(players, snapshot.zones, actions, hasMusic = speakers.isNotEmpty(), lastPlayer = lastPlayer)
                             target == RECIPES -> RecipesScreen(kitchen, onTimer = { seconds, label -> assistant.startTimer(seconds, label, kitchen.cooking.current()?.first?.title ?: "Recept") })
                             target == FRIDGE -> FridgeScreen(kitchen, assistantServices.faces)
+                            target == NOTES -> NotesScreen(
+                                notes,
+                                people = household.people.map { it.name },
+                                onOverview = notesCard,
+                                onOnOverview = display::setNotesCard,
+                            )
                             target == CALENDAR -> CalendarScreen(
                                 hasPermission = calendarAllowed,
                                 events = events,
@@ -516,6 +527,7 @@ fun DashboardScreen(
                                     if (!moduleOn("weather")) add("weather")
                                     if (!moduleOn("calendar")) add("calendar")
                                     if (!moduleOn("fridge")) add("fridge")
+                                    if (!moduleOn("notes") || !notesCard) add("notes")
                                 },
                                 widget = { key ->
                                     if (key == "fridge") FridgeCard(
@@ -523,6 +535,7 @@ fun DashboardScreen(
                                         onOpen = { destination = FRIDGE },
                                         onScan = { kitchen.scanRequest.value = true; destination = FRIDGE },
                                     )
+                                    if (key == "notes") NotesCard(notes) { destination = NOTES }
                                     if (key == "home") WhoIsHomeCard(store.household) { actions.open(Sheet.Household) }
                                     if (key == "weather") WeatherCard(weatherState, weatherDays) { actions.open(Sheet.Weather) }
                                     if (key == "calendar") CalendarCard(
@@ -611,7 +624,10 @@ fun DashboardScreen(
                             themeMode, display::setThemeMode, Palette.of(palette), { display.setPalette(it.key) }, flat, display::setFlat,
                             uiScale, display::setUiScale, accent, display::setAccent, accentOpacity, display::setAccentOpacity, onHomeBackground,
                         )
-                        "screen" -> ScreenSettings(dimAfter, display::setDimAfter, wakeOnProximity, display::setWakeOnProximity, kiosk, display::setKiosk)
+                        "screen" -> ScreenSettings(
+                            dimAfter, display::setDimAfter, wakeOnProximity, display::setWakeOnProximity, kiosk, display::setKiosk,
+                            notesOnDark = notesOnDark.takeIf { moduleOn("notes") }, onNotesOnDark = display::setNotesOnDark,
+                        )
                         "homey" -> {
                             HomeySettings(info, onChooseDevices, onChooseRooms, onWeather, onCalendars)
                             ForgetButton(onForgetHomey)
@@ -820,6 +836,7 @@ private fun Sidebar(
     hasCalendar: Boolean,
     hasRecipes: Boolean,
     hasFridge: Boolean,
+    hasNotes: Boolean,
     destination: String,
     onNavigate: (String) -> Unit,
     onSettings: () -> Unit,
@@ -873,6 +890,7 @@ private fun Sidebar(
         if (hasCalendar) NavItem(Sym.calendar, "Calendar", destination == CALENDAR, compact = compact) { onNavigate(CALENDAR) }
         if (hasRecipes) NavItem(Sym.chefHat, "Recipes", destination == RECIPES, compact = compact) { onNavigate(RECIPES) }
         if (hasFridge) NavItem(Sym.fridge, "Fridge", destination == FRIDGE, compact = compact) { onNavigate(FRIDGE) }
+        if (hasNotes) NavItem(Sym.sticker, "Notes", destination == NOTES, compact = compact) { onNavigate(NOTES) }
         if (compact) {
             Box(Modifier.padding(vertical = 10.dp).size(width = 32.dp, height = 1.dp).background(g.glassLine))
         } else {

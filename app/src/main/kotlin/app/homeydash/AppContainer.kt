@@ -96,9 +96,29 @@ class AppContainer(context: Context) {
         }
     }
 
+    /**
+     * The post-its and to-do list, on the Notes page, the dark screen and for the assistant.
+     * Who leaves notes for whom and who does which chores go into the assistant's memory.
+     */
+    val notes = app.homeydash.notes.NoteBoard(java.io.File(context.filesDir, "notes")).also { b ->
+        assistant.notes = b
+        // Only someone the tablet knows by face or voice counts as a person; the rest is the house's.
+        fun asker(id: String?, name: String?) = if (id == null || name.isNullOrBlank()) null else app.homeydash.agent.Asker(id, name)
+        b.onWritten = { note -> remember(app.homeydash.agent.Memory.postIt(note, java.time.ZonedDateTime.now())) }
+        b.onTodoAdded = { todo -> remember(listOfNotNull(app.homeydash.agent.Memory.todoAdded(todo, asker(todo.byId, todo.by), java.time.ZonedDateTime.now()))) }
+        b.onTodoDone = { todo -> remember(listOfNotNull(app.homeydash.agent.Memory.todoDone(todo, asker(todo.doneById, todo.doneBy), java.time.ZonedDateTime.now()))) }
+        scope.launch { b.load() }
+    }
+
     /** The dashboard's modules; each choice goes into the assistant's memory, when memory is on. */
     val modules = Modules(settings, scope) { module, on, source ->
         rememberForHouse(app.homeydash.agent.Memory.moduleChoice(module, on, source))
+    }
+
+    private suspend fun remember(facts: List<app.homeydash.agent.Fact>) {
+        if (facts.isNotEmpty() && assistant.settings.value.access(app.homeydash.agent.Secret.Memory) != app.homeydash.agent.Access.Off) {
+            assistant.memory.learn(facts)
+        }
     }
 
     private suspend fun rememberForHouse(fact: app.homeydash.agent.Fact) {
