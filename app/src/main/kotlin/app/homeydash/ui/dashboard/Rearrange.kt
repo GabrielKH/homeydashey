@@ -7,12 +7,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.grid.LazyGridItemInfo
 import androidx.compose.foundation.lazy.grid.LazyGridItemScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -24,27 +19,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.unit.dp
-import app.homeydash.ui.components.Sym
-import app.homeydash.ui.components.SymIcon
-import app.homeydash.ui.components.onBrush
 import app.homeydash.ui.components.pressable
-import app.homeydash.ui.theme.GlassTheme
 
 /**
  * Rearranging cards the iOS way. Holding a card makes the cards jiggle, and that's all
  * a hold does, even when the finger lifts without moving. While they jiggle, dragging a
- * card moves it and the others make room, a tap on a card (or its pencil badge) opens
- * its menu, and Done or a tap between the cards ends it. Before, letting go without a
+ * card moves it and the others make room, a tap on a card opens its menu (where it can
+ * also be taken off the overview), and Done or a tap between the cards ends it. Nothing
+ * is drawn on the cards themselves: badges covered their icons (Gabriel, 2026-10-22). Before, letting go without a
  * drag opened the menu and stopped the jiggle, so every hold was a guess (Gabriel, 2026-10-22).
  */
 @Stable
@@ -268,35 +256,7 @@ fun LazyGridItemScope.RearrangeableItem(
         if (rearrange.editing) {
             // Covers the card so its own buttons and sliders rest while rearranging.
             Box(Modifier.matchParentSize().pressable(menu))
-            if (!dragging) EditBadges(onEdit = menu, onRemove = null)
         }
-    }
-}
-
-/**
- * The small round badges on a jiggling card: a pencil top right that opens its menu and,
- * where the card can be taken off the page, a minus top left.
- */
-@Composable
-internal fun BoxScope.EditBadges(onEdit: (() -> Unit)?, onRemove: (() -> Unit)?) {
-    val g = GlassTheme.colors
-    if (onRemove != null) {
-        Box(
-            Modifier.align(Alignment.TopStart).padding(8.dp).size(30.dp)
-                .pressable(onRemove)
-                .shadow(4.dp, CircleShape)
-                .background(g.muted, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) { SymIcon(Sym.remove, filled = true, size = 16.dp, tint = Color.White) }
-    }
-    if (onEdit != null) {
-        Box(
-            Modifier.align(Alignment.TopEnd).padding(8.dp).size(30.dp)
-                .pressable(onEdit)
-                .shadow(4.dp, CircleShape)
-                .background(onBrush(), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) { SymIcon(Sym.edit, filled = true, size = 15.dp, tint = g.onInk) }
     }
 }
 

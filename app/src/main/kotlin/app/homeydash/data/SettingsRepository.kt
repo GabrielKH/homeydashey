@@ -133,6 +133,16 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** Overview cards (widget keys and "room:" keys) taken off the overview with + Add card. */
+    val overviewOff: Flow<Set<String>> = context.dataStore.data.map { it[OVERVIEW_OFF].orEmpty() }
+
+    suspend fun setOverviewOff(key: String, off: Boolean) {
+        context.dataStore.edit {
+            val current = it[OVERVIEW_OFF].orEmpty()
+            it[OVERVIEW_OFF] = if (off) current + key else current - key
+        }
+    }
+
     /** Zone ids in the order the user arranged them. */
     val roomOrder: Flow<List<String>> = context.dataStore.data.map { prefs ->
         prefs[ROOM_ORDER]?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
@@ -360,6 +370,7 @@ class SettingsRepository(private val context: Context) {
         val NOTES_ON_DARK = booleanPreferencesKey("notes_on_dark")
         val NOTES_CARD = booleanPreferencesKey("notes_card")
         val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
+        val OVERVIEW_OFF = stringSetPreferencesKey("overview_off")
         val ROOM_ORDER = stringPreferencesKey("room_order")
         val ACCENT_OPACITY = floatPreferencesKey("accent_opacity")
 

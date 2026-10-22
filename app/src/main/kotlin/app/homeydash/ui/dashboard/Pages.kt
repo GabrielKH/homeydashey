@@ -108,10 +108,6 @@ fun OverviewScreen(
     hasHousehold: Boolean = false,
     /** Cards whose module is turned off under Modules (weather, calendar, fridge), and notes until asked for. */
     widgetsOff: Set<String> = emptySet(),
-    /** Takes a pinned device off the overview. */
-    onUnpin: (String) -> Unit = {},
-    /** Hides a room's card. */
-    onHideRoom: (String) -> Unit = {},
 ) {
     val g = GlassTheme.colors
     val lightsOn = remember(rooms) { rooms.sumOf { it.lightsOn } }
@@ -121,15 +117,15 @@ fun OverviewScreen(
     BoxWithConstraints(Modifier.fillMaxSize()) {
     // Two lanes on a small tablet, three on the 11", four on a big screen.
     val laneCount = (maxWidth / 380.dp).toInt().coerceIn(2, 4)
-    val roomsById = remember(rooms) { rooms.associateBy { ROOM_KEY + it.zone.id } }
+    val roomsById = remember(rooms, widgetsOff) { rooms.associateBy { ROOM_KEY + it.zone.id }.filterKeys { it !in widgetsOff } }
     val favouritesById = remember(favourites) { favourites.associateBy { FAV + it.id } }
-    val hasPlayer = player != null
+    val hasPlayer = player != null && "player" !in widgetsOff
     val laneCards = remember(hasPlayer, hasHousehold, favouritesById, roomsById, widgetsOff) { buildList {
         if ("weather" !in widgetsOff) add(LaneCard("weather", LaneCard.Kind.Info, wide = true, height = 300))
         if ("calendar" !in widgetsOff) add(LaneCard("calendar", LaneCard.Kind.Info, wide = true, height = 380))
         if ("fridge" !in widgetsOff) add(LaneCard("fridge", LaneCard.Kind.Info, wide = true, height = 280))
         if ("notes" !in widgetsOff) add(LaneCard("notes", LaneCard.Kind.Info, wide = true, height = 300))
-        if (hasHousehold) add(LaneCard("home", LaneCard.Kind.Info, wide = true, height = 200))
+        if (hasHousehold && "home" !in widgetsOff) add(LaneCard("home", LaneCard.Kind.Info, wide = true, height = 200))
         if (hasPlayer) add(LaneCard("player", LaneCard.Kind.Media, wide = true, height = 310))
         favouritesById.forEach { (key, device) ->
             val wide = tileSpan(device) > 1
@@ -148,7 +144,7 @@ fun OverviewScreen(
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.Bottom) {
             OverviewClock(Modifier.weight(1f))
             if (actions.rearrange.editing) {
-                DoneChip(actions, Modifier.padding(bottom = 4.dp), onAutoArrange = autoArrange)
+                DoneChip(actions, Modifier.padding(bottom = 4.dp), onAutoArrange = autoArrange, addCard = true)
             } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
                 LocalTimerChip.current()
                 if (connection != ConnectionState.Connected) {
@@ -198,17 +194,8 @@ fun OverviewScreen(
                     when {
                         room != null -> { { actions.open(Sheet.RoomMenu(room.zone.id)) } }
                         device != null -> { { actions.open(Sheet.CardMenu(device.id)) } }
-                        else -> null
-                    }
-                },
-                // The minus takes a pinned device off the overview, or hides a room.
-                remove = { key ->
-                    val room = roomsById[key]
-                    val device = favouritesById[key]
-                    when {
-                        room != null -> { { onHideRoom(room.zone.id) } }
-                        device != null -> { { onUnpin(device.id) } }
-                        else -> null
+                        // The weather, calendar and the like are taken off from the + Add card list.
+                        else -> { { actions.open(Sheet.AddCards) } }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().verticalScroll(scroll).padding(bottom = 24.dp),
@@ -556,10 +543,11 @@ private const val FAV = "fav:"
 
 /** Ends rearranging. */
 @Composable
-private fun DoneChip(actions: DashboardActions, modifier: Modifier = Modifier, onAutoArrange: (() -> Unit)? = null) {
+private fun DoneChip(actions: DashboardActions, modifier: Modifier = Modifier, onAutoArrange: (() -> Unit)? = null, addCard: Boolean = false) {
     val g = GlassTheme.colors
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("Drag cards to move them, tap one to edit it", style = MaterialTheme.typography.bodyMedium, color = g.muted)
+        if (addCard) GlassChip(Sym.add, "Add card", g.fg, onClick = { actions.open(Sheet.AddCards) })
         onAutoArrange?.let { GlassChip(Sym.autoAwesome, "Auto arrange", g.fg, onClick = it) }
         Row(
             Modifier

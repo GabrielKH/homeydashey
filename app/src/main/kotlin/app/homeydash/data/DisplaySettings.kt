@@ -54,6 +54,13 @@ class DisplaySettings(
         }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
+    /** Widget and room cards left off the overview; devices are pinned with [overviewDevices] instead. */
+    val overviewOff: StateFlow<Set<String>> = settings.overviewOff.stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    fun setOnOverview(key: String, on: Boolean) {
+        scope.launch { settings.setOverviewOff(key, !on) }
+    }
+
     val overviewOrder: StateFlow<List<String>> = settings.overviewOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     fun setOverviewOrder(keys: List<String>) {
