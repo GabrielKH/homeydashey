@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Drawn for the dashboard in Phosphor's style: a rod and two drapes tied back. Phosphor has no curtain icon, and its columns icon read as a pause sign. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256">
+    <path android:strokeColor="#FF000000" android:strokeWidth="16" android:strokeLineCap="round" android:pathData="M24,36H232"/>
+    <path android:fillColor="#FF000000" android:pathData="M48,36L116,36C116,88 98,118 84,140C100,168 106,198 106,220L48,220Z"/>
+    <path android:fillColor="#FF000000" android:pathData="M208,36L140,36C140,88 158,118 172,140C156,168 150,198 150,220L208,220Z"/>
+</vector>

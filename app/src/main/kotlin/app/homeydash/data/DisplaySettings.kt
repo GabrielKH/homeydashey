@@ -54,6 +54,20 @@ class DisplaySettings(
         }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
+    /** Readings picked in a device's sheet to show on its card, by device id. */
+    val cardReadings: StateFlow<Map<String, List<String>>> = settings.cardReadings.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    fun setCardReadings(deviceId: String, capabilities: List<String>) {
+        scope.launch { settings.setCardReadings(deviceId, capabilities) }
+    }
+
+    /** Widget and room cards left off the overview; devices are pinned with [overviewDevices] instead. */
+    val overviewOff: StateFlow<Set<String>> = settings.overviewOff.stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    fun setOnOverview(key: String, on: Boolean) {
+        scope.launch { settings.setOverviewOff(key, !on) }
+    }
+
     val overviewOrder: StateFlow<List<String>> = settings.overviewOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     fun setOverviewOrder(keys: List<String>) {

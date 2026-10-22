@@ -42,8 +42,7 @@ fun AppRoot(container: AppContainer) {
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     // "Fit screen" shrinks everything a little on screens smaller than the layout was drawn for.
-    val fit = minOf(1f, configuration.screenWidthDp / 1500f, configuration.screenHeightDp / 900f).coerceAtLeast(0.75f)
-    val scale = if (chosenScale > 0f) chosenScale else fit
+    val scale = if (chosenScale > 0f) chosenScale else fitScale(configuration)
     CompositionLocalProvider(LocalDensity provides Density(density.density * scale, density.fontScale)) {
     Box(Modifier.fillMaxSize()) {
         // The dashboard draws its own backdrop, which can differ per room.
@@ -69,6 +68,10 @@ fun AppRoot(container: AppContainer) {
     }
     }
 }
+
+/** The "Fit screen" display size: a little smaller on screens smaller than the layout was drawn for. */
+fun fitScale(configuration: android.content.res.Configuration): Float =
+    minOf(1f, configuration.screenWidthDp / 1500f, configuration.screenHeightDp / 900f).coerceAtLeast(0.75f)
 
 @Composable
 private fun Unreachable(state: SessionState.Unreachable, onRetry: () -> Unit, onForget: () -> Unit) {
