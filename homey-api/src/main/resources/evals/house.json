@@ -38,6 +38,17 @@
     {"id": "p-alex", "name": "Alex", "home": false}
   ],
   "music": ["P1", "P3", "P4 Stockholm", "Morgonjazz", "Chill Vibes", "Barnlåtar", "Rockklassiker", "Mix Megapol"],
+  // What a Spotify search finds; "mine" is in the owner's own library.
+  "spotify": [
+    {"name": "Abbey Road", "kind": "album", "by": "The Beatles"},
+    {"name": "Rumours", "kind": "album", "by": "Fleetwood Mac"},
+    {"name": "Dancing Queen", "kind": "song", "by": "ABBA"},
+    {"name": "Veronica Maggio", "kind": "artist"},
+    {"name": "Värvet", "kind": "podcast", "by": "Kristoffer Triumf"},
+    {"name": "Alex & Sigge", "kind": "podcast", "by": "Alex Schulman och Sigge Eklund"},
+    {"name": "Middagsmusik", "kind": "playlist", "by": "Gabriel", "mine": true},
+    {"name": "Lugna favoriter", "kind": "playlist", "by": "Spotify"}
+  ],
   "weather": "Now: 11 °C, cloudy, light wind. Today: 13 °C at most, dry. Tomorrow: rain most of the day, 9 to 12 °C. The day after: sunny, 15 °C.",
   "calendars": [
     {"id": "cal-family", "name": "Familjen", "account": "familjen@example.com"},

@@ -194,6 +194,16 @@ class SkillEvalsTest {
         assertEquals("en", Lang.of(sim.withoutHouseWords("Step 3 of 5: $step After that, you are done.")))
     }
 
+    @Test fun `the practice house finds Spotify albums, podcasts and songs by kind`() = runBlocking {
+        val sim = SimHouse(house, File(work, "spotify"), http).also { it.open() }
+        assertEquals("Abbey Road by The Beatles", sim.playMusic("kitchen_sonos", "Abbey Road", "album"))
+        assertEquals("Värvet by Kristoffer Triumf", sim.playMusic("kitchen_sonos", "värvet", "show"))
+        assertEquals("Dancing Queen by ABBA", sim.playMusic("kitchen_sonos", "Dancing Queen ABBA", null))
+        assertEquals("P1", sim.playMusic("kitchen_sonos", "P1", "station"))
+        assertNull(sim.playMusic("kitchen_sonos", "Abbey Road", "podcast"))
+        assertTrue(sim.did.toString(), "spotify:podcast:Värvet" in sim.did && "play:kitchen_sonos:P1" in sim.did)
+    }
+
     @Test fun `timer add with nothing running starts one, and an alias may carry its room`() = runBlocking {
         val sim = SimHouse(house, File(work, "tools"), http).also { it.open() }
         val settings = AgentSettings()

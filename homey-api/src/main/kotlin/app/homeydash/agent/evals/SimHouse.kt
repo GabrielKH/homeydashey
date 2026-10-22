@@ -50,6 +50,8 @@ data class HouseFile(
     val people: List<SimPerson> = emptyList(),
     /** The speakers' favourites and radio stations, as Sonos would list them. */
     val music: List<String> = emptyList(),
+    /** What a Spotify search finds, for the speakers that can search it. */
+    val spotify: List<SimSpotify> = emptyList(),
     val weather: String? = null,
     val calendars: List<SimCalendar> = emptyList(),
     val events: List<SimEvent> = emptyList(),
@@ -84,6 +86,10 @@ data class SimEvent(val title: String, val day: String, val start: String? = nul
 
 @Serializable
 data class SimRecipe(val title: String, val ingredients: List<String> = emptyList(), val steps: List<String> = emptyList(), val categories: List<String> = emptyList())
+
+/** Something on Spotify: a song, album, artist, playlist, podcast or episode, [by] someone; [mine] when in the owner's library. */
+@Serializable
+data class SimSpotify(val name: String, val kind: String, val by: String? = null, val mine: Boolean = false)
 
 /** Something in the fridge, bought [bought] days ago, with the date on its pack [date] days from today. */
 @Serializable
@@ -163,7 +169,8 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
      */
     fun withoutHouseWords(text: String): String {
         val words = file.recipes.flatMap { it.steps + it.ingredients + it.title } + file.fridge.map { it.name } +
-            file.devices.map { it.name } + file.zones.map { it.name } + file.moods.map { it.name } + file.flows
+            file.devices.map { it.name } + file.zones.map { it.name } + file.moods.map { it.name } + file.flows +
+            file.music + file.spotify.flatMap { listOfNotNull(it.name, it.by) }
         return words.filter { it.isNotBlank() }.sortedByDescending { it.length }
             .fold(text) { t, w -> t.replace(w, " ", ignoreCase = true) }
     }
@@ -213,12 +220,31 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
 
     override suspend fun playMusic(deviceId: String, query: String): String? = playMusic(deviceId, query, null)
 
+    /**
+     * As the real home does: the speakers' own favourites when one matches well and no other
+     * kind was asked for, else Spotify, only that [kind] when one is given. What Spotify played
+     * is kept in [did] as `spotify:<kind>:<name>` too.
+     */
     override suspend fun playMusic(deviceId: String, query: String, kind: String?): String? {
-        val pick = if (query.isBlank() || ANYTHING.matches(NameMatch.normalize(query))) file.music.firstOrNull()
-        else NameMatch.best(query, file.music) { NameMatch.score(query, it) }
-        pick ?: return null
-        play(deviceId, pick)
-        return pick
+        val wanted = kind?.lowercase()?.trim()?.let { KINDS[it] ?: it }?.takeIf { it in SPOTIFY_KINDS }
+        if (query.isBlank() || ANYTHING.matches(NameMatch.normalize(query))) {
+            val pick = file.music.firstOrNull() ?: return null
+            play(deviceId, pick)
+            return pick
+        }
+        val own = file.music.map { it to NameMatch.score(query, it) }.maxByOrNull { it.second }
+        if (wanted == null && own != null && own.second >= OWN_IS_ENOUGH) return own.first.also { play(deviceId, it) }
+        val found = file.spotify.filter { wanted == null || it.kind == wanted || (wanted == "podcast" && it.kind == "episode") }
+            .map { it to maxOf(NameMatch.score(query, it.name), it.by?.let { b -> NameMatch.score(query, "${it.name} $b") } ?: 0.0, if (it.kind == "artist") NameMatch.score(query, it.name) else 0.0) }
+            .filter { it.second > 0.5 }.maxByOrNull { it.second }?.first
+        if (found != null) {
+            did += "spotify:${found.kind}:${found.name}"
+            play(deviceId, found.name)
+            return found.name + (found.by?.let { " by $it" }.orEmpty())
+        }
+        val loose = own?.takeIf { wanted == null && it.second > 0.5 }?.first ?: return null
+        play(deviceId, loose)
+        return loose
     }
 
     private fun play(deviceId: String, name: String) {
@@ -293,6 +319,10 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
 
         fun parse(text: String): HouseFile = json.decodeFromString(HouseFile.serializer(), text)
 
+        private const val OWN_IS_ENOUGH = 0.9
+        /** play_music's kinds, as [SimSpotify.kind] has them. */
+        private val KINDS = mapOf("track" to "song", "show" to "podcast")
+        private val SPOTIFY_KINDS = setOf("song", "album", "artist", "playlist", "podcast", "episode")
         private val ANYTHING = Regex("(anything|something|whatever|random|music|nagot|nat|valj sjalv|lite musik|musik)")
 
         /** Homey's usual type, range and whether it can be set, for the capabilities the house uses. */

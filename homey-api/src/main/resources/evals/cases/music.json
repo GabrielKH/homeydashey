@@ -40,6 +40,43 @@
       "about": "\"Play something\" picks something instead of asking.",
       "say": {"sv": ["spela något i köket"], "en": ["play some music in the kitchen"]},
       "expect": {"did": ["play:kitchen_sonos"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.album",
+      "about": "An album on Spotify, as an album.",
+      "say": {
+        "sv": ["spela albumet Abbey Road i köket", "sätt på Rumours med Fleetwood Mac i köket"],
+        "en": ["play the album Abbey Road in the kitchen"]
+      },
+      "expect": {"did": ["spotify:album:abbey road|spotify:album:rumours"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.podcast",
+      "about": "A podcast plays its newest episode.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["spela podden Värvet i köket", "sätt på senaste avsnittet av Alex och Sigge i köket"],
+        "en": ["play the Värvet podcast in the kitchen"]
+      },
+      "expect": {"did": ["spotify:podcast:varvet|spotify:podcast:alex"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.song",
+      "about": "A song by its name and artist.",
+      "say": {"sv": ["spela Dancing Queen med ABBA i vardagsrummet"], "en": ["play Dancing Queen by ABBA in the living room"]},
+      "expect": {"did": ["spotify:song:dancing queen"], "tools": ["play_music"], "may_change": ["living_sonos"]}
+    },
+    {
+      "id": "music.artist",
+      "about": "An artist named alone.",
+      "say": {"sv": ["spela Veronica Maggio i köket", "jag vill lyssna på Veronica Maggio i köket"], "en": ["play some Veronica Maggio in the kitchen"]},
+      "expect": {"did": ["spotify:artist:veronica maggio"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.my_playlist",
+      "about": "The owner's own playlist from their Spotify library.",
+      "say": {"sv": ["spela min spellista Middagsmusik i köket"], "en": ["play my playlist Middagsmusik in the kitchen"]},
+      "expect": {"did": ["spotify:playlist:middagsmusik"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
     }
   ]
 }
