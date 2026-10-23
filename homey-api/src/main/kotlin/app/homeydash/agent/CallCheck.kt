@@ -57,6 +57,8 @@ internal object CallCheck {
             )
         }
         if (call.name !in Agent.SETS) return null
+        // "How warm is it outside?" then the heating turned up because it offered to: a question changes nothing.
+        if (QUESTION.containsMatchIn(folded) && !ASKS_TO_CHANGE.containsMatchIn(q) && !ON_OFF.containsMatchIn(asked)) return Refusal(STATUS_ONLY)
         // "Vi är klara, stäng receptet": the kitchen lights aren't part of it.
         if (call.name in setOf("set_device", "set_room") && KITCHEN_TOPIC.containsMatchIn(folded) && !ON_OFF.containsMatchIn(asked.replace(CLOSE_THING, "")) && !LIGHT_LEVEL.containsMatchIn(asked) &&
             !LIGHT_WORDS.containsMatchIn(asked) && !MUSIC.containsMatchIn(asked) && !VOLUME.containsMatchIn(asked)) return Refusal(NO_LIGHTS)
@@ -64,12 +66,12 @@ internal object CallCheck {
         if (call.name in setOf("set_device", "set_room") && MUSIC.containsMatchIn(asked) && !LIGHT_WORDS.containsMatchIn(asked) && !LIGHT_LEVEL.containsMatchIn(asked) &&
             str(call.arguments, "capability") in setOf("onoff", "dim") && (call.name == "set_room" || view.device(str(call.arguments, "device"))?.deviceClass == "light")) return Refusal(NO_LIGHTS)
         if (STATUS.containsMatchIn(q) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(STATUS_ONLY)
-        if (call.name == "set_room" && allRooms(call.arguments) && turnsOn(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH)
-        if (call.name == "set_scene" && allRooms(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH)
+        if (call.name == "set_room" && allRooms(call.arguments) && turnsOn(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH, say = WHICH_SAY)
+        if (call.name == "set_scene" && allRooms(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH, say = WHICH_SAY)
         if (call.name in setOf("set_device", "set_room")) {
             unasked(str(call.arguments, "capability"), asked)?.let { return Refusal(it) }
             // "Tänd lampan" with several lamps and none named: which one is the user's to say.
-            if (call.name in setOf("set_device", "set_room") && GENERIC_LAMP.matches(folded) && view.devices.count { it.deviceClass == "light" } > 1) return Refusal(WHICH)
+            if (call.name in setOf("set_device", "set_room") && GENERIC_LAMP.matches(folded) && view.devices.count { it.deviceClass == "light" } > 1) return Refusal(WHICH, say = WHICH_SAY)
             // "Dimma soffbordslampan" sent to the floor lamp: the lamp the user named is the one.
             if (call.name == "set_device") {
                 val target = view.device(str(call.arguments, "device"))
@@ -447,6 +449,9 @@ internal object CallCheck {
         "update_fridge_item" to "needs_update_fridge_item",
         "timer" to "needs_timer",
         "change_todo" to "needs_change_todo",
+        "add_todo" to "needs_add_todo",
+        "notes" to "needs_notes",
+        "close_recipe" to "needs_close_recipe",
     )
 
     /** [query] without the room it was to play in ("morning jazz living room", "jazz i köket"). */
@@ -591,5 +596,6 @@ internal object CallCheck {
     const val RECIPES_ONLY = "Not done: the user only asked which recipes there are. Tell them the names from find_recipes; don't open one or start anything."
     const val USE_GOODNIGHT = "Not done: for goodnight, call the goodnight tool alone; it asks the user first and then turns things off itself."
     const val STATUS_ONLY = "The user only asked how it is right now, so nothing was changed. Answer from get_device or the device list."
+    val WHICH_SAY = "Which lamp or room do you mean?" to "Vilken lampa eller vilket rum menar du?"
     const val WHICH = "The user didn't say all of them, so nothing was switched on. Ask which lamp or room they mean."
 }

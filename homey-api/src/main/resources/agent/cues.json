@@ -582,6 +582,32 @@
    ]
   },
   {
+   "id": "needs_add_todo",
+   "about": "Asking to put something on a to-do list",
+   "edge": "part",
+   "words": [
+    "(add|put|lagg( till| in)?|skriv( upp| in)?|satt upp) .*(to ?do|att gora)"
+   ]
+  },
+  {
+   "id": "needs_notes",
+   "about": "Asking what is on the to-do list or the notes",
+   "edge": "part",
+   "words": [
+    "(what|whats|what s|vad|show|visa|read|las|lasa|tell|beratta).*(to ?do|att gora|my notes|lapparna|anteckningar)"
+   ]
+  },
+  {
+   "id": "needs_close_recipe",
+   "about": "Asking to close the recipe",
+   "edge": "part",
+   "words": [
+    "stang (av |ner )?(receptet|recept)",
+    "close (the |this )?recipe",
+    "ta bort receptet"
+   ]
+  },
+  {
    "id": "needs_get_device",
    "about": "Asking whether a lamp or device is on or off; looked up when the answer says there is no such device",
    "edge": "part",

@@ -353,6 +353,14 @@ class SkillEvalsTest {
         assertEquals("get_device", CallCheck.shouldCall("är lampan i hallen tänd?", more + "get_device", "There isn't a lamp in the hall, so I can't check."))
         assertNull(CallCheck.shouldCall("är lampan i hallen tänd?", more + "get_device", "Nej, hallampan är släckt."))
         assertNull(CallCheck.shouldCall("boka tandläkaren på tisdag klockan nio", more + "timer"))
+        // Run 12: a to-do added or read in words alone, the recipe closed in words alone.
+        val lists = more + listOf("notes", "close_recipe")
+        assertEquals("add_todo", CallCheck.shouldCall("add book the car service to my to-do list", lists))
+        assertEquals("notes", CallCheck.shouldCall("what's on my to-do list?", lists))
+        assertEquals("close_recipe", CallCheck.shouldCall("vi är klara, stäng receptet", lists))
+        assertEquals("read_recipe", CallCheck.shouldCall("vad behöver jag till pannkakorna?", lists))
+        // Run 12: a question about the temperature turns nothing up.
+        assertEquals(CallCheck.STATUS_ONLY, CallCheck.refuse(call("set_device", "device" to "Termostat vardagsrum", "capability" to "target_temperature", "value" to "22"), "how warm is it outside?", view, more)?.text)
         // Run 6: goodnight done by hand, questions that changed lists, words in the other language.
         assertEquals("goodnight", CallCheck.rewrite(call("set_room", "room" to "all", "capability" to "onoff", "value" to "false"), "god natt", more, view)?.name)
         assertEquals("goodnight", CallCheck.rewrite(call("set_mood", "mood" to "Middag"), "good night", more, view)?.name)

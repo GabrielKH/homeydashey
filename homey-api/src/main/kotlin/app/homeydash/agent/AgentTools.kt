@@ -995,6 +995,12 @@ class AgentTools(
         return ok("Started: " + timers.joinToString { (step, t) -> "step $step ${t.label}" } + ".")
     }
 
+    private fun dayName(d: java.time.LocalDate): String {
+        val weekday = d.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
+        val near = when (java.time.temporal.ChronoUnit.DAYS.between(today(), d)) { 0L -> ", today"; 1L -> ", tomorrow"; else -> "" }
+        return "$weekday $d$near"
+    }
+
     private suspend fun calendar(start: String, days: Double?, whose: String): ToolResult {
         if (!view.allows(Secret.Calendar)) return ok("Reading the calendar is switched off.")
         val from = CalendarBook.day(start, today()) ?: today()
@@ -1008,8 +1014,13 @@ class AgentTools(
                 is CalendarBook.Pick.Found -> dashboard.calendarIn(setOf(pick.calendar.id), from, count, withLocations = details)
             }
         }
-        val text = if (events.isEmpty()) "No events." else events.joinToString("\n") { e ->
-            listOfNotNull(e.start + (e.end?.let { " to $it" } ?: ""), e.title, e.location).joinToString(" · ")
+        // Each day named ("Saturday 2026-10-24, tomorrow"): small models otherwise count the weekday wrong
+        // and call a full Saturday free.
+        val asked = (0 until count).joinToString(", ") { dayName(from.plusDays(it.toLong())) }
+        val text = if (events.isEmpty()) "No events for $asked." else events.groupBy { it.start.take(10) }.entries.joinToString("\n") { (day, list) ->
+            (runCatching { java.time.LocalDate.parse(day) }.getOrNull()?.let { dayName(it) + ":\n" } ?: "") + list.joinToString("\n") { e ->
+                listOfNotNull(e.start + (e.end?.let { " to $it" } ?: ""), e.title, e.location).joinToString(" · ")
+            }
         }
         return ToolResult(text, localOnly(Secret.Calendar) || localOnly(Secret.CalendarDetails))
     }

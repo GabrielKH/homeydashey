@@ -234,7 +234,13 @@ class Agent(
             noticeNewKinds(skills, settings)
             // The topics this question needs that the conversation doesn't have yet.
             topicsBefore = kept.flatMap { it.topics }.toSet()
-            val found = if (!settings.knowHow) emptyList() else KnowHow.find(skills, text, homeView, active(context), already = topicsBefore)
+            val found = if (!settings.knowHow) emptyList() else KnowHow.find(skills, text, homeView, active(context), already = topicsBefore).let { f ->
+                // "Vad behöver jag till pannkakorna?" names no topic word, but plainly needs read_recipe: its topic comes too.
+                val tool = CallCheck.shouldCall(text, specs.map { it.name })
+                val topic = tool?.let { t -> skills.firstOrNull { t in it.tools && !it.always } }
+                if (topic == null || topic.id in topicsBefore || f.any { it.skill.id == topic.id } || f.any { tool in it.skill.tools }) f
+                else f + Found(topic, 1.0, "needs $tool")
+            }
             topicsNow.clear()
             topicsNow += found.map { it.skill.id }
             if (found.isNotEmpty()) heard.trace("know-how", found.joinToString("; ") { "${it.skill.id} (${it.why})" })
@@ -463,8 +469,13 @@ class Agent(
                         ranTools += call.name
                         val seen = looked[key]?.takeIf { call.name in LOOKS && call.name != KnowHow.GUIDE }
                         val before = done[key]?.takeIf { call.name !in LOOKS }
-                        val result = if (call.name == KnowHow.GUIDE) {
-                            guide(call, skills, specs, compact, text, homeView, heard)
+                        val result = if (call.name == KnowHow.GUIDE && key in done) {
+                            // "guide {}" over and over (P: six times for the pancakes) is going round in circles.
+                            repeats++
+                            heard.trace("guard", "Asked for $key again; not given twice.")
+                            ToolResult("You have that already. Call the tool the question needs now, or answer the user.")
+                        } else if (call.name == KnowHow.GUIDE) {
+                            guide(call, skills, specs, compact, text, homeView, heard).also { done[key] = it }
                         } else if (seen != null) {
                             repeats++
                             heard.trace("guard", "Looked up $key again; nothing changed since.")
@@ -512,6 +523,14 @@ class Agent(
                     // after reading the list): the answer it gave stands.
                     val answeredLook = refusedNow && !ran && !changed && workedTools.any { it in LOOKS } &&
                         !answer.content.isNullOrBlank() && !PROMISE.containsMatchIn(statements(answer.content.orEmpty()))
+                    // Refused twice and still saying it will do it ("I'll turn on the kitchen lamp"): what the refusal asks is said instead.
+                    if (refusedAgain && !ran && !changed && refusedSay != null && statements(answer.content.orEmpty()).let { PROMISE.containsMatchIn(it) || CLAIM.containsMatchIn(it) }) {
+                        heard.trace("guard", "Asked again for a refused call while promising it; asked the user instead.")
+                        remember(turn, localOnly)
+                        live?.finish()
+                        val (en, sv) = refusedSay!!
+                        return AgentReply(if (swedish(text, settings)) sv else en, brain, pending, actions = actions)
+                    }
                     if ((refusedAgain || answeredLook) && !ran && !answer.content.isNullOrBlank()) {
                         heard.trace("guard", if (refusedAgain) "Asked again for a call that was refused; gave its answer instead." else "Answered from what it looked up beside a refused change; gave that answer.")
                         remember(turn, localOnly)
@@ -1194,7 +1213,7 @@ class Agent(
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(
             // "Setting" alone is also a noun ("my honesty setting"); only "setting the …" is a promise.
-            """$W(i'?ll|i will|i'?m going to|let me|(turning|switching|setting|dimming|starting|playing) (on|off|up|down|it|them|the|a|your|some)|""" +
+            """$W(i'?ll|i will|i'?m going to|let me|(turning|switching|setting|dimming|starting|playing|closing|opening|stopping|pausing|adding|removing|cancell?ing|putting) (on|off|up|down|it|them|the|a|your|some|that|this)|""" +
                 """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar|höjer|sänker|öppnar|stänger|dimmar|pausar|byter)|tänder|släcker|slår (på|av)|sätter (på|igång))$E""",
             RegexOption.IGNORE_CASE,
         )
@@ -1212,7 +1231,7 @@ class Agent(
         )
         /** The user asked for a change, rather than how things are. */
         val COMMAND = Regex(
-            """$W(tänd|tända|släck|släcka|sätt|sätta|ställ|ställa|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|gör|fixa|spela|pausa|stoppa|stanna|skicka|kör|avbryt|ta bort|turn|switch|put|set|start|dim|raise|lower|open|make|play|pause|stop|send|dock|cancel|remove|delete)$E""",
+            """$W(tänd|tända|släck|släcka|sätt|sätta|ställ|ställa|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|gör|fixa|spela|pausa|stoppa|stanna|skicka|kör|avbryt|ta bort|lägg|lägga|skriv|boka|turn|switch|put|set|start|dim|raise|lower|open|close|make|play|pause|stop|send|dock|cancel|remove|delete|add|write|book)$E""",
             RegexOption.IGNORE_CASE,
         )
         val RECIPE_TOOLS = setOf("find_recipes", "open_recipe", "read_recipe", "recipe_step", "close_recipe", "recipe_timers")
