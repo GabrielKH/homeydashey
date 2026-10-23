@@ -261,6 +261,8 @@ class Agent(
             var toldToCall = false
             // Tools that ran this turn, so a needed one still missing after others is asked for.
             val ranTools = mutableSetOf<String>()
+            // Calls skipped because what they became was done; skipped again counts as a repeat.
+            val skipped = mutableSetOf<String>()
             // A mood set the room: lamps and blinds the user didn't name are left as the mood made them.
             var moodSet = false
             // What the user may be agreeing to: the question it asked just before, in a follow-up.
@@ -377,7 +379,7 @@ class Agent(
                         acted = true
                         val names = specs.map { it.name }
                         val real = CallCheck.renamed(asked, names)?.also { heard.trace("guard", "No tool called ${asked.name}; ran ${it.name} ${it.arguments}.") } ?: asked
-                        val call = lightsOnly(real, text)?.let { c ->
+                        var call = lightsOnly(real, text)?.let { c ->
                             CallCheck.recipeInstead(c, text, names)?.also { heard.trace("guard", "Opened the recipe instead of the recipes page.") }
                                 ?: CallCheck.rewrite(c, text, names, homeView)?.also { heard.trace("guard", "Asked for ${c.name} ${c.arguments}; ran ${it.name} ${it.arguments}, as the question said.") }
                                 ?: c
@@ -387,13 +389,23 @@ class Agent(
                             turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
                             continue
                         }
-                        val key = "${call.name} ${call.arguments}"
+                        var key = "${call.name} ${call.arguments}"
                         // Its call turned into one already done this turn (rooms one by one as the whole house,
                         // lamps as goodnight): the model didn't ask twice, so it's no repeat.
                         if (call != real && (key in done || key in looked || (call.name != real.name && call.name in ranTools))) {
-                            heard.trace("guard", "Skipped ${real.name} ${real.arguments}: the call it became was already done.")
-                            turn += ChatMessage.tool(asked.id, ALREADY_COVERED)
-                            continue
+                            val realKey = "${real.name} ${real.arguments}"
+                            if (real.name in LOOKS && realKey !in looked && real.name in names) {
+                                // The rewrite was tried already (no recipe "pancakes"); its own look-up may find more.
+                                heard.trace("guard", "The call it became was already done; ran ${real.name} as asked instead.")
+                                call = real
+                                key = realKey
+                            } else {
+                                // Skipped the same call before: it's going round in circles.
+                                if (!skipped.add(realKey)) repeats++
+                                heard.trace("guard", "Skipped ${real.name} ${real.arguments}: the call it became was already done.")
+                                turn += ChatMessage.tool(asked.id, ALREADY_COVERED)
+                                continue
+                            }
                         }
                         // Goodnight asks the user first; its answer comes in their next words, not this turn.
                         if (call.name == "goodnight" && "goodnight" in ranTools) {

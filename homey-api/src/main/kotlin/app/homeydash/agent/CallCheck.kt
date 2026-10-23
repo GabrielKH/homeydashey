@@ -26,7 +26,11 @@ internal object CallCheck {
         if (call.name == "open_recipe" && !SHOW.containsMatchIn(asked) && !COOK.containsMatchIn(asked)) return Refusal(NO_PAGE)
         // "Vad har jag att göra?", "vad måste vi äta upp först?": a question changes no list.
         if (call.name in LIST_CHANGES && QUESTION.containsMatchIn(folded) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(JUST_ASKED)
-        if (call.name == "set_scene" && MODE_WORD.containsMatchIn(folded) && !LIGHT_LEVEL.containsMatchIn(folded)) return Refusal(FLOW_NOT_LOOK)
+        if (call.name == "open_device" && !SHOW.containsMatchIn(asked)) return Refusal(NO_PAGE)
+        // "Kör städläget": a mode or flow, never the lights instead (also not after the flow wasn't found).
+        if (call.name in setOf("set_scene", "set_room", "set_device") && MODE_WORD.containsMatchIn(folded) && !LIGHT_LEVEL.containsMatchIn(folded) && !ON_OFF.containsMatchIn(folded)) return Refusal(FLOW_NOT_LOOK)
+        // A look nobody asked for ("berätta ett skämt", "sätt på morgonjazz"): the lights stay as they are.
+        if (call.name == "set_scene" && !LIGHT_LEVEL.containsMatchIn(asked) && !LIGHT_WORDS.containsMatchIn(asked)) return Refusal(NO_LIGHTS)
         if (call.name == "set_scene" && MOOD_WORD.containsMatchIn(folded) && view.moods.isNotEmpty()) return Refusal(
             "Not done: the user asked for a mood. The home's moods: " + view.moods.joinToString { it.mood.name + (it.room?.let { r -> " ($r)" }.orEmpty()) } +
                 ". Call set_mood with the one they mean (\"dinner\" is Middag).",
@@ -50,6 +54,9 @@ internal object CallCheck {
             )
         }
         if (call.name !in Agent.SETS) return null
+        // "Vi är klara, stäng receptet": the kitchen lights aren't part of it.
+        if (call.name in setOf("set_device", "set_room") && KITCHEN_TOPIC.containsMatchIn(folded) && !ON_OFF.containsMatchIn(asked.replace(CLOSE_THING, "")) && !LIGHT_LEVEL.containsMatchIn(asked) &&
+            !LIGHT_WORDS.containsMatchIn(asked) && !MUSIC.containsMatchIn(asked) && !VOLUME.containsMatchIn(asked)) return Refusal(NO_LIGHTS)
         if (STATUS.containsMatchIn(q) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(STATUS_ONLY)
         if (call.name == "set_room" && allRooms(call.arguments) && turnsOn(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH)
         if (call.name == "set_scene" && allRooms(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH)
@@ -57,6 +64,14 @@ internal object CallCheck {
             unasked(str(call.arguments, "capability"), asked)?.let { return Refusal(it) }
             // "Tänd lampan" with several lamps and none named: which one is the user's to say.
             if (call.name in setOf("set_device", "set_room") && GENERIC_LAMP.matches(folded) && view.devices.count { it.deviceClass == "light" } > 1) return Refusal(WHICH)
+            // "Dimma soffbordslampan" sent to the floor lamp: the lamp the user named is the one.
+            if (call.name == "set_device") {
+                val target = view.device(str(call.arguments, "device"))
+                val named = view.devices.filter { d -> d.name.length >= 6 && sharesWord(folded, d.name.substringBefore(',')) && NameMatch.normalize(d.name).split(' ').any { it.length >= 6 } }
+                if (target != null && named.isNotEmpty() && named.none { it.alias == target.alias } && !sharesWord(folded, target.name)) {
+                    return Refusal("Not done: the user named ${named.joinToString(" or ") { it.name }}, not ${target.name}. Use the one they named.")
+                }
+            }
         }
         if (call.name in DEVICE_CALLS) {
             val wanted = APPLIANCES.firstOrNull { it.words.containsMatchIn(NameMatch.normalize(q)) } ?: return null
@@ -171,13 +186,30 @@ internal object CallCheck {
                 val place = if (Regex("""(frysen|freezer)""").containsMatchIn(folded)) "freezer" else if (Regex("""(skafferi|pantry)""").containsMatchIn(folded)) "pantry" else "fridge"
                 return call.copy(name = "add_to_fridge", arguments = JsonObject(mapOf("name" to JsonPrimitive(str(a, "item").ifBlank { str(a, "name") }), "place" to JsonPrimitive(place))))
             }
-            "read_recipe" -> if (INGREDIENTS.containsMatchIn(folded) && Regex("""(^| )(need|behover|for|till|ingredients|ingredienser)( |$)""").containsMatchIn(NameMatch.normalize(str(a, "recipe")))) {
-                // "need for the pancakes" as the recipe: the dish is what follows "for".
-                return call.copy(arguments = with("recipe" to dish(folded)))
+            "read_recipe", "open_recipe" -> {
+                // The recipe sent as "name" or "title": the tools call it recipe.
+                val key = "recipe"
+                val given = listOf("name", "title", "dish", "query", "recipe").filter { it != key }.map { str(a, it) }.firstOrNull { it.isNotBlank() }
+                if (str(a, key).isBlank() && given != null) return call.copy(arguments = JsonObject(mapOf(key to JsonPrimitive(given))))
+                if (call.name == "read_recipe" && INGREDIENTS.containsMatchIn(folded) && Regex("""(^| )(need|behover|for|till|ingredients|ingredienser)( |$)""").containsMatchIn(NameMatch.normalize(str(a, "recipe")))) {
+                    // "need for the pancakes" as the recipe: the dish is what follows "for".
+                    return call.copy(arguments = with("recipe" to dish(folded)))
+                }
+            }
+            "remove_from_fridge" -> if (str(a, "item").isBlank() && str(a, "name").isBlank()) {
+                // "Mjölken är slut" with no item: what is finished.
+                val item = GONE.find(folded)?.let { m -> m.groupValues.drop(1).firstOrNull { it.isNotBlank() } }?.replace(Regex("""^(the|our|my|all the) """), "")?.trim()
+                if (!item.isNullOrBlank()) return call.copy(arguments = with("item" to item))
+            }
+            "run_flow" -> {
+                // "Kör städläget" run as "Rengöring": the flow is the one the user named.
+                val said = MODE_NAME.find(question)?.value
+                if (said != null && !sharesWord(folded, str(a, "name"))) return call.copy(arguments = with("name" to said))
             }
             "change_todo" -> if (str(a, "item").isBlank() && str(a, "action").lowercase() !in setOf("clear")) {
                 // "Bocka av bilservice" with no item: the words after the tick-off.
-                val item = TICK.find(folded)?.groupValues?.get(2)?.trim()?.trim('?', '.', '!')
+                val item = (TICK.find(folded)?.groupValues?.get(2)?.takeUnless { it.trim() in setOf("it", "den", "det", "") }
+                    ?: DID.find(folded)?.groupValues?.get(4))?.trim()?.trim('?', '.', '!')
                 if (!item.isNullOrBlank()) return call.copy(arguments = with("item" to item, "action" to str(a, "action").ifBlank { "done" }))
             }
             "change_note" -> if (str(a, "note").isBlank()) {
@@ -204,7 +236,7 @@ internal object CallCheck {
                 // A pause sent as play_music's kind or as an empty query: the speaker is paused.
                 val kind = NameMatch.normalize(str(a, "kind"))
                 if ("set_device" in tools && (kind in setOf("pause", "stop", "paus") || (str(a, "query").isBlank() && PAUSE.containsMatchIn(folded)))) {
-                    return call.copy(name = "set_device", arguments = JsonObject(mapOf("device" to JsonPrimitive(str(a, "player")), "capability" to JsonPrimitive("speaker_playing"), "value" to JsonPrimitive("false"))))
+                    return call.copy(name = "set_device", arguments = JsonObject(mapOf("device" to JsonPrimitive(str(a, "player").ifBlank { str(a, "device") }), "capability" to JsonPrimitive("speaker_playing"), "value" to JsonPrimitive("false"))))
                 }
                 // "morning jazz living room": the room is where to play, not what.
                 val query = str(a, "query")
@@ -253,8 +285,12 @@ internal object CallCheck {
                 if (call.name == "fridge_contents") {
                     val query = NameMatch.normalize(str(a, "query"))
                     val said = Translate.let { folded.split(' ').flatMap { w -> it.variants(w) } }
-                    val madeUp = query.isNotBlank() && query.split(' ').none { w -> said.any { NameMatch.sameWord(it, w) } }
+                    val madeUp = query.isNotBlank() && query.split(' ').any { w -> w.length > 2 && said.none { NameMatch.sameWord(it, w) } }
                     val noPlace = str(a, "place").isNotBlank() && NameMatch.normalize(str(a, "place")) !in PLACES
+                    // "Vad går ut snart?": what's within a few days, past dates first, not the whole list.
+                    if (!a.containsKey("within_days") && SOON.containsMatchIn(folded) && !INGREDIENTS.containsMatchIn(folded) && !madeUp && !noPlace) {
+                        return call.copy(arguments = with("within_days" to "3"))
+                    }
                     val allDays = a.containsKey("within_days") && !SOON.containsMatchIn(folded) && !INGREDIENTS.containsMatchIn(folded)
                     if (madeUp || noPlace || allDays) {
                         val m = a.toMutableMap()
@@ -358,7 +394,7 @@ internal object CallCheck {
     private val MUST_CALL = listOf(
         "read_recipe" to Regex("""(vad behover (jag|vi) (till|for|att gora)|vilka ingredienser|what do (i|we) need (for|to make)|ingredients)"""),
         "calendar" to Regex("""^\s*(vad (hander|har (vi|jag)|ska (vi|jag)|gor (vi|jag))|what( s| is)? on|whats on|what (are|am) (we|i) doing|what do (we|i) have)( pa| on| i)? .*(idag|i dag|imorgon|i morgon|ikvall|today|tomorrow|tonight|helg|weekend|mandag|tisdag|onsdag|torsdag|fredag|lordag|sondag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"""),
-        "fridge_contents" to Regex("""(vad (finns|har vi) i (kylen|kylskapet|frysen|skafferiet)|what( s| is)? in the (fridge|freezer)|vad gar ut|vad maste vi ata|vad ska vi ata upp|what (goes off|expires)|going off|use up first)"""),
+        "fridge_contents" to Regex("""(vad (finns|har vi) i (kylen|kylskapet|frysen|skafferiet)|what( s| is)? in the (fridge|freezer)|vad gar ut|vad maste vi ata|vad ska vi ata upp|what (goes off|expires)|going off|go off|about to expire|expiring|use up first)"""),
         "add_to_fridge" to Regex("""^\s*(jag|vi) har (kopt|handlat)|^\s*(i|we) (bought|got) """),
         "remove_from_fridge" to Regex("""(ar slut|har druckit upp|har atit upp|is finished|ran out of|(we re|we are) out of)"""),
         "write_note" to Regex("""(lamna ett meddelande|lamna en lapp|skriv en lapp|satt upp en lapp|leave a (note|message)|put up a note)"""),
@@ -402,6 +438,13 @@ internal object CallCheck {
     private val ADD = Regex("""(^| )(lagg till|lagger till|lagg in|add|adding)( |$)""")
     private val TICK = Regex("""(bocka av|kryssa av|stryk|tick off|check off|cross off|mark) (.+?)( som klar| as done| done)?$""")
     private val MODE_WORD = Regex("""\S(lage|laget|lagen)( |$)|(^| )(lage|laget|mode|flow|flowet|flodet|rutin|rutinen|routine)( |$)""")
+    private val LIGHT_WORDS = Regex("""(lamp|ljus|belysning|light|lights|lighting|taklamp|spotlight)""")
+    private val CLOSE_THING = Regex("""(stang|stanga|stang av|close|turn off|switch off|slack) (the )?\S*(recept|recipe|timer)\S*""")
+    private val KITCHEN_TOPIC = Regex("""(recept|recipe|timer|timern|lapp|note|kylen|fridge|frysen|freezer|att gora|to do|to-do|todo)""")
+    private val GONE = Regex("""^(.+?) (ar slut|tog slut|is finished|is gone|has run out|ran out)|(?:druckit upp|atit upp|used up|finished) (.+)$""")
+    private val DID = Regex("""^\s*(jag|vi|i|we) (har )?(?:bokat|fixat|gjort|ringt|betalat|bytt|skickat|booked|fixed|did|called|paid|changed|sent) (the |a )?(.+?)( and| och| tick| bocka|,|$)""")
+    private val MODE_NAME = Regex("""[\p{L}]*(läge|läget|lägen|mode)(?![\p{L}])""", RegexOption.IGNORE_CASE)
+    const val NO_LIGHTS = "Not done: the user didn't ask about the lights; leave them as they are and answer what they asked."
     const val FLOW_NOT_LOOK = "Not done: the user named a mode or flow, not a light look. If list_flows has one by that name, run it with run_flow; otherwise say there is none. Don't change the lights instead."
     private val BOUGHT = Regex("""(kopt|kopte|handlat|bought|got some|ny|nya|new)""")
     private val FINISHED = Regex("""(ar slut|slut pa|har druckit upp|har atit upp|druckit upp|atit upp|is finished|ran out|out of|used up|finished|anvant upp|kastat|threw|thrown)""")

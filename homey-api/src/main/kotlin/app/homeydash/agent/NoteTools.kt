@@ -320,8 +320,13 @@ class NoteTools(
         if (q.isEmpty()) return 0.0
         val t = NameMatch.tokens(text)
         val joined = t.joinToString("")
-        val hits = q.count { said -> Translate.variants(said).any { w -> t.any { NameMatch.sameWord(it, w) } || (w.length >= 4 && joined.contains(w)) } }
-        return hits.toDouble() / q.size
+        val found = q.map { said -> Translate.variants(said).any { w -> t.any { NameMatch.sameWord(it, w) } || (w.length >= 4 && joined.contains(w)) } }.toMutableList()
+        // "car service" is "bilservice": two words said, one Swedish compound written.
+        for (i in 0 until q.size - 1) {
+            val compound = Translate.variants(q[i]).any { a -> Translate.variants(q[i + 1]).any { b -> joined.contains(a + b) } }
+            if (compound) { found[i] = true; found[i + 1] = true }
+        }
+        return found.count { it }.toDouble() / q.size
     }
 
     private val NOTE_WORDS = setOf(

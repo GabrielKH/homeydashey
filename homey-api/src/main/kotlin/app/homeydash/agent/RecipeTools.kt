@@ -192,6 +192,13 @@ class RecipeTools(
                 val title = NameMatch.tokens(r.title)
                 NameMatch.tokens(name).filter { it.length > 2 }.let { words -> words.isNotEmpty() && words.all { w -> title.any { NameMatch.sameWord(w, it) } } }
             }.singleOrNull()
+            // "pancakes" for Pannkakor: each word in the other language too.
+            ?: all.filter { r ->
+                val title = NameMatch.tokens(r.title)
+                NameMatch.tokens(name).filter { it.length > 2 }.let { words ->
+                    words.isNotEmpty() && words.all { w -> Translate.variants(NameMatch.normalize(w)).any { v -> title.any { NameMatch.sameWord(v, it) } } }
+                }
+            }.singleOrNull()
     }
 
     private fun notFound(name: String): ToolResult {
