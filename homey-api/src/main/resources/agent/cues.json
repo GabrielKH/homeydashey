@@ -568,13 +568,42 @@
   },
   {
    "id": "needs_timer",
-   "about": "Questions that need the timer tool",
+   "about": "Questions and requests that need the timer tool",
    "edge": "part",
    "words": [
     "hur lang tid (ar det |har (jag|vi) )?kvar",
     "hur mycket tid (ar det )?kvar",
     "how (much time|long)( is| s)? left",
-    "time left"
+    "time left",
+    "(stall|satt|starta|set|start)( en| ett| a| the)? (timer|klocka|klockan)",
+    "(stall|satt) klockan pa \\d",
+    "(avbryt|stoppa|stang av|ta bort|cancel|stop|delete|remove)( the| min| mina| my)? (\\w*timer\\w*|timrar\\w*|\\w*klockan)",
+    "\\d+ (minut|minuter|sekund|sekunder|minute|minutes|second|seconds)( timer)?$"
+   ]
+  },
+  {
+   "id": "needs_get_device",
+   "about": "Asking whether a lamp or device is on or off; looked up when the answer says there is no such device",
+   "edge": "part",
+   "pattern": "^\\s*(ar|is|are|hur ar|how is)( det| the| it)? .*(lamp|ljus|light|tand|tant|slackt|slackta|switched|turned)"
+  },
+  {
+   "id": "denies_device",
+   "about": "An answer saying the device isn't there or can't be checked",
+   "edge": "part",
+   "words": [
+    "there isn t",
+    "there is no",
+    "there s no",
+    "there are no",
+    "i can t (find|check|see)",
+    "i cannot (find|check|see)",
+    "i don t see",
+    "couldn t find",
+    "no (lamp|light|device)s? (in|called)",
+    "finns (ingen|inget|inga|inte)",
+    "hittar (ingen|inget|inte)",
+    "kan inte (se|kolla|hitta)"
    ]
   },
   {

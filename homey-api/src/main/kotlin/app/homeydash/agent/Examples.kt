@@ -21,26 +21,29 @@ object Examples {
     )
 
     @Serializable
-    data class Data(val about: String = "", val examples: List<Example> = emptyList())
+    data class Data(val about: String = "", val filler: List<String> = emptyList(), val examples: List<Example> = emptyList())
 
     /** At most this many examples go with one question. */
     const val SHOWN = 3
     /** Learned examples kept; the oldest go first. */
     const val KEEP = 150
     /** Below this, an example shares too little with the question to help. */
-    private const val MIN_SCORE = 1.5
+    private const val MIN_SCORE = 2.5
 
     private val json = Json { ignoreUnknownKeys = true }
     private val PLACEHOLDER = Regex("<[^>]*>")
 
-    val builtIn: List<Example> by lazy {
+    private val data: Data by lazy {
         val text = Examples::class.java.classLoader?.getResourceAsStream("agent/examples.json")?.bufferedReader()?.use { it.readText() }
             ?: error("Missing agent/examples.json")
-        json.decodeFromString<Data>(text).examples
+        json.decodeFromString<Data>(text)
     }
+    val builtIn: List<Example> get() = data.examples
+    /** Small words that say nothing about what to do ("i", "the", "kan du"). */
+    private val filler: Set<String> by lazy { data.filler.toSet() }
 
     private fun words(text: String): Set<String> =
-        NameMatch.normalize(PLACEHOLDER.replace(text, " ")).split(' ').filter { it.length >= 2 }.toSet()
+        NameMatch.normalize(PLACEHOLDER.replace(text, " ")).split(' ').filter { it.length >= 2 && it !in filler }.toSet()
 
     /**
      * The [SHOWN] examples closest to [question], the home's own first when they score the same.

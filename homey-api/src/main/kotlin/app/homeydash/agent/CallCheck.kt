@@ -421,9 +421,14 @@ internal object CallCheck {
      * from the calendar, not the weather; what's in the fridge from the fridge. Null when it
      * may well be answered in words, or the tool isn't there.
      */
-    fun shouldCall(question: String, tools: Collection<String>): String? {
+    fun shouldCall(question: String, tools: Collection<String>, answer: String? = null): String? {
         val f = NameMatch.normalize(question)
-        return MUST_CALL.firstOrNull { (tool, cue) -> tool in tools && Cues.regex(cue).containsMatchIn(f) }?.first
+        MUST_CALL.firstOrNull { (tool, cue) -> tool in tools && Cues.regex(cue).containsMatchIn(f) }?.let { return it.first }
+        // "Är lampan i hallen tänd?" is answered from the note of what's on; only "there's no lamp there" needs a look.
+        if ("get_device" in tools && answer != null && Cues.regex("needs_get_device").containsMatchIn(f) &&
+            Cues.regex("denies_device").containsMatchIn(NameMatch.normalize(answer))
+        ) return "get_device"
+        return null
     }
 
     private val GOODNIGHT get() = Cues.regex("goodnight")

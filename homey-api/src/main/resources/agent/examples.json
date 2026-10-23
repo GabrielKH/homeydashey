@@ -1,40 +1,275 @@
 {
  "about": "Worked examples of how requests become tool calls. Names in <> stand for the home's real ones. Never copies of the skill test sentences, so the tests still measure something.",
+ "filler": [
+  "i",
+  "pa",
+  "the",
+  "a",
+  "an",
+  "en",
+  "ett",
+  "det",
+  "den",
+  "du",
+  "kan",
+  "jag",
+  "vi",
+  "me",
+  "my",
+  "min",
+  "mitt",
+  "mina",
+  "to",
+  "on",
+  "in",
+  "of",
+  "for",
+  "och",
+  "and",
+  "lite",
+  "some",
+  "is",
+  "ar",
+  "are",
+  "vad",
+  "what",
+  "please",
+  "snalla",
+  "it",
+  "at",
+  "till",
+  "av",
+  "med",
+  "with",
+  "om",
+  "hur",
+  "how",
+  "nu",
+  "now",
+  "har",
+  "have",
+  "there"
+ ],
  "examples": [
-  {"say": "släck i sovrummet", "calls": ["set_room {\"room\": \"<bedroom>\", \"capability\": \"onoff\", \"value\": \"false\"}"]},
-  {"say": "turn off the lights in the office", "calls": ["set_room {\"room\": \"<office>\", \"capability\": \"onoff\", \"value\": \"false\"}"]},
-  {"say": "tänd taklampan i vardagsrummet", "calls": ["set_device {\"device\": \"<ceiling lamp, living room>\", \"capability\": \"onoff\", \"value\": \"true\"}"]},
-  {"say": "sänk ljuset i hallen till hälften", "calls": ["set_room {\"room\": \"<hall>\", \"capability\": \"dim\", \"value\": \"0.5\"}"]},
-  {"say": "make the desk lamp a bit brighter", "calls": ["set_device {\"device\": \"<desk lamp>\", \"capability\": \"dim\", \"value\": \"0.8\"}"]},
-  {"say": "släck allt i huset", "calls": ["set_room {\"room\": \"all\", \"capability\": \"onoff\", \"value\": \"false\"}"]},
-  {"say": "kan du tända en lampa", "calls": [], "answer": "Asks which lamp: several lamps and none named."},
-  {"say": "är lampan i köket tänd?", "calls": ["get_device {\"device\": \"<kitchen lamp>\"}"], "answer": "Only looks; nothing is switched."},
-  {"say": "spela P3 i sovrummet", "calls": ["play_music {\"player\": \"<bedroom speaker>\", \"query\": \"P3\"}"]},
-  {"say": "put on some jazz in the bedroom", "calls": ["play_music {\"player\": \"<bedroom speaker>\", \"query\": \"jazz\", \"kind\": \"playlist\"}"]},
-  {"say": "stoppa musiken i vardagsrummet", "calls": ["set_device {\"device\": \"<living room speaker>\", \"capability\": \"speaker_playing\", \"value\": \"false\"}"]},
-  {"say": "sänk volymen i sovrummet", "calls": ["set_device {\"device\": \"<bedroom speaker>\", \"capability\": \"volume_set\", \"value\": \"0.2\"}"]},
-  {"say": "gör det mysigt i sovrummet", "calls": ["set_scene {\"room\": \"<bedroom>\", \"look\": \"cozy\"}"]},
-  {"say": "starta stämningen <mood name>", "calls": ["set_mood {\"mood\": \"<mood name>\", \"room\": \"<its room>\"}"]},
-  {"say": "kör flowet nattläge", "calls": ["run_flow {\"name\": \"nattläge\"}"]},
-  {"say": "nu sover vi, godnatt", "calls": ["goodnight {}"], "answer": "Goodnight asks first; then wait for the yes."},
-  {"say": "blir det regn på lördag?", "calls": ["weather {}"]},
-  {"say": "vad har jag för möten på onsdag?", "calls": ["calendar {\"start_date\": \"onsdag\"}"]},
-  {"say": "boka tandläkaren på tisdag klockan nio", "calls": ["add_event {\"title\": \"Tandläkaren\", \"date\": \"tisdag\", \"time\": \"09:00\"}"], "answer": "Asks for a yes before it is added."},
-  {"say": "en timer på tre minuter för teet", "calls": ["timer {\"action\": \"start\", \"minutes\": \"3\", \"label\": \"teet\"}"]},
-  {"say": "fem minuter till på teet", "calls": ["timer {\"action\": \"add\", \"minutes\": \"5\", \"label\": \"teet\"}"]},
-  {"say": "how much time is left on the tea?", "calls": ["timer {\"action\": \"list\"}"]},
-  {"say": "vad behövs till lasagnen?", "calls": ["read_recipe {\"recipe\": \"lasagnen\"}"], "answer": "Names every ingredient."},
-  {"say": "visa receptet på kycklinggrytan", "calls": ["open_recipe {\"recipe\": \"kycklinggrytan\"}"]},
-  {"say": "vi har köpt smör", "calls": ["add_to_fridge {\"name\": \"Smör\"}"]},
-  {"say": "osten är slut", "calls": ["remove_from_fridge {\"item\": \"ost\"}"]},
-  {"say": "I moved the butter to the pantry", "calls": ["update_fridge_item {\"item\": \"butter\", \"place\": \"pantry\"}"]},
-  {"say": "vad finns i frysen?", "calls": ["fridge_contents {\"place\": \"freezer\"}"], "answer": "Names every item."},
-  {"say": "skriv en lapp: mata katten", "calls": ["write_note {\"text\": \"Mata katten\"}"]},
-  {"say": "remove the post-it about the cat", "calls": ["change_note {\"note\": \"cat\", \"action\": \"remove\"}"]},
-  {"say": "jag har betalat elräkningen", "calls": ["change_todo {\"item\": \"elräkningen\", \"action\": \"done\"}"]},
-  {"say": "put buy milk on the to-do list", "calls": ["add_todo {\"text\": \"Buy milk\"}"]},
-  {"say": "visa kalendern", "calls": ["open_page {\"page\": \"calendar\"}"]},
-  {"say": "vem är hemma just nu?", "calls": ["who_is_home {}"]},
-  {"say": "berätta något roligt", "calls": [], "answer": "Just talk; no tool, nothing changed."}
+  {
+   "say": "släck i sovrummet",
+   "calls": [
+    "set_room {\"room\": \"<bedroom>\", \"capability\": \"onoff\", \"value\": \"false\"}"
+   ]
+  },
+  {
+   "say": "släck lampan i sovrummet",
+   "calls": [
+    "set_room {\"room\": \"<bedroom>\", \"capability\": \"onoff\", \"value\": \"false\"}"
+   ],
+   "answer": "\"the lamp\" in a room with no lamp named is all the room's lights"
+  },
+  {
+   "say": "turn off the lights in the office",
+   "calls": [
+    "set_room {\"room\": \"<office>\", \"capability\": \"onoff\", \"value\": \"false\"}"
+   ]
+  },
+  {
+   "say": "tänd taklampan i vardagsrummet",
+   "calls": [
+    "set_device {\"device\": \"<ceiling lamp, living room>\", \"capability\": \"onoff\", \"value\": \"true\"}"
+   ]
+  },
+  {
+   "say": "sänk ljuset i hallen till hälften",
+   "calls": [
+    "set_room {\"room\": \"<hall>\", \"capability\": \"dim\", \"value\": \"0.5\"}"
+   ]
+  },
+  {
+   "say": "make the desk lamp a bit brighter",
+   "calls": [
+    "set_device {\"device\": \"<desk lamp>\", \"capability\": \"dim\", \"value\": \"0.8\"}"
+   ]
+  },
+  {
+   "say": "släck allt i huset",
+   "calls": [
+    "set_room {\"room\": \"all\", \"capability\": \"onoff\", \"value\": \"false\"}"
+   ]
+  },
+  {
+   "say": "kan du tända en lampa",
+   "calls": [],
+   "answer": "Asks which lamp: several lamps and none named."
+  },
+  {
+   "say": "är lampan i köket tänd?",
+   "calls": [
+    "get_device {\"device\": \"<kitchen lamp>\"}"
+   ],
+   "answer": "Only looks; nothing is switched."
+  },
+  {
+   "say": "spela P3 i sovrummet",
+   "calls": [
+    "play_music {\"player\": \"<bedroom speaker>\", \"query\": \"P3\"}"
+   ]
+  },
+  {
+   "say": "put on some jazz in the bedroom",
+   "calls": [
+    "play_music {\"player\": \"<bedroom speaker>\", \"query\": \"jazz\", \"kind\": \"playlist\"}"
+   ]
+  },
+  {
+   "say": "stoppa musiken i vardagsrummet",
+   "calls": [
+    "set_device {\"device\": \"<living room speaker>\", \"capability\": \"speaker_playing\", \"value\": \"false\"}"
+   ]
+  },
+  {
+   "say": "sänk volymen i sovrummet",
+   "calls": [
+    "set_device {\"device\": \"<bedroom speaker>\", \"capability\": \"volume_set\", \"value\": \"0.2\"}"
+   ]
+  },
+  {
+   "say": "gör det mysigt i sovrummet",
+   "calls": [
+    "set_scene {\"room\": \"<bedroom>\", \"look\": \"cozy\"}"
+   ]
+  },
+  {
+   "say": "starta stämningen <mood name>",
+   "calls": [
+    "set_mood {\"mood\": \"<mood name>\", \"room\": \"<its room>\"}"
+   ]
+  },
+  {
+   "say": "kör flowet nattläge",
+   "calls": [
+    "run_flow {\"name\": \"nattläge\"}"
+   ]
+  },
+  {
+   "say": "nu sover vi, godnatt",
+   "calls": [
+    "goodnight {}"
+   ],
+   "answer": "Goodnight asks first; then wait for the yes."
+  },
+  {
+   "say": "blir det regn på lördag?",
+   "calls": [
+    "weather {}"
+   ]
+  },
+  {
+   "say": "vad har jag för möten på onsdag?",
+   "calls": [
+    "calendar {\"start_date\": \"onsdag\"}"
+   ]
+  },
+  {
+   "say": "boka tandläkaren på tisdag klockan nio",
+   "calls": [
+    "add_event {\"title\": \"Tandläkaren\", \"date\": \"tisdag\", \"time\": \"09:00\"}"
+   ],
+   "answer": "Asks for a yes before it is added."
+  },
+  {
+   "say": "en timer på tre minuter för teet",
+   "calls": [
+    "timer {\"action\": \"start\", \"minutes\": \"3\", \"label\": \"teet\"}"
+   ]
+  },
+  {
+   "say": "fem minuter till på teet",
+   "calls": [
+    "timer {\"action\": \"add\", \"minutes\": \"5\", \"label\": \"teet\"}"
+   ]
+  },
+  {
+   "say": "how much time is left on the tea?",
+   "calls": [
+    "timer {\"action\": \"list\"}"
+   ]
+  },
+  {
+   "say": "vad behövs till lasagnen?",
+   "calls": [
+    "read_recipe {\"recipe\": \"lasagnen\"}"
+   ],
+   "answer": "Names every ingredient."
+  },
+  {
+   "say": "visa receptet på kycklinggrytan",
+   "calls": [
+    "open_recipe {\"recipe\": \"kycklinggrytan\"}"
+   ]
+  },
+  {
+   "say": "vi har köpt smör",
+   "calls": [
+    "add_to_fridge {\"name\": \"Smör\"}"
+   ]
+  },
+  {
+   "say": "osten är slut",
+   "calls": [
+    "remove_from_fridge {\"item\": \"ost\"}"
+   ]
+  },
+  {
+   "say": "I moved the butter to the pantry",
+   "calls": [
+    "update_fridge_item {\"item\": \"butter\", \"place\": \"pantry\"}"
+   ]
+  },
+  {
+   "say": "vad finns i frysen?",
+   "calls": [
+    "fridge_contents {\"place\": \"freezer\"}"
+   ],
+   "answer": "Names every item."
+  },
+  {
+   "say": "skriv en lapp: mata katten",
+   "calls": [
+    "write_note {\"text\": \"Mata katten\"}"
+   ]
+  },
+  {
+   "say": "remove the post-it about the cat",
+   "calls": [
+    "change_note {\"note\": \"cat\", \"action\": \"remove\"}"
+   ]
+  },
+  {
+   "say": "jag har betalat elräkningen",
+   "calls": [
+    "change_todo {\"item\": \"elräkningen\", \"action\": \"done\"}"
+   ]
+  },
+  {
+   "say": "put buy milk on the to-do list",
+   "calls": [
+    "add_todo {\"text\": \"Buy milk\"}"
+   ]
+  },
+  {
+   "say": "visa kalendern",
+   "calls": [
+    "open_page {\"page\": \"calendar\"}"
+   ]
+  },
+  {
+   "say": "vem är hemma just nu?",
+   "calls": [
+    "who_is_home {}"
+   ]
+  },
+  {
+   "say": "berätta något roligt",
+   "calls": [],
+   "answer": "Just talk; no tool, nothing changed."
+  }
  ]
 }

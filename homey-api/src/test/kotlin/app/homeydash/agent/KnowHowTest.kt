@@ -180,14 +180,14 @@ class KnowHowTest {
         val book = KnowHowBook(folder.root)
         val s = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
         val agent = Agent(ChatClient(OkHttpClient()), knowHow = book)
-        agent.ask("sätt på lite jazzigt", s, { view(s, it) }, { AgentTools(it, Home(), Dash()) })
+        agent.ask("sätt på lite groovigt", s, { view(s, it) }, { AgentTools(it, Home(), Dash()) })
         server.takeRequest()
         val second = server.takeRequest().body.readUtf8()
         assertTrue(second.contains("[Music and speakers]"))
         assertTrue(second.contains("play_music(player"))
-        assertEquals(listOf("jazzigt"), book.data.value.learned["music"])
+        assertEquals(listOf("groovigt"), book.data.value.learned["music"])
         // Next time the question brings music by itself.
-        assertEquals("music", KnowHow.find(agent.skills(s), "något jazzigt i köket", view()).first().skill.id)
+        assertEquals("music", KnowHow.find(agent.skills(s), "något groovigt i köket", view()).first().skill.id)
         server.shutdown()
     }
 

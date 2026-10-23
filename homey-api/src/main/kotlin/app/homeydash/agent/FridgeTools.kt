@@ -89,7 +89,8 @@ class FridgeTools(
     }
 
     private suspend fun add(a: JsonObject): ToolResult {
-        val name = a.str("name").trim()
+        // Small models often call it "item", as the other fridge tools do.
+        val name = a.str("name").ifBlank { a.str("item") }.trim()
         if (name.isBlank()) return ok("Say what to add.")
         val category = a.str("category").takeIf { it.isNotBlank() }?.let { FoodRules.find(it) } ?: FoodRules.classify(name)
         val date = a.str("date").takeIf { it.isNotBlank() }?.let { parseDate(it) ?: return ok("The date must be yyyy-mm-dd.") }

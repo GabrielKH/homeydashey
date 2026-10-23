@@ -96,6 +96,8 @@ object KnowHow {
                 "spotify", "sonos", "album*", "artist*", "spellist*", "playlist*", "favorit*", "favourite*", "favorite*", "volym*", "volume",
                 "högre", "lägre", "louder", "quieter", "pausa", "paus", "pause", "nästa", "next", "skip*", "hoppa", "lyssna*", "listen*",
                 "högtalar*", "speaker*", "podd*", "podcast*", "hits", "topplista*", "chart*", "avsnitt*", "episode*", "genre*", "top",
+                // Genres, also inside a word ("morgonjazz", "julmusik").
+                "*jazz*", "rock", "rockklassiker*", "pop", "*pop", "klassisk*", "*musik*", "blues", "soul", "disco", "reggae", "hiphop", "metal",
             ),
             classes = listOf("speaker", "amplifier"),
             tools = listOf("play_music", "save_favourite", "device_actions", "run_device_action"),
@@ -386,13 +388,16 @@ object KnowHow {
         return out.values.toList()
     }
 
-    private fun key(word: String) = word.lowercase().trimEnd('*')
+    private fun key(word: String) = word.lowercase().trim('*')
 
     /** The word or phrase [w] as heard in [text], or null. */
     private fun heard(w: String, text: String, tokens: List<String>): String? {
-        val k = Routines.normalize(w.trimEnd('*'))
+        val k = Routines.normalize(w.trim('*'))
         if (k.isEmpty()) return null
         return when {
+            // "*jazz" is the end of a word ("morgonjazz"), "*jazz*" anywhere in one.
+            w.startsWith('*') && w.endsWith('*') && w.length > 2 -> tokens.firstOrNull { it.contains(k) }
+            w.startsWith('*') -> tokens.firstOrNull { it.endsWith(k) }
             ' ' in k -> k.takeIf { text.contains(" $k ") || (w.endsWith('*') && text.contains(" $k")) }
             w.endsWith('*') -> tokens.firstOrNull { it.startsWith(k) }
             else -> tokens.firstOrNull { it == k }

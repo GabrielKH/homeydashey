@@ -509,11 +509,23 @@ class AgentTools(
         return ok("Changed ${lights.size}: ${lights.joinToString { it.name }} in $place are now ${style.word}.")
     }
 
+    /** "städläget" is the Flow Städläge: Swedish endings ("-et", "-en", "-n", "-t") and accents don't count. */
+    private fun flowLike(flows: List<app.homeydash.homey.HomeyFlow>, name: String): app.homeydash.homey.HomeyFlow? {
+        val asked = NameMatch.normalize(name)
+        if (asked.length < 4) return null
+        fun stem(s: String) = s.replace(Regex("""(et|en|na|n|t)$"""), "")
+        return flows.filter { f ->
+            val n = NameMatch.normalize(f.name)
+            n == asked || stem(n) == stem(asked) || (n.length >= 4 && (asked.startsWith(n) && asked.length - n.length <= 3))
+        }.singleOrNull()
+    }
+
     private suspend fun runFlow(name: String): ToolResult {
         val flows = home.flows()
         val flow = flows.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
             ?: flows.firstOrNull { it.name.contains(name.trim(), ignoreCase = true) }
-            ?: return ok("There's no Flow called $name.")
+            ?: flowLike(flows, name)
+            ?: return ok("There's no Flow called $name." + if (flows.isEmpty()) "" else " There are: " + flows.take(15).joinToString { it.name } + ".")
         if (SENSITIVE.containsMatchIn(flow.name)) {
             val unlock = UNLOCKING.containsMatchIn(flow.name)
             if (unlock && !view.allows(Secret.Unlock)) return ok("That Flow looks like it unlocks or disarms something, which the assistant isn't allowed to do.")

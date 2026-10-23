@@ -229,6 +229,12 @@ class SkillEvalsTest {
         assertTrue(tools.run(app.homeydash.agent.ToolCall("5", "play_music", args("player" to living.alias, "query" to "morning jazz"))).text.startsWith("Playing Morgonjazz"))
         val lamp = view.devices.first { it.name == house.devices.first { d -> d.id == "bedroom_lamp" }.name }
         assertEquals(lamp, view.device("${lamp.alias}, ${lamp.room}"))
+        // Run 11: a favourite asked for as a playlist, a Flow said the Swedish way, eggs called "item".
+        assertTrue(tools.run(app.homeydash.agent.ToolCall("6", "play_music", args("player" to living.alias, "query" to "Morgonjazz", "kind" to "playlist"))).text.startsWith("Playing Morgonjazz"))
+        assertTrue(tools.run(app.homeydash.agent.ToolCall("7", "run_flow", args("name" to "städläget"))).text.startsWith("Started Städläge"))
+        val fridge = AgentTools(view, sim, sim.dashboard, fridge = FridgeTools(sim.fridge) {})
+        fridge.run(app.homeydash.agent.ToolCall("8", "add_to_fridge", args("item" to "eggs", "place" to "fridge")))
+        assertTrue(sim.fridge.items.value.any { it.name.contains("egg", ignoreCase = true) })
     }
 
     @Test fun `calls the question didn't ask for are refused, and the recipe is opened instead of the list`() = runBlocking {
@@ -340,6 +346,13 @@ class SkillEvalsTest {
         assertEquals("write_note", CallCheck.shouldCall("lämna ett meddelande till Alex: middagen står i kylen", more))
         assertEquals("change_todo", CallCheck.shouldCall("jag har bokat bilservicen", more))
         assertNull(CallCheck.shouldCall("berätta ett skämt", more))
+        // Run 11: timers said but not set, a lamp asked about but not looked at.
+        assertEquals("timer", CallCheck.shouldCall("ställ klockan på 5 minuter", more + "timer"))
+        assertEquals("timer", CallCheck.shouldCall("cancel the timer", more + "timer"))
+        assertEquals("timer", CallCheck.shouldCall("avbryt äggtimern", more + "timer"))
+        assertEquals("get_device", CallCheck.shouldCall("är lampan i hallen tänd?", more + "get_device", "There isn't a lamp in the hall, so I can't check."))
+        assertNull(CallCheck.shouldCall("är lampan i hallen tänd?", more + "get_device", "Nej, hallampan är släckt."))
+        assertNull(CallCheck.shouldCall("boka tandläkaren på tisdag klockan nio", more + "timer"))
         // Run 6: goodnight done by hand, questions that changed lists, words in the other language.
         assertEquals("goodnight", CallCheck.rewrite(call("set_room", "room" to "all", "capability" to "onoff", "value" to "false"), "god natt", more, view)?.name)
         assertEquals("goodnight", CallCheck.rewrite(call("set_mood", "mood" to "Middag"), "good night", more, view)?.name)

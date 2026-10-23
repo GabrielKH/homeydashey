@@ -235,7 +235,8 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
             return pick
         }
         val own = file.music.map { it to NameMatch.score(query, it) }.maxByOrNull { it.second }
-        if (wanted == null && own != null && own.second >= OWN_IS_ENOUGH) return own.first.also { play(deviceId, it) }
+        // A clear match among the speaker's own favourites plays whatever kind was asked, as in the real home.
+        if (own != null && own.second >= OWN_IS_ENOUGH) return own.first.also { play(deviceId, it) }
         val found = file.spotify.filter { wanted == null || it.kind == wanted || (wanted in PODCASTS && it.kind in PODCASTS) }
             .map { it to maxOf(NameMatch.score(query, it.name), it.by?.let { b -> NameMatch.score(query, "${it.name} $b") } ?: 0.0, if (it.kind == "artist") NameMatch.score(query, it.name) else 0.0) }
             .filter { it.second > 0.5 }.maxByOrNull { it.second }?.first
@@ -244,7 +245,7 @@ class SimHouse(private val file: HouseFile, private val dir: File, http: OkHttpC
             play(deviceId, found.name)
             return found.name + (found.by?.let { " by $it" }.orEmpty())
         }
-        val loose = own?.takeIf { wanted == null && it.second > 0.5 }?.first ?: return null
+        val loose = own?.takeIf { it.second > 0.5 }?.first ?: return null
         play(deviceId, loose)
         return loose
     }
