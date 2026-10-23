@@ -11,7 +11,8 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 internal object CallCheck {
     /** Why [call] wasn't run, for the AI; a [soft] one runs when the AI asks for it again. */
-    data class Refusal(val text: String, val soft: Boolean = false)
+    /** [say] is what to tell the user (English, Swedish) if the AI still claims it was done. */
+    data class Refusal(val text: String, val soft: Boolean = false, val say: Pair<String, String>? = null)
 
     /** What to tell the AI instead of running [call] for [question], or null when it may run. */
     fun refuse(call: ToolCall, question: String, view: HomeView, tools: Collection<String> = emptyList(), before: String = ""): Refusal? {
@@ -67,8 +68,9 @@ internal object CallCheck {
             // "Dimma soffbordslampan" sent to the floor lamp: the lamp the user named is the one.
             if (call.name == "set_device") {
                 val target = view.device(str(call.arguments, "device"))
-                val named = view.devices.filter { d -> d.name.length >= 6 && sharesWord(folded, d.name.substringBefore(',')) && NameMatch.normalize(d.name).split(' ').any { it.length >= 6 } }
-                if (target != null && named.isNotEmpty() && named.none { it.alias == target.alias } && !sharesWord(folded, target.name)) {
+                val said = Translate.phrases(folded)
+                val named = view.devices.filter { d -> d.name.length >= 6 && sharesWord(said, d.name.substringBefore(',')) && NameMatch.normalize(d.name).split(' ').any { it.length >= 6 } }
+                if (target != null && named.isNotEmpty() && named.none { it.alias == target.alias } && !sharesWord(said, target.name)) {
                     return Refusal("Not done: the user named ${named.joinToString(" or ") { it.name }}, not ${target.name}. Use the one they named.")
                 }
             }
@@ -77,7 +79,10 @@ internal object CallCheck {
             val wanted = APPLIANCES.firstOrNull { it.words.containsMatchIn(NameMatch.normalize(q)) } ?: return null
             val target = view.device(str(call.arguments, "device"))
             if (target != null && !wanted.isIn(target) && view.devices.none { wanted.isIn(it) }) {
-                return Refusal("There is no ${wanted.name} in the home, so nothing was switched; ${target.name} is something else. Tell the user there's no ${wanted.name} you can reach.")
+                return Refusal(
+                    "There is no ${wanted.name} in the home, so nothing was switched; ${target.name} is something else. Tell the user there's no ${wanted.name} you can reach.",
+                    say = "There's no ${wanted.name} I can reach, so nothing was changed." to "Jag hittar ingen sådan apparat här, så inget ändrades.",
+                )
             }
         }
         return null
@@ -208,11 +213,17 @@ internal object CallCheck {
             }
             "change_todo" -> if (str(a, "item").isBlank() && str(a, "action").lowercase() !in setOf("clear")) {
                 // "Bocka av bilservice" with no item: the words after the tick-off.
-                val item = (TICK.find(folded)?.groupValues?.get(2)?.takeUnless { it.trim() in setOf("it", "den", "det", "") }
+                val item = (listOf("todo", "text", "name", "title", "task").map { str(a, it) }.firstOrNull { it.isNotBlank() }
+                    ?: TICK.find(folded)?.groupValues?.get(2)?.takeUnless { it.trim() in setOf("it", "den", "det", "") }
                     ?: DID.find(folded)?.groupValues?.get(4))?.trim()?.trim('?', '.', '!')
-                if (!item.isNullOrBlank()) return call.copy(arguments = with("item" to item, "action" to str(a, "action").ifBlank { "done" }))
+                val action = str(a, "action").lowercase().takeIf { it in setOf("done", "undo", "edit", "remove", "clear") } ?: "done"
+                if (!item.isNullOrBlank()) return call.copy(arguments = JsonObject(mapOf("item" to JsonPrimitive(item), "action" to JsonPrimitive(action))))
             }
-            "change_note" -> if (str(a, "note").isBlank()) {
+            "change_note" -> if (str(a, "action").isBlank() && REMOVE.containsMatchIn(folded) && str(a, "text").isBlank()) {
+                // "Ta bort lappen om blommorna" sent without an action: it is taken down, not edited.
+                val note = str(a, "note").ifBlank { listOf("text", "item", "name", "title").map { str(a, it) }.firstOrNull { it.isNotBlank() } ?: ABOUT.find(folded)?.groupValues?.get(2).orEmpty() }
+                if (note.isNotBlank()) return call.copy(arguments = JsonObject(mapOf("note" to JsonPrimitive(note), "action" to JsonPrimitive("remove"))))
+            } else if (str(a, "note").isBlank()) {
                 val note = listOf("text", "item", "name", "title").map { str(a, it) }.firstOrNull { it.isNotBlank() && str(a, "action") != "edit" } ?: ABOUT.find(folded)?.groupValues?.get(2)
                 if (!note.isNullOrBlank()) return call.copy(arguments = with("note" to note))
             }
@@ -374,9 +385,11 @@ internal object CallCheck {
             if (name !in tools) return null
             return call.copy(name = name, arguments = if (name == "set_device" && !a.containsKey("device")) JsonObject(a + ("device" to JsonPrimitive(call.name))) else a)
         }
-        val n = call.name.lowercase()
-        val close = tools.filter { it.startsWith(n) || (n.startsWith(it) && it.length >= 5) }
+        // "update_todo", "edit_note": the tools here change things with change_.
+        fun near(n: String) = tools.filter { it.startsWith(n) || (n.startsWith(it) && it.length >= 5) }
             .ifEmpty { tools.filter { it.length >= 5 && n.removePrefix("get_").removePrefix("read_").removePrefix("list_") == it } }
+        val n = call.name.lowercase()
+        val close = near(n).ifEmpty { near(n.replace(Regex("""^(update|edit|modify|mark|complete|tick)_"""), "change_")) }
         return close.singleOrNull()?.let { call.copy(name = it) }
     }
 
@@ -444,6 +457,7 @@ internal object CallCheck {
     private val GONE = Regex("""^(.+?) (ar slut|tog slut|is finished|is gone|has run out|ran out)|(?:druckit upp|atit upp|used up|finished) (.+)$""")
     private val DID = Regex("""^\s*(jag|vi|i|we) (har )?(?:bokat|fixat|gjort|ringt|betalat|bytt|skickat|booked|fixed|did|called|paid|changed|sent) (the |a )?(.+?)( and| och| tick| bocka|,|$)""")
     private val MODE_NAME = Regex("""[\p{L}]*(läge|läget|lägen|mode)(?![\p{L}])""", RegexOption.IGNORE_CASE)
+    private val REMOVE = Regex("""(^| )(ta bort|ta ner|plocka bort|slang|radera|remove|take down|take away|delete|get rid of)( |$)""")
     const val NO_LIGHTS = "Not done: the user didn't ask about the lights; leave them as they are and answer what they asked."
     const val FLOW_NOT_LOOK = "Not done: the user named a mode or flow, not a light look. If list_flows has one by that name, run it with run_flow; otherwise say there is none. Don't change the lights instead."
     private val BOUGHT = Regex("""(kopt|kopte|handlat|bought|got some|ny|nya|new)""")

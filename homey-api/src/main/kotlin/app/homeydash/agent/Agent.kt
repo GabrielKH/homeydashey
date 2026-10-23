@@ -265,6 +265,8 @@ class Agent(
             val skipped = mutableSetOf<String>()
             // A mood set the room: lamps and blinds the user didn't name are left as the mood made them.
             var moodSet = false
+            // What a refusal said to tell the user ("there's no dishwasher"), if the AI keeps claiming otherwise.
+            var refusedSay: Pair<String, String>? = null
             // What the user may be agreeing to: the question it asked just before, in a follow-up.
             // Short answers ("ja", "gör det") count too: the eval and quick replies don't always come as follow-ups.
             val lastAsked = if (!context.followUp && text.trim().split(Regex("\\s+")).size > 4) "" else history.lastOrNull()?.messages?.lastOrNull { it.role == "assistant" && !it.content.isNullOrBlank() }?.content.orEmpty()
@@ -357,6 +359,7 @@ class Agent(
                             heard.trace("guard", "Still claimed a change after the nudge; told the user nothing was done.", keepLocal)
                             remember(turn.take(1) + ChatMessage("assistant", nothingDone(text, settings)), localOnly)
                             actions += "The AI said it changed something, but no tool changed anything."
+                            refusedSay?.let { (en, sv) -> return AgentReply(if (swedish(text, settings)) sv else en, brain, actions = actions) }
                             return AgentReply(nothingDone(text, settings), brain, actions = actions, error = true)
                         }
                         // Set to one language but answered in the other, as the local AI does after a Swedish question.
@@ -424,6 +427,7 @@ class Agent(
                                 moodSet && call.name in SETS && call.name != "set_mood" && !CallCheck.names(text, target(call), homeView)
                             }
                         if (refused != null) {
+                            if (refused.say != null) refusedSay = refused.say
                             if (!refusedBefore.add(key)) refusedAgain = true
                             heard.trace("guard", "Skipped ${call.name} ${call.arguments}: ${refused.text}")
                             turn += ChatMessage.tool(asked.id, refused.text)

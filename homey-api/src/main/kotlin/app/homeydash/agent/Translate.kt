@@ -15,10 +15,24 @@ object Translate {
         "car" to "bil", "dentist" to "tandlakare", "grandma" to "mormor", "grandma" to "farmor", "package" to "paket",
         "parcel" to "paket", "bulb" to "glodlampa", "light" to "lampa", "cleaning" to "stad", "clean" to "stad",
         "laundry" to "tvatt", "dishes" to "disk", "shopping" to "handla", "key" to "nyckel", "keys" to "nycklar",
+        "sofa" to "soffa", "couch" to "soffa", "table" to "bord", "coffee table" to "soffbord", "floor" to "golv", "ceiling" to "tak",
+        "bed" to "sang", "lamp" to "lampa", "lamp" to "lampan", "kitchen" to "kok", "hall" to "hall", "hallway" to "hall", "bedroom" to "sovrum",
+        "living room" to "vardagsrum", "desk" to "skrivbord", "window" to "fonster", "night" to "natt", "spotlights" to "spotlights",
         "relax" to "lugn", "calm" to "lugn", "bright" to "ljus", "dark" to "mork", "kids" to "barn", "children" to "barn",
     )
     private val BOTH: Map<String, Set<String>> = (PAIRS + PAIRS.map { it.second to it.first })
         .groupBy({ it.first }, { it.second }).mapValues { it.value.toSet() }
+
+    /** English phrases Swedish writes as one word ("sofa table" is soffbord). */
+    private val PHRASES = listOf(
+        "sofa table" to "soffbord", "coffee table" to "soffbord", "living room" to "vardagsrum", "dining room" to "matsal",
+        "dining table" to "matbord", "night light" to "nattlampa", "bedside lamp" to "sanglampa", "bed lamp" to "sanglampa",
+        "floor lamp" to "golvlampa", "ceiling light" to "taklampa", "ceiling lamp" to "taklampa", "car service" to "bilservice",
+    )
+
+    /** [folded] with English phrases also written the Swedish way, so both are there to match. */
+    fun phrases(folded: String): String =
+        PHRASES.filter { (en, _) -> folded.contains(en) }.fold(folded) { acc, (en, sv) -> "$acc $sv" }.let { if (it == folded) folded else it }
 
     /** [word] (normalized) and what it is in the other language. */
     fun variants(word: String): Set<String> = setOf(word) + BOTH[word].orEmpty() +

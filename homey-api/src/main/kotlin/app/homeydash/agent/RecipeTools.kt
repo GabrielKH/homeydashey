@@ -132,7 +132,8 @@ class RecipeTools(
             r.ingredients.forEach { append("- ").append(it.section?.let { s -> "[$s] " } ?: "").append(it.text).append('\n') }
             append("Steps:\n")
             r.steps.forEachIndexed { i, s -> append(i + 1).append(". ").append(s.text).append('\n') }
-            if (r.notes.isNotBlank()) append("Notes: ").append(r.notes)
+            if (r.notes.isNotBlank()) append("Notes: ").append(r.notes).append('\n')
+            append("Asked what's needed: name every ingredient above, as written.")
         }.take(8000))
     }
 
