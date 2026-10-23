@@ -344,6 +344,29 @@
    ]
   },
   {
+   "id": "music_thing",
+   "about": "Something to listen to (not just a verb like 'sätt på')",
+   "edge": "word",
+   "words": [
+    "musik\\w*",
+    "music",
+    "lat",
+    "laten",
+    "latar",
+    "song",
+    "songs",
+    "radio\\w*",
+    "podd\\w*",
+    "podcast\\w*",
+    "album\\w*",
+    "playlist\\w*",
+    "spellist\\w*",
+    "\\w*jazz\\w*",
+    "spotify",
+    "p[1-4]"
+   ]
+  },
+  {
    "id": "volume",
    "about": "Louder, quieter, volume",
    "edge": "word",

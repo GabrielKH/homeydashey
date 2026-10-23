@@ -104,6 +104,29 @@ class ChatClient(http: OkHttpClient) {
         requireTool: Boolean = false,
         onText: (String) -> Unit,
     ): ChatMessage {
+        // "Inference was interrupted by a transient engine error": the local server was busy with
+        // something else (the skill tests); asked again after a moment, if nothing came yet.
+        var tries = 0
+        while (true) {
+            var fed = false
+            val feed: (String) -> Unit = { fed = true; onText(it) }
+            try {
+                return streamOnce(connection, messages, tools, requireTool, feed)
+            } catch (e: BrainException) {
+                if (fed || tries >= TRANSIENT_RETRIES || e.message?.contains("transient", ignoreCase = true) != true) throw e
+                tries++
+                kotlinx.coroutines.delay(TRANSIENT_WAIT_MS * tries)
+            }
+        }
+    }
+
+    private suspend fun streamOnce(
+        connection: Connection,
+        messages: List<ChatMessage>,
+        tools: List<ToolSpec>,
+        requireTool: Boolean,
+        onText: (String) -> Unit,
+    ): ChatMessage {
         if (requireTool && tools.isNotEmpty()) {
             try {
                 return sendStreaming(connection, messages, tools, requireTool = true, onText)
@@ -335,6 +358,8 @@ class ChatClient(http: OkHttpClient) {
     companion object {
         private val JSON = "application/json".toMediaType()
         private const val WARM_EVERY_MS = 5 * 60 * 1000L
+        private const val TRANSIENT_RETRIES = 2
+        private const val TRANSIENT_WAIT_MS = 1500L
         private val Lenient = Json { ignoreUnknownKeys = true; isLenient = true }
 
         private fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toInt()

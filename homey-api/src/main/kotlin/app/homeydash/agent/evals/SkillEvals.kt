@@ -140,11 +140,15 @@ class SkillEvals(
         options: EvalOptions,
         stop: () -> Boolean = { false },
         progress: (done: Int, total: Int, last: EvalResult) -> Unit = { _, _, _ -> },
+        /** Waits while someone uses the real assistant: the local AI can't answer both at once. */
+        waitTurn: suspend () -> Unit = {},
     ): EvalRun {
         val started = System.currentTimeMillis()
         val results = mutableListOf<EvalResult>()
         var stopped = false
         for ((i, p) in planned.withIndex()) {
+            if (stop()) { stopped = true; break }
+            waitTurn()
             if (stop()) { stopped = true; break }
             // A hiccup on the AI's server ("transient engine error") says nothing about the skill: asked once more.
             val result = runOne(brain, p, options).let { r -> if (serverHiccup(brain, r)) runOne(brain, p, options) else r }

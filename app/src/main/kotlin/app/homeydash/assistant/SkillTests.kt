@@ -130,10 +130,16 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
                         done = 0
                         total = planned.size
                         now = brain.provider.label
-                        val run = evals.run(brain, planned, options, stop = { stopping }) { d, _, r ->
+                        val run = evals.run(brain, planned, options, stop = { stopping }, progress = { d, _, r ->
                             done = d
                             now = "${brain.provider.label}: ${r.case} " + if (r.passed) "passed" else "failed"
-                        }
+                        }, waitTurn = {
+                            // Someone is talking to the assistant: the tests wait, so the real answer gets the AI to itself.
+                            if (brain.local) while (services.busy() && !stopping) {
+                                now = "Paused while the assistant is in use"
+                                kotlinx.coroutines.delay(1000)
+                            }
+                        })
                         val tested = planned.map { it.case.id }.toSet()
                         // Some skills only: the report compares them alone, and the saved run keeps the other skills' last results.
                         val before = if (pick.partial) previous?.copy(results = previous.results.filter { it.case in tested }) else previous

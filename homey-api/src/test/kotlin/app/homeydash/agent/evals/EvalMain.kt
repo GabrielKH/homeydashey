@@ -51,10 +51,10 @@ fun main() {
     val planned = evals.plan(files, options)
     println("Asking ${brain.provider.label} (${brain.model}) ${planned.size} questions…")
     val run = runBlocking {
-        evals.run(brain, planned, options) { done, total, r ->
+        evals.run(brain, planned, options, progress = { done, total, r ->
             println("[$done/$total] ${if (r.passed) "pass" else "FAIL"} ${r.case} \"${r.phrase}\" (${r.ms / 1000.0} s)" +
                 if (r.passed) "" else "\n    " + r.problems.joinToString("\n    "))
-        }
+        })
     }
     val previousFile = File(out, "last-${provider.name.lowercase()}.json")
     val previous = previousFile.takeIf { it.exists() }?.let { runCatching { EvalRun.parse(it.readText()) }.getOrNull() }

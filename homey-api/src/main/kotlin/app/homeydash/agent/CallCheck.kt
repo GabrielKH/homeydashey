@@ -56,6 +56,11 @@ internal object CallCheck {
                     "say so and ask, and don't change anything else.",
             )
         }
+        // "Släck i köket och sätt på lugn musik i vardagsrummet": the living room was only named for the music.
+        if (call.name in setOf("set_device", "set_room") && str(call.arguments, "capability") in setOf("onoff", "dim")) {
+            val room = if (call.name == "set_room") str(call.arguments, "room") else view.device(str(call.arguments, "device"))?.takeIf { it.deviceClass == "light" }?.room
+            if (room != null && onlyForMusic(folded, room)) return Refusal(NO_LIGHTS)
+        }
         if (call.name !in Agent.SETS) return null
         // "How warm is it outside?" then the heating turned up because it offered to: a question changes nothing.
         if (QUESTION.containsMatchIn(folded) && !ASKS_TO_CHANGE.containsMatchIn(q) && !ON_OFF.containsMatchIn(asked)) return Refusal(STATUS_ONLY)
@@ -63,7 +68,7 @@ internal object CallCheck {
         if (call.name in setOf("set_device", "set_room") && KITCHEN_TOPIC.containsMatchIn(folded) && !ON_OFF.containsMatchIn(asked.replace(CLOSE_THING, "")) && !LIGHT_LEVEL.containsMatchIn(asked) &&
             !LIGHT_WORDS.containsMatchIn(asked) && !MUSIC.containsMatchIn(asked) && !VOLUME.containsMatchIn(asked)) return Refusal(NO_LIGHTS)
         // "Stäng av musiken i köket": the music, not the kitchen lamps.
-        if (call.name in setOf("set_device", "set_room") && MUSIC.containsMatchIn(asked) && !LIGHT_WORDS.containsMatchIn(asked) && !LIGHT_LEVEL.containsMatchIn(asked) &&
+        if (call.name in setOf("set_device", "set_room") && musicAsked(asked) && !LIGHT_WORDS.containsMatchIn(asked) && !LIGHT_LEVEL.containsMatchIn(asked) &&
             str(call.arguments, "capability") in setOf("onoff", "dim") && (call.name == "set_room" || view.device(str(call.arguments, "device"))?.deviceClass == "light")) return Refusal(NO_LIGHTS)
         if (STATUS.containsMatchIn(q) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(STATUS_ONLY)
         if (call.name == "set_room" && allRooms(call.arguments) && turnsOn(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH, say = WHICH_SAY)
@@ -417,6 +422,19 @@ internal object CallCheck {
         }
         return null
     }
+
+    /** [room] is named in [folded] only in parts about music, none about the lights. */
+    private fun onlyForMusic(folded: String, room: String): Boolean {
+        val r = NameMatch.normalize(room).takeIf { it.length >= 3 } ?: return false
+        val stem = r.take(maxOf(3, r.length - 1))
+        val parts = folded.split(CLAUSE).filter { p -> p.split(' ').any { w -> w.startsWith(stem) } }
+        return parts.isNotEmpty() && parts.all { MUSIC_THING.containsMatchIn(it) && !LIGHT_WORDS.containsMatchIn(it) && !LIGHT_LEVEL.containsMatchIn(it) }
+    }
+    /** About music: something to listen to, or a music verb other than "sätt på" ("sätt på i vardagsrummet" is the lamps). */
+    private fun musicAsked(folded: String) = MUSIC_THING.containsMatchIn(folded) || MUSIC.containsMatchIn(folded.replace(TURN_ON, " "))
+    private val TURN_ON = Regex("""satt(a)? pa|starta|kor""")
+    private val CLAUSE = Regex(""" (och|and|samt|men|but) |[,;.]""")
+    private val MUSIC_THING get() = Cues.regex("music_thing")
 
     /**
      * The tool a question plainly needs, for when the AI answered without any: today's plans

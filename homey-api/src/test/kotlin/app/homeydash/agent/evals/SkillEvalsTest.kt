@@ -359,6 +359,11 @@ class SkillEvalsTest {
         assertEquals("notes", CallCheck.shouldCall("what's on my to-do list?", lists))
         assertEquals("close_recipe", CallCheck.shouldCall("vi är klara, stäng receptet", lists))
         assertEquals("read_recipe", CallCheck.shouldCall("vad behöver jag till pannkakorna?", lists))
+        // Real log 2026-10-23: the living room was named for the music, not its lamps; the kitchen lights still go off.
+        val both = "kan du släcka ljusen i köket och sätta på någon lugn skön musik i vardagsrummet?"
+        assertEquals(CallCheck.NO_LIGHTS, CallCheck.refuse(call("set_room", "room" to "Vardagsrum", "capability" to "onoff", "value" to "false"), both, view, more)?.text)
+        assertNull(CallCheck.refuse(call("set_room", "room" to "Kök", "capability" to "onoff", "value" to "false"), both, view, more))
+        assertNull(CallCheck.refuse(call("set_room", "room" to "Vardagsrum", "capability" to "onoff", "value" to "true"), "sätt på i vardagsrummet", view, more))
         // Run 12: a question about the temperature turns nothing up.
         assertEquals(CallCheck.STATUS_ONLY, CallCheck.refuse(call("set_device", "device" to "Termostat vardagsrum", "capability" to "target_temperature", "value" to "22"), "how warm is it outside?", view, more)?.text)
         // Run 6: goodnight done by hand, questions that changed lists, words in the other language.
