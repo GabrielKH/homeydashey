@@ -251,7 +251,7 @@ class SkillEvalsTest {
         val all = listOf("goodnight", "set_device", "play_music", "open_page", "open_recipe")
         assertEquals(CallCheck.USE_GOODNIGHT, CallCheck.refuse(allOn.copy(arguments = kotlinx.serialization.json.JsonObject(allOn.arguments + ("value" to JsonPrimitive("false")))), "god natt, vi går och lägger oss", view, all)?.text)
         assertEquals(CallCheck.RECIPES_ONLY, CallCheck.refuse(call("open_recipe", "recipe" to "Kycklinggryta"), "vad kan jag laga med kyckling?", view, all)?.text)
-        assertTrue(CallCheck.refuse(call("remove_from_fridge", "item" to "Yoghurt"), "mjölken är slut", view, all)!!.soft)
+        assertFalse(CallCheck.refuse(call("remove_from_fridge", "item" to "Yoghurt"), "mjölken är slut", view, all)!!.soft)
         assertNull(CallCheck.refuse(call("remove_from_fridge", "item" to "Mjölk"), "mjölken är slut", view, all))
         fun arg(c: app.homeydash.agent.ToolCall?, k: String) = (c?.arguments?.get(k) as? JsonPrimitive)?.content
         val sat = CallCheck.rewrite(call("calendar", "start_date" to "2026-10-29", "calendar" to "family"), "what are we doing on saturday?", all)
@@ -311,7 +311,7 @@ class SkillEvalsTest {
         assertEquals(CallCheck.FLOW_NOT_LOOK, CallCheck.refuse(call("set_scene", "room" to "all", "look" to "bright"), "kör städläget", view, more)?.text)
         assertTrue(CallCheck.refuse(call("set_mood", "mood" to "Filmkväll", "room" to "Vardagsrum"), "gör det mysigt i vardagsrummet", view, more)!!.soft)
         assertNull(CallCheck.refuse(call("set_mood", "mood" to "Filmkväll"), "dags för film i vardagsrummet", view, more))
-        assertTrue(CallCheck.refuse(call("update_fridge_item", "item" to "Yoghurt", "quantity" to "0"), "vi har druckit upp mjölken", view, more)!!.soft)
+        assertFalse(CallCheck.refuse(call("update_fridge_item", "item" to "Yoghurt", "quantity" to "0"), "vi har druckit upp mjölken", view, more)!!.soft)
         assertEquals("set_mood", CallCheck.rewrite(call("set_scene", "room" to "Vardagsrum", "look" to "movie"), "dags för film i vardagsrummet", more, view)?.name)
         assertEquals("onoff", arg(CallCheck.rewrite(call("set_room", "room" to "Vardagsrum", "capability" to "light", "value" to "true", "device_class" to "dim"), "mysbelysning i vardagsrummet", more, view), "capability"))
         val paused = CallCheck.rewrite(call("play_music", "player" to "Kök Sonos", "query" to "", "kind" to "pause"), "pause the music in the kitchen", more, view)
@@ -410,6 +410,20 @@ class SkillEvalsTest {
         assertEquals("done", arg(tick, "action"))
         assertEquals("remove", arg(CallCheck.rewrite(call("change_note", "note" to "blommorna"), "ta bort lappen om blommorna", more + "change_note", view), "action"))
         assertNotNull(CallCheck.refuse(call("set_device", "device" to "Kaffebryggare, Kök", "capability" to "onoff", "value" to "true"), "start the dishwasher", view, more)?.say)
+        // Run 10: what the last changes broke, and the rest.
+        val bedLamp = view.devices.first { it.name == "Sänglampa" }
+        assertNull(CallCheck.refuse(call("set_device", "device" to bedLamp.alias, "capability" to "onoff", "value" to "true"), "turn on the bedroom lamp", view, more))
+        assertNull(CallCheck.refuse(call("update_fridge_item", "item" to "Kycklingfilé", "place" to "freezer"), "lägg kycklingen i frysen", view, more))
+        assertFalse(CallCheck.refuse(call("remove_from_fridge", "item" to "Yoghurt"), "vi har druckit upp mjölken", view, more)!!.soft)
+        assertEquals("Kök Sonos", arg(CallCheck.rewrite(call("play_music"), "pausa musiken i köket", more, view), "device"))
+        assertEquals(CallCheck.NO_LIGHTS, CallCheck.refuse(call("set_device", "device" to "Taklampa kök", "capability" to "onoff", "value" to "false"), "stäng av musiken i köket", view, more)?.text)
+        assertEquals("pannkakor", arg(CallCheck.rewrite(call("read_recipe"), "vilka ingredienser är det i pannkakor?", more, view), "recipe"))
+        assertNull(arg(CallCheck.rewrite(call("add_to_fridge", "name" to "Ägg", "bought" to "now"), "jag har köpt ägg", more, view), "bought"))
+        val fc = CallCheck.renamed(call("get_fridge_contents", "device" to "Fridge", "capability" to "contents", "value" to ""), more)
+        assertEquals("fridge_contents", fc?.name)
+        assertNull(fc?.arguments?.get("capability"))
+        assertEquals("open_recipe", CallCheck.shouldCall("öppna lasagnen", more))
+        assertEquals("open_page", CallCheck.shouldCall("öppna kylskåpssidan", more))
         // Words live in the brain: built-in ones from cues.json, taught ones on top.
         assertNull(CallCheck.shouldCall("sovdags nu", more))
         app.homeydash.agent.Cues.useOwner(mapOf("goodnight" to listOf("sovdags")), listOf(listOf("tvättstugan", "laundry room")))

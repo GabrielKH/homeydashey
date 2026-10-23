@@ -263,6 +263,8 @@ class Agent(
             var toldToCall = false
             // Tools that ran this turn, so a needed one still missing after others is asked for.
             val ranTools = mutableSetOf<String>()
+            // Tools whose answer this turn was something (not "no recipe is open"), for spotting a rewrite already covered.
+            val workedTools = mutableSetOf<String>()
             // Calls skipped because what they became was done; skipped again counts as a repeat.
             val skipped = mutableSetOf<String>()
             // A mood set the room: lamps and blinds the user didn't name are left as the mood made them.
@@ -392,12 +394,14 @@ class Agent(
                         if (call == null) {
                             heard.trace("guard", "Skipped ${asked.name} ${asked.arguments}: the user only asked about lights.")
                             turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
+                            // The same skipped call again: it's going round in circles.
+                            if (!skipped.add("${asked.name} ${asked.arguments}")) repeats++
                             continue
                         }
                         var key = "${call.name} ${call.arguments}"
                         // Its call turned into one already done this turn (rooms one by one as the whole house,
                         // lamps as goodnight): the model didn't ask twice, so it's no repeat.
-                        if (call != real && (key in done || key in looked || (call.name != real.name && call.name in ranTools))) {
+                        if (call != real && (key in done || key in looked || (call.name != real.name && call.name in workedTools))) {
                             val realKey = "${real.name} ${real.arguments}"
                             if (real.name in LOOKS && realKey !in looked && real.name in names) {
                                 // The rewrite was tried already (no recipe "pancakes"); its own look-up may find more.
@@ -421,7 +425,8 @@ class Agent(
                             continue
                         }
                         val refused = (if (context.routine != null) null else CallCheck.refuse(call, text, homeView, names, lastAsked))
-                            ?.takeUnless { it.soft && !warned.add(key) }
+                            // A doubt gives way when asked again, unless something was already done for the question.
+                            ?.takeUnless { it.soft && !warned.add(key) && !changed }
                             ?: failedTarget?.takeIf { call.name in SETS && target(call) != it }?.let {
                                 CallCheck.Refusal("Not done: what the user asked for didn't respond, so nothing else is changed instead. Tell them it didn't respond.")
                             }
@@ -462,6 +467,7 @@ class Agent(
                             else -> true // Timers, pages, recipes and the fridge answer in their own words.
                         }
                         changed = changed || did
+                        if (!StepText.failed(result.text) && !NOTHING_FOUND.containsMatchIn(result.text)) workedTools += call.name
                         if (did && call.name == "set_mood" && !StepText.failed(result.text)) moodSet = true
                         if (call.name in LOOKS) looked[key] = result
                         if (call.name in SETS && seen == null) {
@@ -1135,6 +1141,7 @@ class Agent(
             (call.arguments[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
         }.orEmpty().lowercase()
 
+        private val NOTHING_FOUND = Regex("""^(No |There's no|There is no|I can't|Nothing|Couldn't)""")
         const val ALREADY_COVERED = "Already done by the call above; nothing more for this one."
         const val WAIT_FOR_ANSWER = "Not done: goodnight has asked; wait for the user's answer. Ask them to confirm and stop."
         const val AFTER_MOOD = "Not done: the mood already set the room the way its owner made it. Don't change other lamps, " +

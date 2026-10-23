@@ -47,17 +47,22 @@ internal object CallCheck {
         if (call.name == "remove_from_fridge" || call.name == "update_fridge_item") {
             val item = str(call.arguments, "item")
             val said = NameMatch.tokens(q).flatMap { Translate.variants(NameMatch.normalize(it)) }
-            val named = NameMatch.tokens(item).any { w -> said.any { NameMatch.sameWord(w, it) || (w.length >= 4 && it.contains(w)) } }
+            // "kycklingen" is Kycklingfilé: the same start counts as well as the same word.
+            val named = NameMatch.tokens(item).flatMap { Translate.variants(NameMatch.normalize(it)) }.any { w ->
+                said.any { NameMatch.sameWord(w, it) || (w.length >= 4 && it.contains(w)) || (w.length >= 6 && it.length >= 6 && w.take(6) == it.take(6)) }
+            }
             return if (named || item.isBlank()) null else Refusal(
-                "Not done: the user said \"$question\", which doesn't name $item. If they meant something else, find it with fridge_contents " +
-                    "and take that out; if $item is right after all, call it again.",
-                soft = true,
+                "Not done: the user said \"$question\", which doesn't name $item. Only change what they named; if it isn't in the list, " +
+                    "say so and ask, and don't change anything else.",
             )
         }
         if (call.name !in Agent.SETS) return null
         // "Vi är klara, stäng receptet": the kitchen lights aren't part of it.
         if (call.name in setOf("set_device", "set_room") && KITCHEN_TOPIC.containsMatchIn(folded) && !ON_OFF.containsMatchIn(asked.replace(CLOSE_THING, "")) && !LIGHT_LEVEL.containsMatchIn(asked) &&
             !LIGHT_WORDS.containsMatchIn(asked) && !MUSIC.containsMatchIn(asked) && !VOLUME.containsMatchIn(asked)) return Refusal(NO_LIGHTS)
+        // "Stäng av musiken i köket": the music, not the kitchen lamps.
+        if (call.name in setOf("set_device", "set_room") && MUSIC.containsMatchIn(asked) && !LIGHT_WORDS.containsMatchIn(asked) && !LIGHT_LEVEL.containsMatchIn(asked) &&
+            str(call.arguments, "capability") in setOf("onoff", "dim") && (call.name == "set_room" || view.device(str(call.arguments, "device"))?.deviceClass == "light")) return Refusal(NO_LIGHTS)
         if (STATUS.containsMatchIn(q) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(STATUS_ONLY)
         if (call.name == "set_room" && allRooms(call.arguments) && turnsOn(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH)
         if (call.name == "set_scene" && allRooms(call.arguments) && !ALL.containsMatchIn(q)) return Refusal(WHICH)
@@ -69,8 +74,12 @@ internal object CallCheck {
             if (call.name == "set_device") {
                 val target = view.device(str(call.arguments, "device"))
                 val said = Translate.phrases(folded)
-                val named = view.devices.filter { d -> d.name.length >= 6 && sharesWord(said, d.name.substringBefore(',')) && NameMatch.normalize(d.name).split(' ').any { it.length >= 6 } }
-                if (target != null && named.isNotEmpty() && named.none { it.alias == target.alias } && !sharesWord(said, target.name)) {
+                // Room words don't name a device ("bedroom lamp" isn't "Persienner sovrum"): only the rest of its name does.
+                val rooms = view.rooms.values.flatMap { NameMatch.normalize(it).split(' ') }.toSet()
+                fun own(name: String) = NameMatch.normalize(name.substringBefore(',')).split(' ').filter { it !in rooms && it.length >= 6 }.joinToString(" ")
+                val named = view.devices.filter { d -> own(d.name).isNotBlank() && sharesWord(said, own(d.name)) }
+                val inNamedRoom = target?.room?.let { names(question, it, view) } == true && named.none { it.room == target.room }
+                if (target != null && named.isNotEmpty() && named.none { it.alias == target.alias } && !sharesWord(said, target.name) && !inNamedRoom) {
                     return Refusal("Not done: the user named ${named.joinToString(" or ") { it.name }}, not ${target.name}. Use the one they named.")
                 }
             }
@@ -196,6 +205,7 @@ internal object CallCheck {
                 val key = "recipe"
                 val given = listOf("name", "title", "dish", "query", "recipe").filter { it != key }.map { str(a, it) }.firstOrNull { it.isNotBlank() }
                 if (str(a, key).isBlank() && given != null) return call.copy(arguments = JsonObject(mapOf(key to JsonPrimitive(given))))
+                if (call.name == "read_recipe" && str(a, key).isBlank() && INGREDIENTS.containsMatchIn(folded)) return call.copy(arguments = JsonObject(mapOf(key to JsonPrimitive(dish(folded)))))
                 if (call.name == "read_recipe" && INGREDIENTS.containsMatchIn(folded) && Regex("""(^| )(need|behover|for|till|ingredients|ingredienser)( |$)""").containsMatchIn(NameMatch.normalize(str(a, "recipe")))) {
                     // "need for the pancakes" as the recipe: the dish is what follows "for".
                     return call.copy(arguments = with("recipe" to dish(folded)))
@@ -227,7 +237,10 @@ internal object CallCheck {
                 val note = listOf("text", "item", "name", "title").map { str(a, it) }.firstOrNull { it.isNotBlank() && str(a, "action") != "edit" } ?: ABOUT.find(folded)?.groupValues?.get(2)
                 if (!note.isNullOrBlank()) return call.copy(arguments = with("note" to note))
             }
-            "add_to_fridge" -> if (MOVE.containsMatchIn(folded) && !BOUGHT.containsMatchIn(folded) && !ADD.containsMatchIn(folded) && "update_fridge_item" in tools) {
+            "add_to_fridge" -> if (a.entries.any { (k, v) -> k in DATE_KEYS && (v as? JsonPrimitive)?.content?.matches(ISO_DAY) == false }) {
+                // "bought": "now" isn't a date; left out, the tool takes today.
+                return call.copy(arguments = JsonObject(a.filterNot { (k, v) -> k in DATE_KEYS && (v as? JsonPrimitive)?.content?.matches(ISO_DAY) == false }))
+            } else if (MOVE.containsMatchIn(folded) && !BOUGHT.containsMatchIn(folded) && !ADD.containsMatchIn(folded) && "update_fridge_item" in tools) {
                 return call.copy(name = "update_fridge_item", arguments = JsonObject(mapOf("item" to JsonPrimitive(str(a, "name")), "place" to JsonPrimitive(str(a, "place").ifBlank { "freezer" }))))
             }
         }
@@ -247,7 +260,12 @@ internal object CallCheck {
                 // A pause sent as play_music's kind or as an empty query: the speaker is paused.
                 val kind = NameMatch.normalize(str(a, "kind"))
                 if ("set_device" in tools && (kind in setOf("pause", "stop", "paus") || (str(a, "query").isBlank() && PAUSE.containsMatchIn(folded)))) {
-                    return call.copy(name = "set_device", arguments = JsonObject(mapOf("device" to JsonPrimitive(str(a, "player").ifBlank { str(a, "device") }), "capability" to JsonPrimitive("speaker_playing"), "value" to JsonPrimitive("false"))))
+                    // No speaker given: the one in the room the user named.
+                    val player = str(a, "player").ifBlank { str(a, "device") }.ifBlank {
+                        view?.let { v -> v.rooms.values.firstOrNull { names(question, it, v) }?.let { speakerIn(v, it) } }.orEmpty()
+                    }
+                    if (player.isBlank()) return null
+                    return call.copy(name = "set_device", arguments = JsonObject(mapOf("device" to JsonPrimitive(player), "capability" to JsonPrimitive("speaker_playing"), "value" to JsonPrimitive("false"))))
                 }
                 // "morning jazz living room": the room is where to play, not what.
                 val query = str(a, "query")
@@ -380,17 +398,22 @@ internal object CallCheck {
     fun renamed(call: ToolCall, tools: Collection<String>): ToolCall? {
         if (call.name in tools || tools.isEmpty()) return null
         val a = call.arguments
+        // A name close to a tool first ("get_fridge_contents"; "update_todo" and "edit_note" are the change_ tools)…
+        fun near(n: String) = tools.filter { it.startsWith(n) || (n.startsWith(it) && it.length >= 5) }
+            .ifEmpty { tools.filter { it.length >= 5 && n.removePrefix("get_").removePrefix("read_").removePrefix("list_") == it } }
+        val n = call.name.lowercase()
+        near(n).ifEmpty { near(n.replace(Regex("""^(update|edit|modify|mark|complete|tick)_"""), "change_")) }.singleOrNull()?.let { name ->
+            // …without the device-style fields it was given on the way ("capability": "contents").
+            val kept = if (name in setOf("set_device", "set_room", "get_device")) a else JsonObject(a - setOf("capability", "value", "device"))
+            return call.copy(name = name, arguments = kept)
+        }
+        // A device's name as the tool ("player_1" with a capability): set it.
         if (a.containsKey("capability")) {
             val name = if (a.containsKey("device") || !a.containsKey("room")) "set_device" else "set_room"
             if (name !in tools) return null
             return call.copy(name = name, arguments = if (name == "set_device" && !a.containsKey("device")) JsonObject(a + ("device" to JsonPrimitive(call.name))) else a)
         }
-        // "update_todo", "edit_note": the tools here change things with change_.
-        fun near(n: String) = tools.filter { it.startsWith(n) || (n.startsWith(it) && it.length >= 5) }
-            .ifEmpty { tools.filter { it.length >= 5 && n.removePrefix("get_").removePrefix("read_").removePrefix("list_") == it } }
-        val n = call.name.lowercase()
-        val close = near(n).ifEmpty { near(n.replace(Regex("""^(update|edit|modify|mark|complete|tick)_"""), "change_")) }
-        return close.singleOrNull()?.let { call.copy(name = it) }
+        return null
     }
 
     /**
@@ -415,6 +438,7 @@ internal object CallCheck {
         "goodnight" to "goodnight",
         "run_flow" to "needs_run_flow",
         "open_page" to "needs_open_page",
+        "open_recipe" to "needs_open_recipe",
         "update_fridge_item" to "needs_update_fridge_item",
         "timer" to "needs_timer",
         "change_todo" to "needs_change_todo",
@@ -458,6 +482,8 @@ internal object CallCheck {
     private val DID = Regex("""^\s*(jag|vi|i|we) (har )?(?:bokat|fixat|gjort|ringt|betalat|bytt|skickat|booked|fixed|did|called|paid|changed|sent) (the |a )?(.+?)( and| och| tick| bocka|,|$)""")
     private val MODE_NAME = Regex("""[\p{L}]*(läge|läget|lägen|mode)(?![\p{L}])""", RegexOption.IGNORE_CASE)
     private val REMOVE get() = Cues.regex("remove")
+    private val DATE_KEYS = setOf("bought", "date", "expires", "best_before", "eat_by", "opened_on")
+    private val ISO_DAY = Regex("""\d{4}-\d{2}-\d{2}""")
     const val NO_LIGHTS = "Not done: the user didn't ask about the lights; leave them as they are and answer what they asked."
     const val FLOW_NOT_LOOK = "Not done: the user named a mode or flow, not a light look. If list_flows has one by that name, run it with run_flow; otherwise say there is none. Don't change the lights instead."
     private val BOUGHT get() = Cues.regex("bought")

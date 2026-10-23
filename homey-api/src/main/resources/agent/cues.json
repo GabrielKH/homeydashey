@@ -581,6 +581,11 @@
    "id": "needs_change_todo",
    "about": "Questions that need the change_todo tool",
    "pattern": "^\\s*(jag|vi) har (bokat|fixat|gjort|ringt|betalat|bytt|skickat|lamnat)|^\\s*bocka av|^\\s*(i|we) (booked|fixed|did|called|paid|changed|sent)|tick (it )?off"
+  },
+  {
+   "id": "needs_open_recipe",
+   "about": "Opening a recipe by its name",
+   "pattern": "^\\s*(oppna|visa|ta fram|open|show|pull up)( the| upp| mig| me)? (?!.*(sida|sidan|page|kylen|kylskapet|frysen|fridge|freezer|kalender|calendar|lapp|note|oversikt|overview|stamning|mood|recepten|recipes))\\S+"
   }
  ],
  "translations": [

@@ -1024,7 +1024,7 @@ class AgentTools(
         val where = CalendarBook.label(calendar, calendars, s)
         val said = CalendarBook.describe(event, today())
         return ToolResult(
-            "Not added yet: it waits for the user's yes. Ask only this, once, in the user's language, with the day in words: " +
+            "Not added yet: it waits for the user's yes. Ask only this, once, as a question ending in \"?\", in the user's language, with the day in words: " +
                 "add $said to $where? If they then change something, call add_event again with the change.",
             pending = PendingAction("Add $said to $where?", tapOnly = false) {
                 dashboard.addEvent(event)
