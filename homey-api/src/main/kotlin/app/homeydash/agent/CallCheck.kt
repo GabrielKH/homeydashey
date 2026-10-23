@@ -400,24 +400,24 @@ internal object CallCheck {
      */
     fun shouldCall(question: String, tools: Collection<String>): String? {
         val f = NameMatch.normalize(question)
-        return MUST_CALL.firstOrNull { (tool, words) -> tool in tools && words.containsMatchIn(f) }?.first
+        return MUST_CALL.firstOrNull { (tool, cue) -> tool in tools && Cues.regex(cue).containsMatchIn(f) }?.first
     }
 
-    private val GOODNIGHT = Regex("""(^| )(godnatt|god natt|good night|goodnight|nu gar vi och lagger oss|vi gar och lagger oss|jag gar och lagger mig|dags att sova|going to bed|bedtime)( |$)""")
+    private val GOODNIGHT get() = Cues.regex("goodnight")
+    /** Which tool each kind of question needs; the words are cues in the brain ([Cues]). */
     private val MUST_CALL = listOf(
-        "read_recipe" to Regex("""(vad behover (jag|vi) (till|for|att gora)|vilka ingredienser|what do (i|we) need (for|to make)|ingredients)"""),
-        "calendar" to Regex("""^\s*(vad (hander|har (vi|jag)|ska (vi|jag)|gor (vi|jag))|what( s| is)? on|whats on|what (are|am) (we|i) doing|what do (we|i) have)( pa| on| i)? .*(idag|i dag|imorgon|i morgon|ikvall|today|tomorrow|tonight|helg|weekend|mandag|tisdag|onsdag|torsdag|fredag|lordag|sondag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"""),
-        "fridge_contents" to Regex("""(vad (finns|har vi) i (kylen|kylskapet|frysen|skafferiet)|what( s| is)? in the (fridge|freezer)|vad gar ut|vad maste vi ata|vad ska vi ata upp|what (goes off|expires)|going off|go off|about to expire|expiring|use up first)"""),
-        "add_to_fridge" to Regex("""^\s*(jag|vi) har (kopt|handlat)|^\s*(i|we) (bought|got) """),
-        "remove_from_fridge" to Regex("""(ar slut|har druckit upp|har atit upp|is finished|ran out of|(we re|we are) out of)"""),
-        "write_note" to Regex("""(lamna ett meddelande|lamna en lapp|skriv en lapp|satt upp en lapp|leave a (note|message)|put up a note)"""),
-        "goodnight" to GOODNIGHT,
-        "run_flow" to Regex("""(^| )(flow|flowet|flodet|flode|flows)( |$)"""),
-        "open_page" to Regex("""^\s*(oppna|visa|ga till|open|show|go to)( the)? \S*(sida|sidan|sidor|page|kylen|kylskapet|kalendern|recepten|lapparna|oversikten)"""),
-        "add_to_fridge" to Regex("""^\s*(lagg till|lagg in|add) .*(i|in|to|into)( the)? (kylen|kylskapet|frysen|skafferiet|fridge|freezer|pantry)"""),
-        "update_fridge_item" to Regex("""(lagg|lagger|flytta|flyttar|stoppa|stoppat|lagt|flyttat|put|move|moved) .*(i|in|to|into)( the)? (frysen|freezer|kylen|fridge|skafferiet|pantry)"""),
-        "timer" to Regex("""(hur lang tid (ar det |har (jag|vi) )?kvar|hur mycket tid (ar det )?kvar|how (much time|long)( is| s)? left|time left)"""),
-        "change_todo" to Regex("""^\s*(jag|vi) har (bokat|fixat|gjort|ringt|betalat|bytt|skickat|lamnat)|^\s*bocka av|^\s*(i|we) (booked|fixed|did|called|paid|changed|sent)|tick (it )?off"""),
+        "read_recipe" to "needs_read_recipe",
+        "calendar" to "needs_calendar",
+        "fridge_contents" to "needs_fridge_contents",
+        "add_to_fridge" to "needs_add_to_fridge",
+        "remove_from_fridge" to "needs_remove_from_fridge",
+        "write_note" to "needs_write_note",
+        "goodnight" to "goodnight",
+        "run_flow" to "needs_run_flow",
+        "open_page" to "needs_open_page",
+        "update_fridge_item" to "needs_update_fridge_item",
+        "timer" to "needs_timer",
+        "change_todo" to "needs_change_todo",
     )
 
     /** [query] without the room it was to play in ("morning jazz living room", "jazz i köket"). */
@@ -440,37 +440,37 @@ internal object CallCheck {
         folded.substring((pattern.find(folded)?.range?.last ?: -1) + 1).trim().replace(Regex("""^(the|a|an|en|ett)\s+"""), "").trim('?', '.', '!', ' ')
 
     private val LIST_CHANGES = setOf("add_todo", "change_todo", "write_note", "change_note", "add_to_fridge", "update_fridge_item", "remove_from_fridge")
-    private val QUESTION = Regex("""^\s*(vad|vilka|vilken|vilket|hur|nar|var|finns|har (vi|jag) nagon|what|which|how|when|where|is there|do (we|i) have)( |$)""")
-    private val COOK = Regex("""(recept|recipe|laga|lagar|koka|baka|cook|bake|make|gora|steg|step)""")
-    private val MOOD_WORD = Regex("""(^| )(mood|moods|stamning|stamningen|stamningar)( |$)""")
-    private val BLINDS = Regex("""(persienn|gardin|rullgardin|markis|blind|curtain|shade|cover|morkt|morklagg|dark|godnatt|god natt|good ?night|sova|sleep|lagga oss|lagger oss|lagger mig)""")
-    private val DONE_TODO = Regex("""^\s*(jag|vi) har (bokat|fixat|gjort|ringt|betalat|bytt|skickat|lamnat|kopt)|^\s*(i|we) (booked|fixed|did|called|paid|changed|sent)|(bocka av|tick (it )?off|klart|done)""")
+    private val QUESTION get() = Cues.regex("question")
+    private val COOK get() = Cues.regex("cook")
+    private val MOOD_WORD get() = Cues.regex("mood_word")
+    private val BLINDS get() = Cues.regex("blinds")
+    private val DONE_TODO get() = Cues.regex("done_todo")
     private val CLOCK = Regex("""(klockan|kl |\d{1,2}[:.]\d{2}|at \d|o clock|pm|am)""")
     private val ABOUT = Regex("""(om|about|med|with|that says|som det star) (.+?)$""")
-    private val MOVE = Regex("""(lagg|lagger|flytta|flyttar|stoppa|stoppat|lagt|flyttat|put|move|moved) .*(i|in|to|into)( the)? (frysen|freezer|kylen|fridge|skafferiet|pantry)""")
-    private val ADD = Regex("""(^| )(lagg till|lagger till|lagg in|add|adding)( |$)""")
+    private val MOVE get() = Cues.regex("move")
+    private val ADD get() = Cues.regex("add")
     private val TICK = Regex("""(bocka av|kryssa av|stryk|tick off|check off|cross off|mark) (.+?)( som klar| as done| done)?$""")
-    private val MODE_WORD = Regex("""\S(lage|laget|lagen)( |$)|(^| )(lage|laget|mode|flow|flowet|flodet|rutin|rutinen|routine)( |$)""")
-    private val LIGHT_WORDS = Regex("""(lamp|ljus|belysning|light|lights|lighting|taklamp|spotlight)""")
+    private val MODE_WORD get() = Cues.regex("mode_word")
+    private val LIGHT_WORDS get() = Cues.regex("light_words")
     private val CLOSE_THING = Regex("""(stang|stanga|stang av|close|turn off|switch off|slack) (the )?\S*(recept|recipe|timer)\S*""")
-    private val KITCHEN_TOPIC = Regex("""(recept|recipe|timer|timern|lapp|note|kylen|fridge|frysen|freezer|att gora|to do|to-do|todo)""")
+    private val KITCHEN_TOPIC get() = Cues.regex("kitchen_topic")
     private val GONE = Regex("""^(.+?) (ar slut|tog slut|is finished|is gone|has run out|ran out)|(?:druckit upp|atit upp|used up|finished) (.+)$""")
     private val DID = Regex("""^\s*(jag|vi|i|we) (har )?(?:bokat|fixat|gjort|ringt|betalat|bytt|skickat|booked|fixed|did|called|paid|changed|sent) (the |a )?(.+?)( and| och| tick| bocka|,|$)""")
     private val MODE_NAME = Regex("""[\p{L}]*(läge|läget|lägen|mode)(?![\p{L}])""", RegexOption.IGNORE_CASE)
-    private val REMOVE = Regex("""(^| )(ta bort|ta ner|plocka bort|slang|radera|remove|take down|take away|delete|get rid of)( |$)""")
+    private val REMOVE get() = Cues.regex("remove")
     const val NO_LIGHTS = "Not done: the user didn't ask about the lights; leave them as they are and answer what they asked."
     const val FLOW_NOT_LOOK = "Not done: the user named a mode or flow, not a light look. If list_flows has one by that name, run it with run_flow; otherwise say there is none. Don't change the lights instead."
-    private val BOUGHT = Regex("""(kopt|kopte|handlat|bought|got some|ny|nya|new)""")
-    private val FINISHED = Regex("""(ar slut|slut pa|har druckit upp|har atit upp|druckit upp|atit upp|is finished|ran out|out of|used up|finished|anvant upp|kastat|threw|thrown)""")
+    private val BOUGHT get() = Cues.regex("bought")
+    private val FINISHED get() = Cues.regex("finished")
     private val FRIDGE_NAMES = setOf("fridge", "freezer", "kyl", "kylen", "kylskap", "kylskapet", "frys", "frysen", "pantry", "skafferi", "skafferiet")
     private val PLACES = setOf("fridge", "freezer", "pantry", "kyl", "kylen", "kylskap", "kylskapet", "frys", "frysen", "skafferi", "skafferiet")
     const val JUST_ASKED = "Not done: the user only asked a question; nothing on the lists was changed. Answer it from what you looked up."
     private val ROOM_WORDS = listOf("living room", "kitchen", "bedroom", "hallway", "hall", "bathroom", "office", "dining room", "kids room")
     private val SWITCH_NAMES = setOf("light", "lights", "on", "power", "switch", "lamp", "state", "onoff_light")
-    private val PAUSE = Regex("""(^| )(pausa|paus|stoppa|stang av musiken|pause|stop)( |$)""")
-    private val INGREDIENTS = Regex("""(vad behover (jag|vi) (till|for|att gora)|vilka ingredienser|ingredienserna|what do (i|we) need (for|to make)|ingredients)""")
+    private val PAUSE get() = Cues.regex("pause")
+    private val INGREDIENTS get() = Cues.regex("ingredients")
     private val WITH = Regex("""(med|with|av|using) (.+?)[?.!]*$""")
-    private val SOON = Regex("""(gar ut|snart|forst|idag|i dag|imorgon|gammal|gamla|bast fore|datum|expire|expiring|soon|first|old|today|tomorrow|going off|use up|ata upp)""")
+    private val SOON get() = Cues.regex("soon")
     private val ME = Regex("""(^| )(jag|mig|min|mitt|mina|me|my|mine|myself)( |$)|(^| )i (need|have|must|should|want|ll|will|gotta)( |$)""")
 
     /**
@@ -527,7 +527,7 @@ internal object CallCheck {
     // Errands only a person can run ("kan du hämta barnen idag?"), so they are to someone in the room.
     private val ERRAND = Regex("""^\s*(och |men )?(kan|kommer|ska|orkar) du (hamta|kopa|handla|diska|ga ut med|ga och|lamna|skjutsa|mata)|^\s*(and |but )?(can|could|will|would) you (pick up|buy|grab|walk|take out the|take the kids|feed|do the dishes|drop off|go and)""")
 
-    private val ENDEARMENT = Regex("""(^| )(alskling|alsklingen|gubben|gumman|hjartat|sotnos|raring|honey|darling|babe|sweetie|sweetheart)( |$)""")
+    private val ENDEARMENT get() = Cues.regex("endearment")
 
     private val DAY = Regex(
         """(?<![\p{L}])((nästa|next)\s+)?(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|""" +
@@ -537,8 +537,8 @@ internal object CallCheck {
     private val FAMILY = Regex("""famil""")
     private val SWITCH_WORDS = setOf("true", "false", "on", "off", "pause", "play", "stop", "1", "0", "yes", "no")
     /** "Två minuter till på pastan", "two more minutes", "lägg till två minuter", "förläng". */
-    private val MORE_TIME = Regex("""(minut\w* till|min till|minuter? extra|lagg till|forlang|more minutes?|minutes? more|extra minutes?|add \w+ minutes?|extend)""")
-    private val SHOW_FRIDGE = Regex("""^\s*(visa|oppna|ta fram|show|open|pull up)( mig| me)? (kylen|kylskapet|frysen|skafferiet|the fridge|the freezer|the pantry|fridge|freezer)\s*$""")
+    private val MORE_TIME get() = Cues.regex("more_time")
+    private val SHOW_FRIDGE get() = Cues.regex("show_fridge")
     /** "Vi måste…", "we need to…": for everyone, not only the one who said it. */
     private val WE = Regex("""^\s*(vi (maste|behover|ska)|we (need|have|must|should))""")
     const val NOT_GOODNIGHT = "Not done: the user didn't say goodnight. Do just what they asked with set_room or set_device."
@@ -546,13 +546,13 @@ internal object CallCheck {
     const val NO_MUSIC = "Not done: the user didn't ask for music; leave the speakers as they are."
     private val RECIPE_ACTIONS = setOf("open_recipe", "recipe_step", "recipe_timers")
     /** "Vad kan jag laga med kyckling?", "har vi något recept med…", "what can I cook with…": names, not cooking. */
-    private val WHICH_RECIPES = Regex("""^\s*(vad kan (jag|vi) (laga|gora|koka)|har vi (nagot|nagra) recept|finns det (nagot|nagra) recept|what can (i|we) (cook|make)|do we have (a|any) recipes?|any recipes)""")
-    private val SHOW = Regex("""(^| )(oppna|visa|ga till|ta fram|ta upp|byt till|open|show|go to|take me|pull up|bring up|switch to)( |$)""")
-    private val MUSIC = Regex("""(^| )(spela|spelar|musik|musiken|lat|laten|latar|radio|radion|podd|podden|podcast|album|albumet|lyssna|hora|satt pa|starta|kor|play|music|song|songs|listen|hear|put on|spotify|playlist|spellista|jazz|rock|pop|klassiskt?|p[1-4]|pausa|pause|stoppa|stop|nasta|next|skip)( |$)""")
-    private val VOLUME = Regex("""(^| )(hogre|lagre|hoj|hoja|sank|sanka|volym|volymen|tystare|starkare|louder|quieter|softer|volume|turn (it |the music )?(up|down)|turn .* (up|down)|(speaker|sonos|music|musiken|hogtalaren?) (up|down|upp|ner)|skruva (upp|ner)|mute|tyst|ljudet|\d+ ?%|procent|percent)( |$)""")
-    private val HEAT = Regex("""(grader|grad|varm|varmare|kall|kallare|temperatur|varme|element|termostat|degrees?|warm|warmer|cold|colder|heat|heating|thermostat)""")
-    private val LIGHT_LEVEL = Regex("""(dimma|dampa|dim|ljusare|morkare|starkare|svagare|procent|%|farg|color|colour|varm|kall|warm|cool|mys|cozy|cosy|film|movie|las|reading|natt|night|bright|dark|half|halv|lite ljus|stamning|mood|scen)""")
-    private val ON_OFF = Regex("""(^| )(tand|tanda|slack|slacka|satt pa|stang av|stang|knapp|turn on|turn off|switch on|switch off|lights? (on|off))( |$)""")
+    private val WHICH_RECIPES get() = Cues.regex("which_recipes")
+    private val SHOW get() = Cues.regex("show")
+    private val MUSIC get() = Cues.regex("music")
+    private val VOLUME get() = Cues.regex("volume")
+    private val HEAT get() = Cues.regex("heat")
+    private val LIGHT_LEVEL get() = Cues.regex("light_level")
+    private val ON_OFF get() = Cues.regex("on_off")
     private val LIGHT_LOOKS = setOf("dim", "light_temperature", "light_hue", "light_saturation", "light_mode")
     /** "Tänd lampan", "turn on the light": one lamp, none named. */
     private val GENERIC_LAMP = Regex("""\s*(nova |tars )?(kan du |could you |can you )?(tand|tanda|turn on|switch on|slack|slacka|turn off|switch off) (lampan|ljuset|the light|the lamp|light|lamp)( (pa|tack|please))?\s*[?.!]?\s*""")

@@ -410,6 +410,13 @@ class SkillEvalsTest {
         assertEquals("done", arg(tick, "action"))
         assertEquals("remove", arg(CallCheck.rewrite(call("change_note", "note" to "blommorna"), "ta bort lappen om blommorna", more + "change_note", view), "action"))
         assertNotNull(CallCheck.refuse(call("set_device", "device" to "Kaffebryggare, Kök", "capability" to "onoff", "value" to "true"), "start the dishwasher", view, more)?.say)
+        // Words live in the brain: built-in ones from cues.json, taught ones on top.
+        assertNull(CallCheck.shouldCall("sovdags nu", more))
+        app.homeydash.agent.Cues.useOwner(mapOf("goodnight" to listOf("sovdags")), listOf(listOf("tvättstugan", "laundry room")))
+        assertEquals("goodnight", CallCheck.shouldCall("sovdags nu", more))
+        assertTrue(app.homeydash.agent.Translate.variants("tvattstugan").contains("laundry room"))
+        app.homeydash.agent.Cues.useOwner(emptyMap())
+        assertNull(CallCheck.shouldCall("sovdags nu", more))
         val gabriel = HomeView.build(sim.zones, sim.devices, sim.moods, emptySet(), AgentSettings(people = mapOf("p-gabriel" to "Gabriel"), asker = app.homeydash.agent.Asker("p-gabriel", "Gabriel")), local = true)
         assertNull(arg(CallCheck.rewrite(call("add_todo", "text" to "Change hallway bulb", "who" to "Gabriel"), "put change the hallway bulb on the to-do list", more, gabriel), "who"))
         assertEquals("Gabriel", arg(CallCheck.rewrite(call("add_todo", "text" to "Ring tandläkaren", "who" to "Gabriel"), "jag måste ringa tandläkaren", more, gabriel) ?: call("add_todo", "who" to "Gabriel"), "who"))

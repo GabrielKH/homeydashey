@@ -166,6 +166,21 @@ class KnowHowTest {
         assertEquals(1, reloaded.data.value.own.size)
     }
 
+    @Test fun `words taught by voice are kept in the book and forgotten by voice`() = runTest {
+        val book = KnowHowBook(folder.root)
+        val tools = KnowHowTools(book)
+        fun call(name: String, vararg a: Pair<String, String>) = ToolCall("t", name, kotlinx.serialization.json.JsonObject(a.associate { it.first to JsonPrimitive(it.second) }))
+        assertEquals("Remembered: sovdags now means goodnight.", tools.run(call("teach_words", "words" to "sovdags", "means" to "goodnight"))?.text)
+        assertTrue(tools.run(call("teach_words", "words" to "almanackan", "means" to "calendar"))!!.text.contains("calendar"))
+        tools.run(call("teach_words", "words" to "tvättstugan", "means" to "laundry room"))
+        val data = KnowHowBook(folder.root).apply { load() }.data.value
+        assertEquals(listOf("sovdags"), data.cues["goodnight"])
+        assertEquals(listOf("almanackan"), data.cues["needs_calendar"])
+        assertEquals(listOf(listOf("tvättstugan", "laundry room")), data.translations)
+        assertEquals("Forgot sovdags.", tools.run(call("forget_words", "words" to "sovdags"))?.text)
+        org.junit.Assert.assertNull(book.data.value.cues["goodnight"])
+    }
+
     @Test fun `memory facts the question names come without a cue word`() {
         val data = MemoryData(facts = listOf(
             Fact(subject = "Elise", relation = "is", obj = "Gabriel's sister", kind = FactKind.Said),

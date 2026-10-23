@@ -140,6 +140,8 @@ class Agent(
     ): AgentReply {
         asking = settings.asker
         guestAsking = settings.guest
+        // The words the owner taught ("sovdags" is goodnight) count in every check from here on.
+        knowHow?.data?.value.let { Cues.useOwner(it?.cues.orEmpty(), it?.translations.orEmpty()) }
         val heard = Watch(listener)
         // "Det där blev fel": marks the last answer for Claude to look at, and isn't a question itself.
         if (WrongAnswer.matches(text, settings.wakeName)) {
@@ -1182,7 +1184,7 @@ class Agent(
             "goodnight", "weather", "set_theme", "ask_internet", "recall", KnowHow.GUIDE,
         )
         /** Teaching and forgetting a topic's rules by voice. */
-        val KNOW_HOW_PACK = setOf("teach", "forget_rule")
+        val KNOW_HOW_PACK = setOf("teach", "forget_rule", "teach_words", "forget_words")
         val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + NOTE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK
         /** The guide tool, which every AI gets when topic know-how is on; the [Agent] answers it itself. */
         val GUIDE_SPEC = tool(KnowHow.GUIDE, "Get the rules and tools for one of the know-how topics listed in the rules, when the note doesn't have them.") {
@@ -1197,7 +1199,7 @@ class Agent(
         val RECIPE_WORDS = Regex("""$W(recept\w*|recipe\w*|laga\w*|cook\w*|baka\w*|middag|lunch|frukost|dinner|ingrediens\w*|ingredient\w*|steg|step|timers?)$E""", RegexOption.IGNORE_CASE)
         val NOTE_WORDS = Regex("""$W(lapp\w*|post-?it\w*|note\w*|anteckn\w*|todo\w*|to-?do\w*|att göra|att-göra|göra-?list\w*|uppgift\w*|bocka\w*|avbock\w*|tick\w*|task\w*|meddelande\w*|message|skriv upp|skriv en|write (a|it|that|down)|jot)$E""", RegexOption.IGNORE_CASE)
         val FRIDGE_WORDS = Regex("""$W(kyl\w*|frys\w*|skafferi\w*|fridge|freezer|pantry|köpt\w*|bought|åt|ate|slut|utgång\w*|bäst före|expir\w*|öppnat|opened|mat|food|hemma)$E""", RegexOption.IGNORE_CASE)
-        val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
+        val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|betyder|menar jag|i mean|means|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val REWARM_AFTER_MS = 5 * 60 * 1000L

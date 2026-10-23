@@ -1,0 +1,902 @@
+{
+ "about": "Words the assistant listens for, in Swedish and English. The rules that use them are in the app; words taught by voice are added on the tablet.",
+ "cues": [
+  {
+   "id": "goodnight",
+   "about": "Going to bed for the night",
+   "edge": "word",
+   "words": [
+    "godnatt",
+    "god natt",
+    "good night",
+    "goodnight",
+    "nu gar vi och lagger oss",
+    "vi gar och lagger oss",
+    "jag gar och lagger mig",
+    "dags att sova",
+    "going to bed",
+    "bedtime"
+   ]
+  },
+  {
+   "id": "cook",
+   "about": "Cooking or a recipe",
+   "edge": "part",
+   "words": [
+    "recept",
+    "recipe",
+    "laga",
+    "lagar",
+    "koka",
+    "baka",
+    "cook",
+    "bake",
+    "make",
+    "gora",
+    "steg",
+    "step"
+   ]
+  },
+  {
+   "id": "mood_word",
+   "about": "The word mood itself",
+   "edge": "word",
+   "words": [
+    "mood",
+    "moods",
+    "stamning",
+    "stamningen",
+    "stamningar"
+   ]
+  },
+  {
+   "id": "blinds",
+   "about": "Blinds, curtains and making it dark",
+   "edge": "part",
+   "words": [
+    "persienn",
+    "gardin",
+    "rullgardin",
+    "markis",
+    "blind",
+    "curtain",
+    "shade",
+    "cover",
+    "morkt",
+    "morklagg",
+    "dark",
+    "godnatt",
+    "god natt",
+    "good ?night",
+    "sova",
+    "sleep",
+    "lagga oss",
+    "lagger oss",
+    "lagger mig"
+   ]
+  },
+  {
+   "id": "move",
+   "about": "Moving food to the freezer, fridge or pantry",
+   "pattern": "(lagg|lagger|flytta|flyttar|stoppa|stoppat|lagt|flyttat|put|move|moved) .*(i|in|to|into)( the)? (frysen|freezer|kylen|fridge|skafferiet|pantry)"
+  },
+  {
+   "id": "add",
+   "about": "Adding something new",
+   "edge": "word",
+   "words": [
+    "lagg till",
+    "lagger till",
+    "lagg in",
+    "add",
+    "adding"
+   ]
+  },
+  {
+   "id": "mode_word",
+   "about": "A mode, flow or routine by name",
+   "pattern": "\\S(lage|laget|lagen)( |$)|(^| )(lage|laget|mode|flow|flowet|flodet|rutin|rutinen|routine)( |$)"
+  },
+  {
+   "id": "light_words",
+   "about": "Lamps and lights",
+   "edge": "part",
+   "words": [
+    "lamp",
+    "ljus",
+    "belysning",
+    "light",
+    "lights",
+    "lighting",
+    "taklamp",
+    "spotlight"
+   ]
+  },
+  {
+   "id": "kitchen_topic",
+   "about": "Recipes, timers, notes and the fridge",
+   "edge": "part",
+   "words": [
+    "recept",
+    "recipe",
+    "timer",
+    "timern",
+    "lapp",
+    "note",
+    "kylen",
+    "fridge",
+    "frysen",
+    "freezer",
+    "att gora",
+    "to do",
+    "to-do",
+    "todo"
+   ]
+  },
+  {
+   "id": "remove",
+   "about": "Taking something away",
+   "edge": "word",
+   "words": [
+    "ta bort",
+    "ta ner",
+    "plocka bort",
+    "slang",
+    "radera",
+    "remove",
+    "take down",
+    "take away",
+    "delete",
+    "get rid of"
+   ]
+  },
+  {
+   "id": "bought",
+   "about": "Just bought",
+   "edge": "part",
+   "words": [
+    "kopt",
+    "kopte",
+    "handlat",
+    "bought",
+    "got some",
+    "ny",
+    "nya",
+    "new"
+   ]
+  },
+  {
+   "id": "finished",
+   "about": "Food that is finished or used up",
+   "edge": "part",
+   "words": [
+    "ar slut",
+    "slut pa",
+    "har druckit upp",
+    "har atit upp",
+    "druckit upp",
+    "atit upp",
+    "is finished",
+    "ran out",
+    "out of",
+    "used up",
+    "finished",
+    "anvant upp",
+    "kastat",
+    "threw",
+    "thrown"
+   ]
+  },
+  {
+   "id": "pause",
+   "about": "Pausing or stopping music",
+   "edge": "word",
+   "words": [
+    "pausa",
+    "paus",
+    "stoppa",
+    "stang av musiken",
+    "pause",
+    "stop"
+   ]
+  },
+  {
+   "id": "ingredients",
+   "about": "What a dish needs",
+   "edge": "part",
+   "words": [
+    "vad behover (jag|vi) (till|for|att gora)",
+    "vilka ingredienser",
+    "ingredienserna",
+    "what do (i|we) need (for|to make)",
+    "ingredients"
+   ]
+  },
+  {
+   "id": "soon",
+   "about": "What goes off soon",
+   "edge": "part",
+   "words": [
+    "gar ut",
+    "snart",
+    "forst",
+    "idag",
+    "i dag",
+    "imorgon",
+    "gammal",
+    "gamla",
+    "bast fore",
+    "datum",
+    "expire",
+    "expiring",
+    "soon",
+    "first",
+    "old",
+    "today",
+    "tomorrow",
+    "going off",
+    "use up",
+    "ata upp"
+   ]
+  },
+  {
+   "id": "endearment",
+   "about": "Pet names said to someone in the room",
+   "edge": "word",
+   "words": [
+    "alskling",
+    "alsklingen",
+    "gubben",
+    "gumman",
+    "hjartat",
+    "sotnos",
+    "raring",
+    "honey",
+    "darling",
+    "babe",
+    "sweetie",
+    "sweetheart"
+   ]
+  },
+  {
+   "id": "more_time",
+   "about": "More time on a timer",
+   "edge": "part",
+   "words": [
+    "minut\\w* till",
+    "min till",
+    "minuter? extra",
+    "lagg till",
+    "forlang",
+    "more minutes?",
+    "minutes? more",
+    "extra minutes?",
+    "add \\w+ minutes?",
+    "extend"
+   ]
+  },
+  {
+   "id": "show",
+   "about": "Showing or opening something",
+   "edge": "word",
+   "words": [
+    "oppna",
+    "visa",
+    "ga till",
+    "ta fram",
+    "ta upp",
+    "byt till",
+    "open",
+    "show",
+    "go to",
+    "take me",
+    "pull up",
+    "bring up",
+    "switch to"
+   ]
+  },
+  {
+   "id": "music",
+   "about": "Music, radio and podcasts",
+   "edge": "word",
+   "words": [
+    "spela",
+    "spelar",
+    "musik",
+    "musiken",
+    "lat",
+    "laten",
+    "latar",
+    "radio",
+    "radion",
+    "podd",
+    "podden",
+    "podcast",
+    "album",
+    "albumet",
+    "lyssna",
+    "hora",
+    "satt pa",
+    "starta",
+    "kor",
+    "play",
+    "music",
+    "song",
+    "songs",
+    "listen",
+    "hear",
+    "put on",
+    "spotify",
+    "playlist",
+    "spellista",
+    "jazz",
+    "rock",
+    "pop",
+    "klassiskt?",
+    "p[1-4]",
+    "pausa",
+    "pause",
+    "stoppa",
+    "stop",
+    "nasta",
+    "next",
+    "skip"
+   ]
+  },
+  {
+   "id": "volume",
+   "about": "Louder, quieter, volume",
+   "edge": "word",
+   "words": [
+    "hogre",
+    "lagre",
+    "hoj",
+    "hoja",
+    "sank",
+    "sanka",
+    "volym",
+    "volymen",
+    "tystare",
+    "starkare",
+    "louder",
+    "quieter",
+    "softer",
+    "volume",
+    "turn (it |the music )?(up|down)",
+    "turn .* (up|down)",
+    "(speaker|sonos|music|musiken|hogtalaren?) (up|down|upp|ner)",
+    "skruva (upp|ner)",
+    "mute",
+    "tyst",
+    "ljudet",
+    "\\d+ ?%",
+    "procent",
+    "percent"
+   ]
+  },
+  {
+   "id": "heat",
+   "about": "Temperature and heating",
+   "edge": "part",
+   "words": [
+    "grader",
+    "grad",
+    "varm",
+    "varmare",
+    "kall",
+    "kallare",
+    "temperatur",
+    "varme",
+    "element",
+    "termostat",
+    "degrees?",
+    "warm",
+    "warmer",
+    "cold",
+    "colder",
+    "heat",
+    "heating",
+    "thermostat"
+   ]
+  },
+  {
+   "id": "light_level",
+   "about": "How the light looks (dim, warm, cozy)",
+   "edge": "part",
+   "words": [
+    "dimma",
+    "dampa",
+    "dim",
+    "ljusare",
+    "morkare",
+    "starkare",
+    "svagare",
+    "procent",
+    "%",
+    "farg",
+    "color",
+    "colour",
+    "varm",
+    "kall",
+    "warm",
+    "cool",
+    "mys",
+    "cozy",
+    "cosy",
+    "film",
+    "movie",
+    "las",
+    "reading",
+    "natt",
+    "night",
+    "bright",
+    "dark",
+    "half",
+    "halv",
+    "lite ljus",
+    "stamning",
+    "mood",
+    "scen"
+   ]
+  },
+  {
+   "id": "on_off",
+   "about": "Switching on or off",
+   "edge": "word",
+   "words": [
+    "tand",
+    "tanda",
+    "slack",
+    "slacka",
+    "satt pa",
+    "stang av",
+    "stang",
+    "knapp",
+    "turn on",
+    "turn off",
+    "switch on",
+    "switch off",
+    "lights? (on|off)"
+   ]
+  },
+  {
+   "id": "question",
+   "about": "A question, not a request",
+   "pattern": "^\\s*(vad|vilka|vilken|vilket|hur|nar|var|finns|har (vi|jag) nagon|what|which|how|when|where|is there|do (we|i) have)( |$)"
+  },
+  {
+   "id": "done_todo",
+   "about": "A to-do that was done",
+   "pattern": "^\\s*(jag|vi) har (bokat|fixat|gjort|ringt|betalat|bytt|skickat|lamnat|kopt)|^\\s*(i|we) (booked|fixed|did|called|paid|changed|sent)|(bocka av|tick (it )?off|klart|done)"
+  },
+  {
+   "id": "which_recipes",
+   "about": "Which recipes there are",
+   "pattern": "^\\s*(vad kan (jag|vi) (laga|gora|koka)|har vi (nagot|nagra) recept|finns det (nagot|nagra) recept|what can (i|we) (cook|make)|do we have (a|any) recipes?|any recipes)"
+  },
+  {
+   "id": "show_fridge",
+   "about": "Showing the fridge page",
+   "pattern": "^\\s*(visa|oppna|ta fram|show|open|pull up)( mig| me)? (kylen|kylskapet|frysen|skafferiet|the fridge|the freezer|the pantry|fridge|freezer)\\s*$"
+  },
+  {
+   "id": "needs_read_recipe",
+   "about": "Questions that need the read_recipe tool",
+   "edge": "part",
+   "words": [
+    "vad behover (jag|vi) (till|for|att gora)",
+    "vilka ingredienser",
+    "what do (i|we) need (for|to make)",
+    "ingredients"
+   ]
+  },
+  {
+   "id": "needs_calendar",
+   "about": "Questions that need the calendar tool",
+   "pattern": "^\\s*(vad (hander|har (vi|jag)|ska (vi|jag)|gor (vi|jag))|what( s| is)? on|whats on|what (are|am) (we|i) doing|what do (we|i) have)( pa| on| i)? .*(idag|i dag|imorgon|i morgon|ikvall|today|tomorrow|tonight|helg|weekend|mandag|tisdag|onsdag|torsdag|fredag|lordag|sondag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+  },
+  {
+   "id": "needs_fridge_contents",
+   "about": "Questions that need the fridge_contents tool",
+   "edge": "part",
+   "words": [
+    "vad (finns|har vi) i (kylen|kylskapet|frysen|skafferiet)",
+    "what( s| is)? in the (fridge|freezer)",
+    "vad gar ut",
+    "vad maste vi ata",
+    "vad ska vi ata upp",
+    "what (goes off|expires)",
+    "going off",
+    "go off",
+    "about to expire",
+    "expiring",
+    "use up first"
+   ]
+  },
+  {
+   "id": "needs_add_to_fridge",
+   "about": "Questions that need the add_to_fridge tool",
+   "pattern": "(?:^\\s*(jag|vi) har (kopt|handlat)|^\\s*(i|we) (bought|got) )|(?:^\\s*(lagg till|lagg in|add) .*(i|in|to|into)( the)? (kylen|kylskapet|frysen|skafferiet|fridge|freezer|pantry))"
+  },
+  {
+   "id": "needs_remove_from_fridge",
+   "about": "Questions that need the remove_from_fridge tool",
+   "edge": "part",
+   "words": [
+    "ar slut",
+    "har druckit upp",
+    "har atit upp",
+    "is finished",
+    "ran out of",
+    "(we re|we are) out of"
+   ]
+  },
+  {
+   "id": "needs_write_note",
+   "about": "Questions that need the write_note tool",
+   "edge": "part",
+   "words": [
+    "lamna ett meddelande",
+    "lamna en lapp",
+    "skriv en lapp",
+    "satt upp en lapp",
+    "leave a (note|message)",
+    "put up a note"
+   ]
+  },
+  {
+   "id": "needs_run_flow",
+   "about": "Questions that need the run_flow tool",
+   "edge": "word",
+   "words": [
+    "flow",
+    "flowet",
+    "flodet",
+    "flode",
+    "flows"
+   ]
+  },
+  {
+   "id": "needs_open_page",
+   "about": "Questions that need the open_page tool",
+   "pattern": "^\\s*(oppna|visa|ga till|open|show|go to)( the)? \\S*(sida|sidan|sidor|page|kylen|kylskapet|kalendern|recepten|lapparna|oversikten)"
+  },
+  {
+   "id": "needs_update_fridge_item",
+   "about": "Questions that need the update_fridge_item tool",
+   "pattern": "(lagg|lagger|flytta|flyttar|stoppa|stoppat|lagt|flyttat|put|move|moved) .*(i|in|to|into)( the)? (frysen|freezer|kylen|fridge|skafferiet|pantry)"
+  },
+  {
+   "id": "needs_timer",
+   "about": "Questions that need the timer tool",
+   "edge": "part",
+   "words": [
+    "hur lang tid (ar det |har (jag|vi) )?kvar",
+    "hur mycket tid (ar det )?kvar",
+    "how (much time|long)( is| s)? left",
+    "time left"
+   ]
+  },
+  {
+   "id": "needs_change_todo",
+   "about": "Questions that need the change_todo tool",
+   "pattern": "^\\s*(jag|vi) har (bokat|fixat|gjort|ringt|betalat|bytt|skickat|lamnat)|^\\s*bocka av|^\\s*(i|we) (booked|fixed|did|called|paid|changed|sent)|tick (it )?off"
+  }
+ ],
+ "translations": [
+  [
+   "flower",
+   "blomma"
+  ],
+  [
+   "flowers",
+   "blommor"
+  ],
+  [
+   "dinner",
+   "middag"
+  ],
+  [
+   "movie",
+   "film"
+  ],
+  [
+   "movies",
+   "film"
+  ],
+  [
+   "cozy",
+   "mys"
+  ],
+  [
+   "cosy",
+   "mys"
+  ],
+  [
+   "cozy",
+   "mysig"
+  ],
+  [
+   "cozy",
+   "mysigt"
+  ],
+  [
+   "night",
+   "natt"
+  ],
+  [
+   "evening",
+   "kvall"
+  ],
+  [
+   "morning",
+   "morgon"
+  ],
+  [
+   "party",
+   "fest"
+  ],
+  [
+   "reading",
+   "lasa"
+  ],
+  [
+   "read",
+   "las"
+  ],
+  [
+   "breakfast",
+   "frukost"
+  ],
+  [
+   "milk",
+   "mjolk"
+  ],
+  [
+   "egg",
+   "agg"
+  ],
+  [
+   "eggs",
+   "agg"
+  ],
+  [
+   "chicken",
+   "kyckling"
+  ],
+  [
+   "cheese",
+   "ost"
+  ],
+  [
+   "butter",
+   "smor"
+  ],
+  [
+   "bread",
+   "brod"
+  ],
+  [
+   "pancakes",
+   "pannkakor"
+  ],
+  [
+   "pancake",
+   "pannkaka"
+  ],
+  [
+   "yoghurt",
+   "yoghurt"
+  ],
+  [
+   "yogurt",
+   "yoghurt"
+  ],
+  [
+   "car",
+   "bil"
+  ],
+  [
+   "dentist",
+   "tandlakare"
+  ],
+  [
+   "grandma",
+   "mormor"
+  ],
+  [
+   "grandma",
+   "farmor"
+  ],
+  [
+   "package",
+   "paket"
+  ],
+  [
+   "parcel",
+   "paket"
+  ],
+  [
+   "bulb",
+   "glodlampa"
+  ],
+  [
+   "light",
+   "lampa"
+  ],
+  [
+   "cleaning",
+   "stad"
+  ],
+  [
+   "clean",
+   "stad"
+  ],
+  [
+   "laundry",
+   "tvatt"
+  ],
+  [
+   "dishes",
+   "disk"
+  ],
+  [
+   "shopping",
+   "handla"
+  ],
+  [
+   "key",
+   "nyckel"
+  ],
+  [
+   "keys",
+   "nycklar"
+  ],
+  [
+   "sofa",
+   "soffa"
+  ],
+  [
+   "couch",
+   "soffa"
+  ],
+  [
+   "table",
+   "bord"
+  ],
+  [
+   "coffee table",
+   "soffbord"
+  ],
+  [
+   "floor",
+   "golv"
+  ],
+  [
+   "ceiling",
+   "tak"
+  ],
+  [
+   "bed",
+   "sang"
+  ],
+  [
+   "lamp",
+   "lampa"
+  ],
+  [
+   "lamp",
+   "lampan"
+  ],
+  [
+   "kitchen",
+   "kok"
+  ],
+  [
+   "hall",
+   "hall"
+  ],
+  [
+   "hallway",
+   "hall"
+  ],
+  [
+   "bedroom",
+   "sovrum"
+  ],
+  [
+   "living room",
+   "vardagsrum"
+  ],
+  [
+   "desk",
+   "skrivbord"
+  ],
+  [
+   "window",
+   "fonster"
+  ],
+  [
+   "night",
+   "natt"
+  ],
+  [
+   "spotlights",
+   "spotlights"
+  ],
+  [
+   "relax",
+   "lugn"
+  ],
+  [
+   "calm",
+   "lugn"
+  ],
+  [
+   "bright",
+   "ljus"
+  ],
+  [
+   "dark",
+   "mork"
+  ],
+  [
+   "kids",
+   "barn"
+  ],
+  [
+   "children",
+   "barn"
+  ]
+ ],
+ "phrases": [
+  [
+   "sofa table",
+   "soffbord"
+  ],
+  [
+   "coffee table",
+   "soffbord"
+  ],
+  [
+   "living room",
+   "vardagsrum"
+  ],
+  [
+   "dining room",
+   "matsal"
+  ],
+  [
+   "dining table",
+   "matbord"
+  ],
+  [
+   "night light",
+   "nattlampa"
+  ],
+  [
+   "bedside lamp",
+   "sanglampa"
+  ],
+  [
+   "bed lamp",
+   "sanglampa"
+  ],
+  [
+   "floor lamp",
+   "golvlampa"
+  ],
+  [
+   "ceiling light",
+   "taklampa"
+  ],
+  [
+   "ceiling lamp",
+   "taklampa"
+  ],
+  [
+   "car service",
+   "bilservice"
+  ]
+ ]
+}
