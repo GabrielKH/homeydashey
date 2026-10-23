@@ -388,6 +388,21 @@ class Agent(
                             continue
                         }
                         val key = "${call.name} ${call.arguments}"
+                        // Its call turned into one already done this turn (rooms one by one as the whole house,
+                        // lamps as goodnight): the model didn't ask twice, so it's no repeat.
+                        if (call != real && (key in done || key in looked || (call.name != real.name && call.name in ranTools))) {
+                            heard.trace("guard", "Skipped ${real.name} ${real.arguments}: the call it became was already done.")
+                            turn += ChatMessage.tool(asked.id, ALREADY_COVERED)
+                            continue
+                        }
+                        // Goodnight asks the user first; its answer comes in their next words, not this turn.
+                        if (call.name == "goodnight" && "goodnight" in ranTools) {
+                            heard.trace("guard", "Skipped ${call.name} ${call.arguments}: goodnight already asked the user.")
+                            turn += ChatMessage.tool(asked.id, WAIT_FOR_ANSWER)
+                            // What it said beside the call ("say yes if that sounds right") is the answer.
+                            repeats = MAX_REPEATS
+                            continue
+                        }
                         val refused = (if (context.routine != null) null else CallCheck.refuse(call, text, homeView, names, lastAsked))
                             ?.takeUnless { it.soft && !warned.add(key) }
                             ?: failedTarget?.takeIf { call.name in SETS && target(call) != it }?.let {
@@ -458,6 +473,11 @@ class Agent(
                     if (repeats >= MAX_REPEATS) {
                         heard.trace("guard", "Kept asking for calls already done; stopped.")
                         remember(turn, localOnly)
+                        // It had its answer all along ("yes, rain tomorrow"), beside the repeated call.
+                        if (!answer.content.isNullOrBlank()) {
+                            live?.finish()
+                            return AgentReply(homeView.named(answer.content.orEmpty()), brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
+                        }
                         return AgentReply("Sorry, I got stuck going round in circles.", brain, pending, error = true, actions = actions)
                     }
                 }
@@ -1097,6 +1117,8 @@ class Agent(
             (call.arguments[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
         }.orEmpty().lowercase()
 
+        const val ALREADY_COVERED = "Already done by the call above; nothing more for this one."
+        const val WAIT_FOR_ANSWER = "Not done: goodnight has asked; wait for the user's answer. Ask them to confirm and stop."
         const val AFTER_MOOD = "Not done: the mood already set the room the way its owner made it. Don't change other lamps, " +
             "blinds or players unless the user named them; tell the user the mood is on."
         const val NUDGE_ENGLISH = "(From the app, not the user: the user set answers to English only. Say your last answer again in English, and nothing else.)"
