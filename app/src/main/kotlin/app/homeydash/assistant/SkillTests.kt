@@ -37,6 +37,11 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
         Full("Full", "Every case, every way of asking, three tries each. Takes an hour or more on the local AI."),
     }
 
+    /** What to test: all skills, the ones picked, or only the cases that failed last time. */
+    data class Pick(val skills: Set<String> = emptySet(), val failedOnly: Boolean = false) {
+        val partial get() = skills.isNotEmpty() || failedOnly
+    }
+
     /** Which brains to test. */
     enum class Which(val label: String) { Local("Local AI"), Internet("Internet AI"), Both("Both") }
 
@@ -68,11 +73,17 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
         }
     }
 
+    /** The skills there are tests for, in the order of the report. */
+    val skills: List<String> by lazy { runCatching { SkillCases.load().second.map { it.skill }.distinct() }.getOrDefault(emptyList()) }
+
     /** How many questions [size] asks each brain. */
-    fun count(size: Size): Int = runCatching {
+    fun count(size: Size, pick: Pick = Pick()): Int = runCatching {
         val (house, files) = SkillCases.load()
-        SkillEvals(services.chat, http, dir, house).plan(files, options(size)).size
+        SkillEvals(services.chat, http, dir, house).plan(files, options(size, pick, failed(last))).size
     }.getOrDefault(0)
+
+    /** The cases that failed in [runs]. */
+    private fun failed(runs: List<EvalRun>): Set<String> = runs.flatMap { r -> r.results.filter { !it.passed }.map { it.case } }.toSet()
 
     fun brains(which: Which): List<Connection> {
         val s = services.settings.value
@@ -85,12 +96,21 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
         }
     }
 
-    private fun options(size: Size) = when (size) {
-        Size.Quick -> EvalOptions(trials = 1, allPhrasings = false, only = setOf("smoke"), base = services.settings.value)
-        Size.Full -> EvalOptions(trials = 3, base = services.settings.value)
+    private fun options(size: Size, pick: Pick = Pick(), failed: Set<String> = emptySet()): EvalOptions {
+        // Picked skills or failed cases are asked in full; Quick then only means one way, once.
+        val only = when {
+            pick.failedOnly -> failed.filter { case -> pick.skills.isEmpty() || pick.skills.any { case.startsWith("$it.") } }.toSet().ifEmpty { setOf("-") }
+            pick.skills.isNotEmpty() -> pick.skills
+            size == Size.Quick -> setOf("smoke")
+            else -> emptySet()
+        }
+        return when (size) {
+            Size.Quick -> EvalOptions(trials = 1, allPhrasings = false, only = only, base = services.settings.value)
+            Size.Full -> EvalOptions(trials = 3, only = only, base = services.settings.value)
+        }
     }
 
-    fun start(size: Size, which: Which) {
+    fun start(size: Size, which: Which, pick: Pick = Pick()) {
         if (running) return
         val brains = brains(which).ifEmpty { status = "Set up the ${which.label.lowercase()} under AI and servers first."; return }
         stopping = false
@@ -101,9 +121,12 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
                 val runs = withContext(Dispatchers.IO) {
                     val (house, files) = SkillCases.load()
                     val evals = SkillEvals(services.chat, http, File(services.appContext.cacheDir, "evals"), house)
-                    val options = options(size)
-                    val planned = evals.plan(files, options)
-                    brains.map { brain ->
+                    brains.mapNotNull { brain ->
+                        val name = if (brain.local) "local" else "internet"
+                        val previous = File(dir, "last-$name.json").takeIf { it.exists() }?.let { runCatching { EvalRun.parse(it.readText()) }.getOrNull() }
+                        val options = options(size, pick, failed(listOfNotNull(previous)))
+                        val planned = evals.plan(files, options)
+                        if (planned.isEmpty()) return@mapNotNull null
                         done = 0
                         total = planned.size
                         now = brain.provider.label
@@ -111,16 +134,22 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
                             done = d
                             now = "${brain.provider.label}: ${r.case} " + if (r.passed) "passed" else "failed"
                         }
-                        val name = if (brain.local) "local" else "internet"
-                        val previous = File(dir, "last-$name.json").takeIf { it.exists() }?.let { runCatching { EvalRun.parse(it.readText()) }.getOrNull() }
+                        val tested = planned.map { it.case.id }.toSet()
+                        // Some skills only: the report compares them alone, and the saved run keeps the other skills' last results.
+                        val before = if (pick.partial) previous?.copy(results = previous.results.filter { it.case in tested }) else previous
+                        val kept = if (pick.partial && previous != null) run.copy(results = previous.results.filter { it.case !in tested } + run.results) else run
                         dir.mkdirs()
-                        File(dir, "last-$name.json").writeText(EvalRun.write(run))
-                        File(dir, "report-$name.md").writeText(EvalReport.markdown(run, previous, android.os.Build.MODEL))
-                        run to previous
+                        File(dir, "last-$name.json").writeText(EvalRun.write(kept))
+                        File(dir, "report-$name.md").writeText(EvalReport.markdown(run, before, android.os.Build.MODEL, only = scope(pick)))
+                        Triple(run, before, kept)
                     }
                 }
-                last = runs.map { it.first }.sortedBy { !it.local }
-                send(runs)
+                if (runs.isEmpty()) {
+                    status = if (pick.failedOnly) "Nothing failed last time, so there's nothing to test again." else "There's nothing to test."
+                    return@launch
+                }
+                last = (runs.map { it.third } + last.filter { l -> runs.none { it.third.local == l.local } }).sortedBy { !it.local }
+                send(runs.map { it.first to it.second }, scope(pick))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -139,7 +168,13 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
     /** Failed runs of the last tests, worst skills first, for the screen. */
     fun failures(run: EvalRun): List<EvalResult> = run.results.filter { !it.passed }
 
-    private suspend fun send(runs: List<Pair<EvalRun, EvalRun?>>) {
+    private fun scope(pick: Pick): String? = when {
+        pick.failedOnly -> "what failed last time" + if (pick.skills.isEmpty()) "" else " in " + pick.skills.joinToString()
+        pick.skills.isNotEmpty() -> pick.skills.joinToString()
+        else -> null
+    }
+
+    private suspend fun send(runs: List<Pair<EvalRun, EvalRun?>>, only: String? = null) {
         val s = services.settings.value
         if (s.logToken.isBlank()) {
             status = "Done. Add a GitHub token under Logs for Claude to send the reports."
@@ -147,7 +182,7 @@ class SkillTests(private val services: AssistantServices, private val http: OkHt
         }
         val github = GitHubLog(http, title = SkillEvals.ISSUE_TITLE, about = SkillEvals.ISSUE_ABOUT)
         status = try {
-            for ((run, previous) in runs) github.post(s.logToken, s.logRepo.trim().ifBlank { AgentLog.DEFAULT_REPO }, EvalReport.markdown(run, previous, android.os.Build.MODEL))
+            for ((run, previous) in runs) github.post(s.logToken, s.logRepo.trim().ifBlank { AgentLog.DEFAULT_REPO }, EvalReport.markdown(run, previous, android.os.Build.MODEL, only = only))
             "Done, and sent to the \"${SkillEvals.ISSUE_TITLE}\" issue on GitHub."
         } catch (e: java.io.IOException) {
             "Done, but ${e.message?.replaceFirstChar(Char::lowercase) ?: "it couldn't be sent to GitHub."}"

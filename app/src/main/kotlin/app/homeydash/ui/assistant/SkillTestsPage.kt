@@ -2,6 +2,8 @@ package app.homeydash.ui.assistant
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -26,13 +28,17 @@ import app.homeydash.ui.components.pressable
 import app.homeydash.ui.dashboard.SettingsBox
 import app.homeydash.ui.theme.GlassTheme
 
-/** Settings → Skill tests: run every skill test against the brains set up here, and see how each skill did. */
+/** Settings → Skill tests: run the skill tests (all, some skills, or what failed) against the brains set up here, and see how each skill did. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SkillTestsPage(services: AssistantServices) {
     val g = GlassTheme.colors
     val tests = services.skillTests
     var size by rememberSaveable { mutableStateOf(SkillTests.Size.Quick) }
     var which by rememberSaveable { mutableStateOf(SkillTests.Which.Local) }
+    var picked by remember { mutableStateOf(emptySet<String>()) }
+    var failedOnly by rememberSaveable { mutableStateOf(false) }
+    val pick = SkillTests.Pick(picked, failedOnly)
     Hint(
         "Asks the assistant every skill many ways, in Swedish and English, in a practice house, and checks what it did and said. " +
             "Nothing in your home is switched and nothing is remembered. The report goes to the \"Nova skill tests\" issue on GitHub " +
@@ -42,15 +48,39 @@ internal fun SkillTestsPage(services: AssistantServices) {
     )
     SettingsBox(null) {
         Segmented(SkillTests.Size.entries, size, { it.label }, enabled = !tests.running) { size = it }
-        val count = remember(size) { tests.count(size) }
-        Hint("${size.detail} $count questions per brain.")
+        Label("Skills")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("All", picked.isEmpty()) { if (!tests.running) picked = emptySet() }
+            for (skill in tests.skills) {
+                Chip(skill.replaceFirstChar(Char::uppercase), skill in picked) {
+                    if (!tests.running) picked = if (skill in picked) picked - skill else picked + skill
+                }
+            }
+        }
+        Chip("Only what failed last time", failedOnly) { if (!tests.running) failedOnly = !failedOnly }
+        val count = remember(size, picked, failedOnly, tests.last) { tests.count(size, pick) }
+        Hint(
+            when {
+                failedOnly -> "The cases that failed last time" + (if (picked.isEmpty()) "" else " in the picked skills") +
+                    if (size == SkillTests.Size.Quick) ", one way of asking, once." else ", every way of asking, three tries each."
+                picked.isNotEmpty() -> "Every case of the picked skills" +
+                    if (size == SkillTests.Size.Quick) ", one way of asking, once." else ", every way of asking, three tries each."
+                else -> size.detail
+            } + " $count questions per brain." + if (pick.partial) " The other skills keep their last results." else "",
+        )
         Segmented(SkillTests.Which.entries, which, { it.label }, enabled = !tests.running) { which = it }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                if (tests.running) "Stop" else "Test all skills",
+                when {
+                    tests.running -> "Stop"
+                    failedOnly -> "Test what failed"
+                    picked.size == 1 -> "Test ${picked.first()}"
+                    picked.isNotEmpty() -> "Test ${picked.size} skills"
+                    else -> "Test all skills"
+                },
                 style = MaterialTheme.typography.labelLarge,
                 color = g.fg,
-                modifier = Modifier.pressable({ if (tests.running) tests.stop() else tests.start(size, which) })
+                modifier = Modifier.pressable({ if (tests.running) tests.stop() else tests.start(size, which, pick) })
                     .glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
             )
             Text(

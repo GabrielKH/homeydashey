@@ -44,7 +44,7 @@ object EvalReport {
      * The run as Markdown: the totals, a table per skill with the change since [previous]
      * (the last run with the same brain), and every failure with what went wrong and the transcript.
      */
-    fun markdown(run: EvalRun, previous: EvalRun? = null, device: String? = null, zone: ZoneId = ZoneId.systemDefault()): String = buildString {
+    fun markdown(run: EvalRun, previous: EvalRun? = null, device: String? = null, zone: ZoneId = ZoneId.systemDefault(), only: String? = null): String = buildString {
         val time = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(zone)
         val all = total(run)
         val before = previous?.let { scores(it).associateBy { s -> s.skill } }
@@ -53,6 +53,7 @@ object EvalReport {
         append(" · ").append(time.format(Instant.ofEpochMilli(run.started)))
         device?.let { append(" · ").append(it) }
         if (run.answers.isNotBlank()) append(" · answers in ").append(run.answers)
+        only?.let { append(" · only ").append(it) }
         append("\n\n")
         append("**${pct(all.caseRate)} of cases passed every try** (${all.casesPassed}/${all.cases}, pass^${run.trials}) · ")
         append("${pct(all.runRate)} of runs passed (${all.runsPassed}/${all.runs})")
