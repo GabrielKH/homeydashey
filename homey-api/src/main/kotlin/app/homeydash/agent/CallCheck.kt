@@ -470,6 +470,10 @@ internal object CallCheck {
         // Another page the question doesn't name ("öppna lasagnen" as the fridge page) is the recipe too.
         val other = PAGE_WORDS.entries.firstOrNull { (k, _) -> page in k }?.value
         if (page !in setOf("recipes", "recipe", "recept", "recepten") && (other == null || other.containsMatchIn(folded))) return null
+        // "Vad behöver jag till pannkakorna?" as a page: the recipe's ingredients, read out.
+        if (INGREDIENTS.containsMatchIn(folded) && "read_recipe" in tools) return call.copy(name = "read_recipe", arguments = JsonObject(mapOf("recipe" to JsonPrimitive(dish(folded)))))
+        // Nothing asked to be shown or cooked ("berätta ett skämt"): no recipe made up from the words.
+        if (!SHOW.containsMatchIn(folded) && !COOK.containsMatchIn(folded)) return null
         val rest = folded.split(' ').filter { it.isNotBlank() && it !in OPEN_WORDS }.joinToString(" ")
         if (rest.isBlank()) return null
         return call.copy(name = "open_recipe", arguments = JsonObject(mapOf("recipe" to JsonPrimitive(rest))))

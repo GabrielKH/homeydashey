@@ -399,6 +399,8 @@ class SkillEvalsTest {
         assertEquals("car service", arg(CallCheck.rewrite(call("change_todo"), "I booked the car service, tick it off", more, view), "item"))
         assertEquals("3", arg(CallCheck.rewrite(call("fridge_contents"), "vad går ut snart?", more, view), "within_days"))
         assertEquals("fridge_contents", CallCheck.shouldCall("what's about to go off?", more))
+        assertEquals("read_recipe", CallCheck.recipeInstead(call("open_page", "page" to "fridge"), "vad behöver jag till pannkakorna?", more)?.name)
+        assertNull(CallCheck.recipeInstead(call("open_page", "page" to "notes"), "berätta ett skämt", more))
         val gabriel = HomeView.build(sim.zones, sim.devices, sim.moods, emptySet(), AgentSettings(people = mapOf("p-gabriel" to "Gabriel"), asker = app.homeydash.agent.Asker("p-gabriel", "Gabriel")), local = true)
         assertNull(arg(CallCheck.rewrite(call("add_todo", "text" to "Change hallway bulb", "who" to "Gabriel"), "put change the hallway bulb on the to-do list", more, gabriel), "who"))
         assertEquals("Gabriel", arg(CallCheck.rewrite(call("add_todo", "text" to "Ring tandläkaren", "who" to "Gabriel"), "jag måste ringa tandläkaren", more, gabriel) ?: call("add_todo", "who" to "Gabriel"), "who"))
