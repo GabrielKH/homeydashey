@@ -84,6 +84,48 @@ class KnowHowTest {
         assertFalse("tv" in topics("tänd lamporna i vardagsrummet"))
     }
 
+    @Test fun `the new topics come with their own questions`() {
+        assertTrue("weather" in topics("behöver jag paraply imorgon?"))
+        assertTrue("goodnight" in topics("god natt"))
+        assertTrue("moods" in topics("gör det mysigt i vardagsrummet"))
+    }
+
+    @Test fun `the closest worked examples come with a question, the home's own first`() {
+        val found = Examples.find("spela P1 i köket", names = listOf("Kök", "Taklampa"))
+        assertTrue(found.isNotEmpty())
+        assertTrue(found.first().calls.first().startsWith("play_music"))
+        assertTrue(Examples.find("xyzzy").isEmpty())
+        val learned = listOf(Examples.Example("spela lugnt i köket", listOf("play_music {\"player\":\"Kök\",\"query\":\"lugnt\"}")))
+        assertEquals("spela lugnt i köket", Examples.find("spela lugnt i köket", learned).first().say)
+        assertTrue(Examples.note(found).startsWith("\nHow similar requests were done"))
+    }
+
+    @Test fun `a turn that went well is kept as an example, and forgotten when it was wrong`() = runTest {
+        var clock = 1_000L
+        val book = KnowHowBook(folder.root) { clock }
+        book.load()
+        book.learnExample("släck i tvättstugan", listOf("set_room {\"room\":\"Tvättstuga\"}"))
+        book.learnExample("släck i tvättstugan", listOf("set_room {\"room\":\"Tvättstuga\",\"value\":\"false\"}"))
+        assertEquals(1, book.data.value.examples.size)
+        assertEquals(1, KnowHowBook(folder.root).apply { load() }.data.value.examples.size)
+        clock = 5_000L
+        assertFalse(book.forgetLastExample(since = 2_000L))
+        assertTrue(book.forgetLastExample(since = 500L))
+        assertTrue(book.data.value.examples.isEmpty())
+    }
+
+    @Test fun `no built-in example is a skill test sentence, so the tests still measure something`() {
+        val dir = java.io.File(javaClass.classLoader.getResource("evals/cases")!!.toURI())
+        val tested = dir.listFiles()!!.flatMap { f ->
+            Regex("\"say\"\\s*:\\s*\\{(.*?)\\}", RegexOption.DOT_MATCHES_ALL).findAll(f.readText()).flatMap { m ->
+                Regex("\"([^\"]+)\"").findAll(m.groupValues[1]).map { NameMatch.normalize(it.groupValues[1]) }
+            }.toList()
+        }.toSet()
+        assertTrue(tested.size > 50)
+        val same = Examples.builtIn.filter { NameMatch.normalize(it.say) in tested }
+        assertTrue("Examples copied from the tests: ${same.map { it.say }}", same.isEmpty())
+    }
+
     @Test fun `what is going on brings its topic, and a recipe brings the timers along`() {
         val found = topics("och sen då?", active = setOf("recipes"))
         assertEquals(listOf("recipes", "timers"), found)

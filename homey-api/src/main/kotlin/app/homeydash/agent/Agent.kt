@@ -146,6 +146,8 @@ class Agent(
         // "Det där blev fel": marks the last answer for Claude to look at, and isn't a question itself.
         if (WrongAnswer.matches(text, settings.wakeName)) {
             heard.trace(AgentLog.FLAG, "Said the last answer was wrong: \"$text\"")
+            // What was just done is no example to copy.
+            if (knowHow?.forgetLastExample(System.currentTimeMillis() - FORGET_EXAMPLE_MS) == true) heard.trace("know-how", "Forgot the example kept from the last answer.")
             return AgentReply(
                 if (swedish(text, settings)) "Okej, jag har markerat det för Claude." else "Got it, I've marked that for Claude.",
                 actions = listOf("Marked the last answer as wrong in the logs."),
@@ -243,6 +245,9 @@ class Agent(
             var acted = false
             // A tool actually changed something; a failed or wrong call doesn't count.
             var changed = false
+            // The calls that changed something, kept as an example when the turn went cleanly.
+            val executed = mutableListOf<String>()
+            val guardsBefore = heard.guards
             var nudged = false
             var emptied = false
             var relanguaged = false
@@ -331,7 +336,9 @@ class Agent(
                             CallCheck.shouldCall(text, specs.map { it.name })?.takeIf { !acted || it !in ranTools }?.let { tool ->
                                 toldToCall = true
                                 heard.trace("guard", "Answered without $tool; asked it to call it.")
-                                turn += ChatMessage.user(nudgeCall(tool))
+                                // The tool may not be in this question's list: its line comes with the nudge.
+                                val line = if (compact) specs.filter { it.name == tool }.let { ToolText.lines(it) } else ""
+                                turn += ChatMessage.user(nudgeCall(tool) + if (line.isBlank()) "" else "\n$line")
                                 return@repeat
                             }
                         }
@@ -377,6 +384,10 @@ class Agent(
                         }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
+                        // Done without any guard stepping in: kept, so the next time it's said the same way it's copied.
+                        if (changed && executed.isNotEmpty() && heard.guards == guardsBefore && context.routine == null && !settings.guest && settings.knowHow) {
+                            runCatching { knowHow?.learnExample(text, executed.distinct()) }
+                        }
                         live?.finish()
                         return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
                     }
@@ -467,6 +478,7 @@ class Agent(
                             else -> true // Timers, pages, recipes and the fridge answer in their own words.
                         }
                         changed = changed || did
+                        if (did && before == null) executed += homeView.named("${call.name} ${call.arguments}")
                         if (!StepText.failed(result.text) && !NOTHING_FOUND.containsMatchIn(result.text)) workedTools += call.name
                         if (did && call.name == "set_mood" && !StepText.failed(result.text)) moodSet = true
                         if (call.name in LOOKS) looked[key] = result
@@ -694,10 +706,19 @@ class Agent(
         val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
         val states = view.stateLines()
         val message = ChatMessage.user(
-            situation(settings, view, context, since) + KnowHow.note(topics) + extra + remembered(settings, view, question) + QUESTION + question,
+            situation(settings, view, context, since) + KnowHow.note(topics) + extra + examples(settings, view, question) + remembered(settings, view, question) + QUESTION + question,
         )
         opened = message to Noted(view.local, states, context.weather, full = since == null)
         return message
+    }
+
+    /** The few worked examples closest to [question]: the home's own learned ones and the built-in ones. */
+    private fun examples(settings: AgentSettings, view: HomeView, question: String): String {
+        if (!settings.knowHow) return ""
+        val learned = if (settings.guest) emptyList() else knowHow?.data?.value?.examples.orEmpty()
+        val found = Examples.find(question, learned, names = view.rooms.values + view.devices.map { it.name })
+        if (found.isNotEmpty()) listener?.trace("know-how", "Examples: " + found.joinToString("; ") { it.say })
+        return Examples.note(found)
     }
 
     /**
@@ -801,7 +822,8 @@ class Agent(
             } else if (skills != null) {
                 // Everyday tools stay in the fixed part even when a topic names them too.
                 val topical = skills.filter { !it.always }.flatMap { it.tools }.toSet() - CORE_TOOLS
-                val wanted = found.flatMap { it.tools }.toSet()
+                // No topic found ("gör något åt det"): the everyday tools, as before, rather than too few.
+                val wanted = found.flatMap { it.tools }.toSet().ifEmpty { EVERYDAY_TOOLS }
                 core = all.filter { it.name !in topical }
                 extra = all.filter { it.name in topical && it.name in wanted }
             } else {
@@ -1186,10 +1208,10 @@ class Agent(
         /** Marking people home or asleep and wake-up alarms: only when the question is about them. */
         val HOUSEHOLD_TOOLS = setOf("set_presence", "alarms")
         /** Tools every question has, whatever topics name them: devices, rooms, moods, Flows, pages and looking things up. */
-        val CORE_TOOLS = setOf(
-            "set_device", "set_room", "get_device", "set_mood", "set_scene", "list_flows", "run_flow", "open_page", "open_device",
-            "goodnight", "weather", "set_theme", "ask_internet", "recall", KnowHow.GUIDE,
-        )
+        /** The tools every question gets; the rest come with their topic, so a small AI picks from a few. */
+        val CORE_TOOLS = setOf("set_device", "set_room", "get_device", "recall", KnowHow.GUIDE)
+        /** Everyday tools that used to be in every question: all of them come when no topic is found. */
+        val EVERYDAY_TOOLS = setOf("set_mood", "set_scene", "list_flows", "run_flow", "open_page", "open_device", "goodnight", "weather", "set_theme", "ask_internet")
         /** Teaching and forgetting a topic's rules by voice. */
         val KNOW_HOW_PACK = setOf("teach", "forget_rule", "teach_words", "forget_words")
         val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + NOTE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK
@@ -1238,6 +1260,8 @@ class Agent(
         const val WARM_UP = ToolText.START
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
+        /** "Det där blev fel" within this long forgets the example the last answer left. */
+        const val FORGET_EXAMPLE_MS = 10 * 60 * 1000L
         /** Conversations kept for [digest] when the AI couldn't be asked yet. */
         const val MAX_FINISHED = 60
         /** Shorter than this ("tänd i köket", "Done") has nothing to learn from. */

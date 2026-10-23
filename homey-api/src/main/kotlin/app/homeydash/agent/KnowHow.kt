@@ -69,6 +69,8 @@ data class KnowHowData(
     val cues: Map<String, List<String>> = emptyMap(),
     /** The owner's own word pairs, Swedish and English ("tvättstugan", "laundry room"). */
     val translations: List<List<String>> = emptyList(),
+    /** How this home's own requests were done, learned from turns that went cleanly ([Examples]). */
+    val examples: List<Examples.Example> = emptyList(),
 )
 
 /** A topic found for a question, with how strongly and why ("words: spela", "device: Roborock"). */
@@ -248,6 +250,51 @@ object KnowHow {
             rules = listOf("Homey Logic variables are read with variables."),
         ),
         Skill(
+            id = "moods", title = "Moods and light looks", about = "the home's moods (scenes) and looks like cozy, bright or movie",
+            words = listOf(
+                "stämning*", "mood*", "scen*", "scene*", "mys*", "cozy", "cosy", "film*", "movie*", "middag*", "dinner", "fest*", "party",
+                "romantisk*", "romantic", "läs*", "reading", "ljust", "bright", "dämp*", "lugn*", "relax*", "calm", "mörkt", "dark",
+            ),
+            tools = listOf("set_mood", "set_scene"),
+            rules = listOf("A mood the home has (listed with its room) goes with set_mood; a look nobody made a mood for (cozy, bright, movie) goes with set_scene and a room."),
+        ),
+        Skill(
+            id = "flows", title = "Homey Flows", about = "starting Homey Flows and modes by name",
+            words = listOf("flow*", "flöde*", "flödet", "läge*", "*läget", "mode", "modes", "rutin*", "automation*", "kör", "run"),
+            tools = listOf("list_flows", "run_flow"),
+            rules = listOf("A Flow or mode by name (\"kör städläget\") is run_flow with the name the user said; list_flows shows them if unsure."),
+        ),
+        Skill(
+            id = "weather", title = "Weather", about = "the weather now, today and the next days",
+            words = listOf(
+                "väder*", "vädret", "weather", "regn*", "rain*", "paraply*", "umbrella", "sol*", "sun*", "snö*", "snow*", "blås*", "wind*",
+                "grader ute", "kallt ute", "varmt ute", "jacka*", "jacket", "forecast", "prognos*", "storm*", "åska*",
+            ),
+            tools = listOf("weather"),
+        ),
+        Skill(
+            id = "goodnight", title = "Goodnight", about = "going to bed: everything off for the night",
+            words = listOf("godnatt", "god natt", "goodnight", "good night", "sova", "sleep*", "lägga oss", "lägger oss", "lägger mig", "bed", "bedtime", "sängdags"),
+            tools = listOf("goodnight"),
+            rules = listOf("Going to bed is the goodnight tool alone: it asks the user first and then turns things off itself."),
+        ),
+        Skill(
+            id = "screen", title = "The screen", about = "showing pages and devices on the tablet, light or dark look",
+            words = listOf(
+                "visa", "öppna", "show", "open", "sida*", "sidan", "page*", "skärm*", "screen", "tema", "theme", "mörkt läge", "ljust läge",
+                "dark mode", "light mode", "gå till", "go to", "översikt*", "overview",
+            ),
+            tools = listOf("open_page", "open_device", "set_theme"),
+        ),
+        Skill(
+            id = "internet", title = "Internet", about = "facts and news from the internet",
+            words = listOf(
+                "sök*", "search*", "google*", "internet", "nyhet*", "news", "wikipedia", "vem är", "who is", "vad är", "what is", "hur många",
+                "how many", "när är", "when is", "varför", "why", "resultat*", "score*", "pris*", "price*",
+            ),
+            tools = listOf("ask_internet"),
+        ),
+        Skill(
             id = "battery", title = "Tablet battery", about = "the tablet's own battery and charging reminders",
             words = listOf("batteri*", "battery", "batteries", "ladd*", "charg*", "laddning*", "ström*", "power"),
             rules = listOf(BatteryNag.rule(batteryReminders)),
@@ -263,10 +310,12 @@ object KnowHow {
         val own = data.own.associateBy { it.id }
         val shipped = builtIn(batteryReminders)
         val fromHomey = view?.let { v -> HomeyTopics.from(v, shipped.flatMap { it.classes }.toSet()) }.orEmpty()
+        // The home's own mood names ("Filmkväll", "Middag") bring the moods topic too.
+        val moodWords = view?.moods.orEmpty().flatMap { m -> NameMatch.normalize(m.mood.name).split(' ').filter { it.length >= 4 } }
         val built = (shipped + fromHomey).map { s ->
             val mine = own[s.id]
             s.copy(
-                words = (s.words + mine?.words.orEmpty().map(::loose) + data.learned[s.id].orEmpty()).distinct(),
+                words = (s.words + mine?.words.orEmpty().map(::loose) + data.learned[s.id].orEmpty() + if (s.id == "moods") moodWords.map(::loose) else emptyList()).distinct(),
                 rules = s.rules + mine?.rules.orEmpty() + data.extra[s.id].orEmpty(),
                 tools = (s.tools + mine?.tools.orEmpty()).distinct(),
             )
@@ -490,6 +539,17 @@ class KnowHowBook(private val dir: File, private val clock: () -> Long = System:
         val clean = words.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         if (clean.isEmpty()) return
         change { d -> d.copy(cues = d.cues + (id to (d.cues[id].orEmpty() + clean).distinct())) }
+    }
+
+    /** Keeps how [say] was done ([calls], `name {json}`), to show with similar questions later. */
+    suspend fun learnExample(say: String, calls: List<String>) =
+        change { d -> d.copy(examples = Examples.add(d.examples, say, calls, clock())) }
+
+    /** The last answer was wrong: its example, if one was kept, is forgotten. Whether there was one. */
+    suspend fun forgetLastExample(since: Long): Boolean {
+        val last = _data.value.examples.lastOrNull()?.takeIf { it.at >= since } ?: return false
+        change { d -> d.copy(examples = d.examples - last) }
+        return true
     }
 
     /** Remembers that [a] and [b] are the same word in the two languages. */
