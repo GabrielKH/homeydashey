@@ -44,6 +44,9 @@ class ScreenControl(private val activity: Activity, private val display: Display
     private val _dimmed = MutableStateFlow(false)
     val dimmed: StateFlow<Boolean> = _dimmed.asStateFlow()
 
+    /** How bright the dark screen is: the lowest, or a little more when post-its are lit on it. */
+    var dimBrightness: () -> Float = { DIM }
+
     /** Something on screen is going on (the assistant talking); counts as a touch while true. */
     var busy: () -> Boolean = { false }
 
@@ -103,7 +106,19 @@ class ScreenControl(private val activity: Activity, private val display: Display
 
     private fun dim() {
         _dimmed.value = true
-        setBrightness(0.01f)
+        setBrightness(dimBrightness())
+    }
+
+    /** Sets the dark screen's brightness again, when post-its come or go while it is dark. */
+    fun refreshDim() {
+        if (_dimmed.value) setBrightness(dimBrightness())
+    }
+
+    companion object {
+        /** The dark screen with only the clock. */
+        const val DIM = 0.01f
+        /** With post-its on it: just enough for the colours to read across the kitchen. */
+        const val DIM_WITH_NOTES = 0.05f
     }
 
     private fun setBrightness(value: Float) {

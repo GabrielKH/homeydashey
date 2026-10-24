@@ -51,6 +51,8 @@ class AgentTools(
     private val recipes: RecipeTools? = null,
     /** What is in the fridge, freezer and pantry; null when the dashboard has none. */
     private val fridge: FridgeTools? = null,
+    /** The post-its and to-do list; null when the dashboard has none. */
+    private val notes: NoteTools? = null,
     /** The owner's routines and standing instructions; null when the dashboard has none. */
     private val routines: RoutineTools? = null,
     /** What the assistant remembers from earlier conversations; null when it remembers nothing. */
@@ -133,8 +135,8 @@ class AgentTools(
             string("rooms", "For clean_rooms and go_to: room names, comma-separated, e.g. \"Kitchen, Hall\"")
             required("action")
         })
-        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, or a room name.") {
-            string("page", "overview, moods, media, calendar, recipes, fridge, or a room name")
+        add(tool("open_page", "Show a page on the dashboard: overview, moods, media, calendar, recipes, fridge, notes, or a room name.") {
+            string("page", "overview, moods, media, calendar, recipes, fridge, notes, or a room name")
             required("page")
         })
         add(tool("open_device", "Open a device's controls on the dashboard, e.g. a lamp's colour or a TV remote.") {
@@ -162,9 +164,9 @@ class AgentTools(
             required("mode")
         })
         if (view.allows(Secret.Calendar)) add(tool("calendar", "Events from the family calendar, or from one person's own calendar.") {
-            string("start_date", "First day, yyyy-mm-dd; default today")
+            string("start_date", "First day as the user said it: today, tomorrow, a weekday (\"lördag\", \"saturday\"), or yyyy-mm-dd; default today")
             number("days", "How many days, 1-31; default 1")
-            string("calendar", "Leave out for the calendars on the dashboard; \"mine\" for the asker's own, \"family\", or a person's name")
+            string("calendar", "Leave out for every calendar on the dashboard, also for \"what's happening\"; \"mine\" only for the asker's own, \"family\" only for the family calendar, or a person's name")
         })
         if (!guest && view.allows(Secret.AddEvents)) add(tool(
             "add_event",
@@ -216,6 +218,7 @@ class AgentTools(
         })
         recipes?.let { addAll(it.specs()) }
         fridge?.let { addAll(it.specs()) }
+        notes?.let { addAll(it.specs()) }
         routines?.let { r ->
             if (r.data.routines.any { it.enabled }) add(tool("run_routine", "Run one of the owner's routines now, e.g. God morgon, and follow what it returns.") {
                 string("name", "The routine's name")
@@ -270,7 +273,9 @@ class AgentTools(
             "press_remote" -> pressRemote(a.str("device"), a.str("keys"))
             "vacuum" -> vacuum(a.str("device"), a.str("action"), a.list("rooms"))
             "goodnight" -> goodnight()
-            "timer" -> timer(a.str("action"), a.num("minutes"), Timers.realName(a.str("label")), a.str("new_label"), a.str("several"))
+            // "several": false is a model filling in every field, not a list of timers called "false".
+            "timer" -> timer(a.str("action"), a.num("minutes"), Timers.realName(a.str("label")), a.str("new_label"),
+                a.str("several").takeUnless { it.trim().lowercase() in setOf("false", "true", "null", "none", "no") }.orEmpty())
             "recipe_timers" -> recipeTimers()
             "weather" -> ok(dashboard.weather() ?: "The weather isn't available right now.")
             "set_theme" -> ok(if (dashboard.setTheme(a.str("mode").lowercase())) "Theme set." else "Use light, dark or auto.")
@@ -286,6 +291,7 @@ class AgentTools(
             // A small model sometimes calls the device instead of its tool ("vacuum_1 {action: go_to}").
             else -> view.device(call.name)?.takeIf { it.deviceClass == "vacuumcleaner" }?.let { d -> vacuum(d.alias, a.str("action"), a.list("rooms")) }
                 ?: recipes?.run(call) ?: fridge?.run(call)
+                ?: notes?.takeIf { call.name in it.names }?.run(call, view.settings.asker, view.settings.persona.label, view.settings.people)
                 ?: routines?.takeIf { !guest && call.name in it.names }?.run(call)
                 ?: memory?.takeIf { !guest && view.settings.allows(Secret.Memory, view.local) && call.name in it.names }?.run(call, view.settings.asker, view.local)
                 ?: knowHow?.takeIf { !guest && call.name in it.names }?.run(call)
@@ -503,11 +509,23 @@ class AgentTools(
         return ok("Changed ${lights.size}: ${lights.joinToString { it.name }} in $place are now ${style.word}.")
     }
 
+    /** "städläget" is the Flow Städläge: Swedish endings ("-et", "-en", "-n", "-t") and accents don't count. */
+    private fun flowLike(flows: List<app.homeydash.homey.HomeyFlow>, name: String): app.homeydash.homey.HomeyFlow? {
+        val asked = NameMatch.normalize(name)
+        if (asked.length < 4) return null
+        fun stem(s: String) = s.replace(Regex("""(et|en|na|n|t)$"""), "")
+        return flows.filter { f ->
+            val n = NameMatch.normalize(f.name)
+            n == asked || stem(n) == stem(asked) || (n.length >= 4 && (asked.startsWith(n) && asked.length - n.length <= 3))
+        }.singleOrNull()
+    }
+
     private suspend fun runFlow(name: String): ToolResult {
         val flows = home.flows()
         val flow = flows.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
             ?: flows.firstOrNull { it.name.contains(name.trim(), ignoreCase = true) }
-            ?: return ok("There's no Flow called $name.")
+            ?: flowLike(flows, name)
+            ?: return ok("There's no Flow called $name." + if (flows.isEmpty()) "" else " There are: " + flows.take(15).joinToString { it.name } + ".")
         if (SENSITIVE.containsMatchIn(flow.name)) {
             val unlock = UNLOCKING.containsMatchIn(flow.name)
             if (unlock && !view.allows(Secret.Unlock)) return ok("That Flow looks like it unlocks or disarms something, which the assistant isn't allowed to do.")
@@ -542,7 +560,9 @@ class AgentTools(
             "${asked.name} can't play music. These can: " +
                 view.devices.filter { sources(it.id).isNotEmpty() }.joinToString { "${it.alias} (${it.name}${it.room?.let { r -> ", $r" }.orEmpty()})" } + ".",
         )
-        val played = home.playMusic(d.id, query, kind) ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
+        val played = home.playMusic(d.id, query, kind)
+            ?: translated(d.id, query)?.let { home.playMusic(d.id, it, kind) }
+            ?: return ok("Couldn't find \"$query\" on ${d.name}." + musicChoices(d.id))
         lastPlayer = d.id
         // The room too, so "Vardagsrum" played on "Beam" isn't taken for the wrong speaker.
         val room = d.room?.takeIf { r -> !NameMatch.normalize(d.name).contains(NameMatch.normalize(r)) }
@@ -587,6 +607,23 @@ class AgentTools(
     }
 
     /** Some of what the player has, so a miss can be followed by a pick of the model's own. */
+    /**
+     * The one favourite [query] names in the other language, word by word: "morning jazz" is
+     * Morgonjazz (it ends in "jazz", and "morgon" starts like "morning"). Null when none or
+     * several do.
+     */
+    private suspend fun translated(deviceId: String, query: String): String? {
+        val words = NameMatch.normalize(query).split(' ').filter { it.isNotBlank() }
+        if (words.size < 2 || words.last().length < 4) return null
+        val names = FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }
+            .flatMap { source -> runCatching { home.choices(source.card, source.arg, "") }.getOrDefault(emptyList()).map { it.name } }.distinct()
+        return names.filter { name ->
+            val joined = NameMatch.normalize(name).replace(" ", "")
+            val rest = joined.removeSuffix(words.last())
+            rest != joined && rest.length >= 3 && rest.take(3) == words.first().take(3)
+        }.singleOrNull()
+    }
+
     private suspend fun musicChoices(deviceId: String): String {
         val lists = mutableListOf<String>()
         for (source in FlowCards.musicSources(home.deviceActions(deviceId)).flatMap { it.all }) {
@@ -857,6 +894,8 @@ class AgentTools(
             "calendar" to "calendar", "kalender" to "calendar",
             "recipes" to "recipes", "recipe" to "recipes", "recept" to "recipes",
             "fridge" to "fridge", "kylen" to "fridge", "kylskåp" to "fridge", "kylskåpet" to "fridge", "freezer" to "fridge", "frysen" to "fridge",
+            "notes" to "notes", "note" to "notes", "post-its" to "notes", "postits" to "notes", "lappar" to "notes", "lapparna" to "notes",
+            "todo" to "notes", "todos" to "notes", "to-do" to "notes", "to do" to "notes", "att göra" to "notes", "anteckningar" to "notes",
         )
         fixed[p]?.let { return ok(if (dashboard.openPage(it)) "Showing $it." else "Can't show $it.") }
         val roomId = view.room(page) ?: return ok("There's no page or room called $page.")
@@ -928,11 +967,13 @@ class AgentTools(
                 if (newLabel.isBlank()) return ok("Ask what to call it.")
                 board.rename(label, newLabel)?.let { learnTimer(it); ok("The timer is now called ${it.label}.") } ?: ok("No timers are running.")
             }
-            "add", "extend", "snooze" -> {
+            "add", "extend", "snooze", "add_minutes", "add_time" -> {
                 val seconds = ((minutes ?: 1.0) * 60).toInt()
                 if (seconds == 0) return ok("Ask how many minutes.")
-                board.add(label, seconds)?.let { ok("${named(it)} now has ${Timers.clock(it.leftMs(System.currentTimeMillis()))} left.") }
-                    ?: ok("No timer like that is running.")
+                // "all" from a model means the one running; with none running, "add a timer" means start one.
+                val which = label.takeUnless { it.equals("all", ignoreCase = true) }.orEmpty()
+                board.add(which, seconds)?.let { ok("${named(it)} now has ${Timers.clock(it.leftMs(System.currentTimeMillis()))} left.") }
+                    ?: if (board.timers.value.isEmpty() && minutes != null) timer("start", minutes, which, newLabel) else ok("No timer like that is running.")
             }
             "mute", "quiet", "silence" -> {
                 val n = board.mute(label.ifBlank { null })
@@ -954,6 +995,12 @@ class AgentTools(
         return ok("Started: " + timers.joinToString { (step, t) -> "step $step ${t.label}" } + ".")
     }
 
+    private fun dayName(d: java.time.LocalDate): String {
+        val weekday = d.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
+        val near = when (java.time.temporal.ChronoUnit.DAYS.between(today(), d)) { 0L -> ", today"; 1L -> ", tomorrow"; else -> "" }
+        return "$weekday $d$near"
+    }
+
     private suspend fun calendar(start: String, days: Double?, whose: String): ToolResult {
         if (!view.allows(Secret.Calendar)) return ok("Reading the calendar is switched off.")
         val from = CalendarBook.day(start, today()) ?: today()
@@ -967,8 +1014,13 @@ class AgentTools(
                 is CalendarBook.Pick.Found -> dashboard.calendarIn(setOf(pick.calendar.id), from, count, withLocations = details)
             }
         }
-        val text = if (events.isEmpty()) "No events." else events.joinToString("\n") { e ->
-            listOfNotNull(e.start + (e.end?.let { " to $it" } ?: ""), e.title, e.location).joinToString(" · ")
+        // Each day named ("Saturday 2026-10-24, tomorrow"): small models otherwise count the weekday wrong
+        // and call a full Saturday free.
+        val asked = (0 until count).joinToString(", ") { dayName(from.plusDays(it.toLong())) }
+        val text = if (events.isEmpty()) "No events for $asked." else events.groupBy { it.start.take(10) }.entries.joinToString("\n") { (day, list) ->
+            (runCatching { java.time.LocalDate.parse(day) }.getOrNull()?.let { dayName(it) + ":\n" } ?: "") + list.joinToString("\n") { e ->
+                listOfNotNull(e.start + (e.end?.let { " to $it" } ?: ""), e.title, e.location).joinToString(" · ")
+            }
         }
         return ToolResult(text, localOnly(Secret.Calendar) || localOnly(Secret.CalendarDetails))
     }
@@ -995,7 +1047,7 @@ class AgentTools(
         val where = CalendarBook.label(calendar, calendars, s)
         val said = CalendarBook.describe(event, today())
         return ToolResult(
-            "Not added yet: it waits for the user's yes. Ask only this, once, in the user's language, with the day in words: " +
+            "Not added yet: it waits for the user's yes. Ask only this, once, as a question ending in \"?\", in the user's language, with the day in words: " +
                 "add $said to $where? If they then change something, call add_event again with the change.",
             pending = PendingAction("Add $said to $where?", tapOnly = false) {
                 dashboard.addEvent(event)
@@ -1293,6 +1345,8 @@ class AgentTools(
                     else -> null
                 })?.let(::JsonPrimitive)
                 "number" -> {
+                    // "Vitt ljus" sent as 6500 (kelvin) or "white" was clamped to 1, Homey's warmest yellow.
+                    if (c.id == "light_temperature") warmth(s)?.let { return JsonPrimitive(it) }
                     var n = p.doubleOrNull ?: s.removeSuffix("%").trim().replace(',', '.').toDoubleOrNull() ?: return null
                     // "60%" for a 0..1 capability such as dim.
                     if (c.max == 1.0 && n > 1.0 && n <= 100.0) n /= 100.0
@@ -1304,6 +1358,26 @@ class AgentTools(
                 else -> JsonPrimitive(s)
             }
         }
+
+        /**
+         * Homey's light_temperature (0 cold white, 1 warm yellow) from kelvin ("6500") or a word
+         * ("white", "varmt"); null for a plain 0..1 or percent, which the number rules handle.
+         */
+        internal fun warmth(raw: String): Double? {
+            val w = NameMatch.normalize(raw)
+            if (w in COLD_WORDS) return 0.0
+            if (w in WARM_WORDS) return 1.0
+            if (w in NEUTRAL_WORDS) return 0.5
+            val k = w.removeSuffix(" k").removeSuffix("k").trim().toDoubleOrNull() ?: return null
+            if (k <= 100.0) return null
+            return ((COLDEST_K - k) / (COLDEST_K - WARMEST_K)).coerceIn(0.0, 1.0)
+        }
+
+        private const val COLDEST_K = 6500.0
+        private const val WARMEST_K = 2200.0
+        private val COLD_WORDS = setOf("white", "pure white", "cold", "cool", "daylight", "vit", "vitt", "vita", "kall", "kallt", "kalla", "dagsljus", "bla", "blue")
+        private val WARM_WORDS = setOf("warm", "yellow", "varm", "varmt", "varma", "gul", "gult", "gula", "orange")
+        private val NEUTRAL_WORDS = setOf("neutral", "neutralt", "mellan", "medium")
 
         /** Everyday words models use for capabilities, mapped to Homey's ids. */
         private val CAPABILITY_WORDS = mapOf(

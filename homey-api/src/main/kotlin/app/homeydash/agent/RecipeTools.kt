@@ -132,7 +132,8 @@ class RecipeTools(
             r.ingredients.forEach { append("- ").append(it.section?.let { s -> "[$s] " } ?: "").append(it.text).append('\n') }
             append("Steps:\n")
             r.steps.forEachIndexed { i, s -> append(i + 1).append(". ").append(s.text).append('\n') }
-            if (r.notes.isNotBlank()) append("Notes: ").append(r.notes)
+            if (r.notes.isNotBlank()) append("Notes: ").append(r.notes).append('\n')
+            append("Asked what's needed: name every ingredient above, as written.")
         }.take(8000))
     }
 
@@ -187,6 +188,18 @@ class RecipeTools(
             ?: all.firstOrNull { Text.fold(it.title).contains(q) }
             ?: all.filter { r -> q.split(' ').filter { it.length > 2 }.let { words -> words.isNotEmpty() && words.all { w -> Text.fold(r.title).contains(w) } } }.singleOrNull()
             ?: all.filter { it.matches(name) }.singleOrNull()
+            // "lasagnen" for Lasagne: each word said the way Swedish bends it.
+            ?: all.filter { r ->
+                val title = NameMatch.tokens(r.title)
+                NameMatch.tokens(name).filter { it.length > 2 }.let { words -> words.isNotEmpty() && words.all { w -> title.any { NameMatch.sameWord(w, it) } } }
+            }.singleOrNull()
+            // "pancakes" for Pannkakor: each word in the other language too.
+            ?: all.filter { r ->
+                val title = NameMatch.tokens(r.title)
+                NameMatch.tokens(name).filter { it.length > 2 }.let { words ->
+                    words.isNotEmpty() && words.all { w -> Translate.variants(NameMatch.normalize(w)).any { v -> title.any { NameMatch.sameWord(v, it) } } }
+                }
+            }.singleOrNull()
     }
 
     private fun notFound(name: String): ToolResult {

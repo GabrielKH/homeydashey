@@ -1,0 +1,51 @@
+{
+  "skill": "timers",
+  "title": "Kitchen timers",
+  "cases": [
+    {
+      "id": "timers.pasta",
+      "about": "A named timer.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["ställ en timer på tio minuter för pastan", "timer pasta 10 minuter", "sätt en äggklocka på 10 minuter till pastan"],
+        "en": ["set a ten minute timer for the pasta"]
+      },
+      "expect": {"timers": [{"label": "pasta", "minutes": 10}], "timer_count": 1, "tools": ["timer"]}
+    },
+    {
+      "id": "timers.unnamed",
+      "about": "A timer with only a length.",
+      "say": {"sv": ["timer på fem minuter", "ställ klockan på 5 minuter"], "en": ["timer for five minutes"]},
+      "expect": {"timers": [{"minutes": 5}], "timer_count": 1}
+    },
+    {
+      "id": "timers.add_time",
+      "about": "More time on the timer that runs.",
+      "given": {"timers": [{"label": "Pasta", "minutes": 6}]},
+      "say": {"sv": ["lägg till två minuter", "två minuter till på pastan"], "en": ["add two minutes to the pasta"]},
+      "expect": {"timers": [{"label": "pasta", "minutes": 8}], "timer_count": 1}
+    },
+    {
+      "id": "timers.cancel",
+      "about": "Stopping the only timer.",
+      "tags": ["smoke"],
+      "given": {"timers": [{"label": "Ägg", "minutes": 7}]},
+      "say": {"sv": ["stäng av timern", "avbryt äggtimern"], "en": ["cancel the timer"]},
+      "expect": {"timer_count": 0}
+    },
+    {
+      "id": "timers.how_long",
+      "about": "Time left, without changing anything.",
+      "given": {"timers": [{"label": "Pasta", "minutes": 9}]},
+      "say": {"sv": ["hur lång tid är det kvar på pastan?"], "en": ["how long is left on the pasta?"]},
+      "expect": {"timers": [{"label": "pasta", "minutes": 9}], "timer_count": 1, "reply": ["8|9|nio|åtta|eight|nine"]}
+    },
+    {
+      "id": "timers.two_at_once",
+      "about": "Two timers in one sentence.",
+      "tags": ["capability"],
+      "say": {"sv": ["en timer på 8 minuter för riset och en på 12 för kycklingen"], "en": ["timers for the rice in 8 minutes and the chicken in 12"]},
+      "expect": {"timers": [{"label": "ris|rice", "minutes": 8}, {"label": "kyckling|chicken", "minutes": 12}], "timer_count": 2}
+    }
+  ]
+}

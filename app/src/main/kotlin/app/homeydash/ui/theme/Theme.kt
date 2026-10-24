@@ -111,6 +111,12 @@ val Inter = FontFamily(
     Font(R.font.inter_extrabold, FontWeight.ExtraBold),
 )
 
+/** Caveat (OFL): a friendly handwriting for the post-its. */
+val Handwriting = FontFamily(
+    Font(R.font.caveat_medium, FontWeight.Medium),
+    Font(R.font.caveat_bold, FontWeight.Bold),
+)
+
 // Large type throughout: the tablet is read from across the kitchen on a matte screen.
 private val GlassTypography = Typography(
     displayLarge = TextStyle(fontFamily = Inter, fontSize = 80.sp, lineHeight = 82.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-3).sp),

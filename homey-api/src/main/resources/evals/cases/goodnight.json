@@ -1,0 +1,27 @@
+{
+  "skill": "goodnight",
+  "title": "Goodnight",
+  "cases": [
+    {
+      "id": "goodnight.yes",
+      "about": "Goodnight asks first, then turns everything off.",
+      "tags": ["smoke"],
+      "given": {"devices": {"kitchen_sonos": {"speaker_playing": true}, "sofa_lamp": {"onoff": true}}},
+      "say": {"sv": ["godnatt", "god natt, vi går och lägger oss"], "en": ["good night"]},
+      "expect": {"pending": true, "unchanged": true, "tools": ["goodnight"]},
+      "then": [
+        {"say": {"sv": "ja", "en": "yes"}, "expect": {"did": ["goodnight"], "lang": false,
+          "state": {"kitchen_ceiling": {"onoff": false}, "sofa_lamp": {"onoff": false}, "kitchen_sonos": {"speaker_playing": false}}}}
+      ]
+    },
+    {
+      "id": "goodnight.no",
+      "about": "A no leaves everything as it was.",
+      "say": {"sv": ["godnatt"], "en": ["good night"]},
+      "expect": {"pending": true, "unchanged": true},
+      "then": [
+        {"say": {"sv": "nej, vänta", "en": "no, wait"}, "expect": {"did_not": ["goodnight"], "unchanged": true, "pending": false, "lang": false}}
+      ]
+    }
+  ]
+}

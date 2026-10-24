@@ -26,6 +26,8 @@ class DisplaySettings(
     val accentOpacity: StateFlow<Float> = settings.accentOpacity.stateIn(scope, SharingStarted.Eagerly, 1f)
     val hiddenDevices: StateFlow<Set<String>> = settings.hiddenDevices.stateIn(scope, SharingStarted.Eagerly, emptySet())
     val compactSidebar: StateFlow<Boolean> = settings.compactSidebar.stateIn(scope, SharingStarted.Eagerly, false)
+    val notesOnDark: StateFlow<Boolean> = settings.notesOnDark.stateIn(scope, SharingStarted.Eagerly, true)
+    val notesCard: StateFlow<Boolean> = settings.notesCard.stateIn(scope, SharingStarted.Eagerly, false)
     val hiddenRooms: StateFlow<Set<String>> = settings.hiddenRooms.stateIn(scope, SharingStarted.Eagerly, emptySet())
     val roomOrder: StateFlow<List<String>> = settings.roomOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val backgrounds: StateFlow<Map<String, String>> = settings.backgrounds.stateIn(scope, SharingStarted.Eagerly, emptyMap())
@@ -51,6 +53,20 @@ class DisplaySettings(
             saved?.split('\t', limit = 3)?.takeIf { it.size == 3 }?.let { (id, kind, name) -> HomeyFlow(id, name, advanced = kind == "advanced") }
         }
         .stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** Readings picked in a device's sheet to show on its card, by device id. */
+    val cardReadings: StateFlow<Map<String, List<String>>> = settings.cardReadings.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    fun setCardReadings(deviceId: String, capabilities: List<String>) {
+        scope.launch { settings.setCardReadings(deviceId, capabilities) }
+    }
+
+    /** Widget and room cards left off the overview; devices are pinned with [overviewDevices] instead. */
+    val overviewOff: StateFlow<Set<String>> = settings.overviewOff.stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    fun setOnOverview(key: String, on: Boolean) {
+        scope.launch { settings.setOverviewOff(key, !on) }
+    }
 
     val overviewOrder: StateFlow<List<String>> = settings.overviewOrder.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -157,6 +173,14 @@ class DisplaySettings(
 
     fun setCompactSidebar(compact: Boolean) {
         scope.launch { settings.setCompactSidebar(compact) }
+    }
+
+    fun setNotesOnDark(on: Boolean) {
+        scope.launch { settings.setNotesOnDark(on) }
+    }
+
+    fun setNotesCard(on: Boolean) {
+        scope.launch { settings.setNotesCard(on) }
     }
 
     fun setRoomHidden(zoneId: String, hidden: Boolean) {

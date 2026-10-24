@@ -65,6 +65,12 @@ data class KnowHowData(
     val lastUsed: Map<String, Long> = emptyMap(),
     /** When each topic made from Homey was first seen, so a new kind of device in the house is noticed once. */
     val seen: Map<String, Long> = emptyMap(),
+    /** Words the owner taught for a [Cues] cue ("sovdags" is goodnight), by cue id. */
+    val cues: Map<String, List<String>> = emptyMap(),
+    /** The owner's own word pairs, Swedish and English ("tvättstugan", "laundry room"). */
+    val translations: List<List<String>> = emptyList(),
+    /** How this home's own requests were done, learned from turns that went cleanly ([Examples]). */
+    val examples: List<Examples.Example> = emptyList(),
 )
 
 /** A topic found for a question, with how strongly and why ("words: spela", "device: Roborock"). */
@@ -90,6 +96,8 @@ object KnowHow {
                 "spotify", "sonos", "album*", "artist*", "spellist*", "playlist*", "favorit*", "favourite*", "favorite*", "volym*", "volume",
                 "högre", "lägre", "louder", "quieter", "pausa", "paus", "pause", "nästa", "next", "skip*", "hoppa", "lyssna*", "listen*",
                 "högtalar*", "speaker*", "podd*", "podcast*", "hits", "topplista*", "chart*", "avsnitt*", "episode*", "genre*", "top",
+                // Genres, also inside a word ("morgonjazz", "julmusik").
+                "*jazz*", "rock", "rockklassiker*", "pop", "*pop", "klassisk*", "*musik*", "blues", "soul", "disco", "reggae", "hiphop", "metal",
             ),
             classes = listOf("speaker", "amplifier"),
             tools = listOf("play_music", "save_favourite", "device_actions", "run_device_action"),
@@ -159,6 +167,21 @@ object KnowHow {
             ),
         ),
         Skill(
+            id = "notes", title = "Post-its and to-dos", about = "post-it notes on the kitchen screen and the family's to-do list",
+            words = listOf(
+                "lapp*", "post-it*", "postit*", "note*", "anteckn*", "todo*", "to-do*", "att göra", "göralist*", "uppgift*", "bocka*",
+                "avbock*", "klar med", "done with", "tick*", "task*", "meddelande*", "message*", "skriv upp", "skriv en", "write down",
+                "påminnelse*", "reminder*", "glöm inte", "don't forget",
+            ),
+            tools = listOf("notes", "write_note", "change_note", "add_todo", "change_todo"),
+            rules = listOf(
+                "A post-it (\"skriv en lapp\", \"lämna ett meddelande till Anna\", \"put a note up\") goes on the kitchen screen with write_note: short text in the user's words, for whom if said, until a day if said. It also shows on the dark screen at night.",
+                "Things to do (\"lägg till … på att göra-listan\", \"add … to my to-dos\") go through add_todo: \"min/my\" is who mine, a name is that person, nothing said is everyone; a day said is due.",
+                "When someone says they did a to-do (\"jag har bokat bilservicen\", \"done with the bins\"), tick it off with change_todo; \"what do I have to do\" reads notes with who mine.",
+                "Never put a to-do in the calendar or a post-it in memory; use these tools, and say the post-it or to-do back in a few words.",
+            ),
+        ),
+        Skill(
             id = "calendar", title = "Calendar", about = "plans, events and appointments on any day",
             words = listOf(
                 "kalender*", "calendar*", "händer", "happening", "plan*", "möte*", "meeting*", "event*", "evenemang*", "bokat", "booked",
@@ -204,10 +227,11 @@ object KnowHow {
             id = "routines", title = "Routines and instructions", about = "making and changing routines, standing instructions and topic rules",
             words = listOf(
                 "rutin*", "routine*", "när jag säger", "when i say", "kom ihåg", "remember", "glöm*", "forget*", "alltid", "always", "aldrig", "never",
-                "instruktion*", "instruction*", "regel", "regler*", "rule*", "lär dig", "learn*",
+                "instruktion*", "instruction*", "regel", "regler*", "rule*", "lär dig", "learn*", "betyder", "menar jag", "i mean", "means",
             ),
-            tools = listOf("list_routines", "save_routine", "delete_routine", "remember_instruction", "forget_instruction", "run_routine", "teach", "forget_rule"),
+            tools = listOf("list_routines", "save_routine", "delete_routine", "remember_instruction", "forget_instruction", "run_routine", "teach", "forget_rule", "teach_words", "forget_words"),
             rules = listOf(
+                "When the user says their own words mean something (\"när jag säger sovdags menar jag godnatt\", \"tvättstugan is the laundry room\"), save it with teach_words.",
                 "The owner has routines: when the note says a routine was started, the app has already done its steps; follow the routine's instructions, using your tools for anything they ask that isn't done yet, and answer from what it found.",
                 "When the user asks you to make or change a routine (\"when I say X, do Y\") or to always do something, save it with your tools.",
                 "An instruction that is only about one topic (music, timers, the vacuum…) goes to teach with that topic, so it is only read when the topic comes up; one for every answer goes to remember_instruction.",
@@ -228,6 +252,51 @@ object KnowHow {
             rules = listOf("Homey Logic variables are read with variables."),
         ),
         Skill(
+            id = "moods", title = "Moods and light looks", about = "the home's moods (scenes) and looks like cozy, bright or movie",
+            words = listOf(
+                "stämning*", "mood*", "scen*", "scene*", "mys*", "cozy", "cosy", "film*", "movie*", "middag*", "dinner", "fest*", "party",
+                "romantisk*", "romantic", "läs*", "reading", "ljust", "bright", "dämp*", "lugn*", "relax*", "calm", "mörkt", "dark",
+            ),
+            tools = listOf("set_mood", "set_scene"),
+            rules = listOf("A mood the home has (listed with its room) goes with set_mood; a look nobody made a mood for (cozy, bright, movie) goes with set_scene and a room."),
+        ),
+        Skill(
+            id = "flows", title = "Homey Flows", about = "starting Homey Flows and modes by name",
+            words = listOf("flow*", "flöde*", "flödet", "läge*", "*läget", "mode", "modes", "rutin*", "automation*", "kör", "run"),
+            tools = listOf("list_flows", "run_flow"),
+            rules = listOf("A Flow or mode by name (\"kör städläget\") is run_flow with the name the user said; list_flows shows them if unsure."),
+        ),
+        Skill(
+            id = "weather", title = "Weather", about = "the weather now, today and the next days",
+            words = listOf(
+                "väder*", "vädret", "weather", "regn*", "rain*", "paraply*", "umbrella", "sol*", "sun*", "snö*", "snow*", "blås*", "wind*",
+                "grader ute", "kallt ute", "varmt ute", "jacka*", "jacket", "forecast", "prognos*", "storm*", "åska*",
+            ),
+            tools = listOf("weather"),
+        ),
+        Skill(
+            id = "goodnight", title = "Goodnight", about = "going to bed: everything off for the night",
+            words = listOf("godnatt", "god natt", "goodnight", "good night", "sova", "sleep*", "lägga oss", "lägger oss", "lägger mig", "bed", "bedtime", "sängdags"),
+            tools = listOf("goodnight"),
+            rules = listOf("Going to bed is the goodnight tool alone: it asks the user first and then turns things off itself."),
+        ),
+        Skill(
+            id = "screen", title = "The screen", about = "showing pages and devices on the tablet, light or dark look",
+            words = listOf(
+                "visa", "öppna", "show", "open", "sida*", "sidan", "page*", "skärm*", "screen", "tema", "theme", "mörkt läge", "ljust läge",
+                "dark mode", "light mode", "gå till", "go to", "översikt*", "overview",
+            ),
+            tools = listOf("open_page", "open_device", "set_theme"),
+        ),
+        Skill(
+            id = "internet", title = "Internet", about = "facts and news from the internet",
+            words = listOf(
+                "sök*", "search*", "google*", "internet", "nyhet*", "news", "wikipedia", "vem är", "who is", "vad är", "what is", "hur många",
+                "how many", "när är", "when is", "varför", "why", "resultat*", "score*", "pris*", "price*",
+            ),
+            tools = listOf("ask_internet"),
+        ),
+        Skill(
             id = "battery", title = "Tablet battery", about = "the tablet's own battery and charging reminders",
             words = listOf("batteri*", "battery", "batteries", "ladd*", "charg*", "laddning*", "ström*", "power"),
             rules = listOf(BatteryNag.rule(batteryReminders)),
@@ -243,10 +312,12 @@ object KnowHow {
         val own = data.own.associateBy { it.id }
         val shipped = builtIn(batteryReminders)
         val fromHomey = view?.let { v -> HomeyTopics.from(v, shipped.flatMap { it.classes }.toSet()) }.orEmpty()
+        // The home's own mood names ("Filmkväll", "Middag") bring the moods topic too.
+        val moodWords = view?.moods.orEmpty().flatMap { m -> NameMatch.normalize(m.mood.name).split(' ').filter { it.length >= 4 } }
         val built = (shipped + fromHomey).map { s ->
             val mine = own[s.id]
             s.copy(
-                words = (s.words + mine?.words.orEmpty().map(::loose) + data.learned[s.id].orEmpty()).distinct(),
+                words = (s.words + mine?.words.orEmpty().map(::loose) + data.learned[s.id].orEmpty() + if (s.id == "moods") moodWords.map(::loose) else emptyList()).distinct(),
                 rules = s.rules + mine?.rules.orEmpty() + data.extra[s.id].orEmpty(),
                 tools = (s.tools + mine?.tools.orEmpty()).distinct(),
             )
@@ -317,13 +388,16 @@ object KnowHow {
         return out.values.toList()
     }
 
-    private fun key(word: String) = word.lowercase().trimEnd('*')
+    private fun key(word: String) = word.lowercase().trim('*')
 
     /** The word or phrase [w] as heard in [text], or null. */
     private fun heard(w: String, text: String, tokens: List<String>): String? {
-        val k = Routines.normalize(w.trimEnd('*'))
+        val k = Routines.normalize(w.trim('*'))
         if (k.isEmpty()) return null
         return when {
+            // "*jazz" is the end of a word ("morgonjazz"), "*jazz*" anywhere in one.
+            w.startsWith('*') && w.endsWith('*') && w.length > 2 -> tokens.firstOrNull { it.contains(k) }
+            w.startsWith('*') -> tokens.firstOrNull { it.endsWith(k) }
             ' ' in k -> k.takeIf { text.contains(" $k ") || (w.endsWith('*') && text.contains(" $k")) }
             w.endsWith('*') -> tokens.firstOrNull { it.startsWith(k) }
             else -> tokens.firstOrNull { it == k }
@@ -465,6 +539,42 @@ class KnowHowBook(private val dir: File, private val clock: () -> Long = System:
         d.copy(learned = d.learned + (id to d.learned[id].orEmpty().filterNot { it == word }))
     }
 
+    /** Remembers that [words] mean cue [id] ([Cues]). */
+    suspend fun addCueWords(id: String, words: List<String>) {
+        val clean = words.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        if (clean.isEmpty()) return
+        change { d -> d.copy(cues = d.cues + (id to (d.cues[id].orEmpty() + clean).distinct())) }
+    }
+
+    /** Keeps how [say] was done ([calls], `name {json}`), to show with similar questions later. */
+    suspend fun learnExample(say: String, calls: List<String>) =
+        change { d -> d.copy(examples = Examples.add(d.examples, say, calls, clock())) }
+
+    /** The last answer was wrong: its example, if one was kept, is forgotten. Whether there was one. */
+    suspend fun forgetLastExample(since: Long): Boolean {
+        val last = _data.value.examples.lastOrNull()?.takeIf { it.at >= since } ?: return false
+        change { d -> d.copy(examples = d.examples - last) }
+        return true
+    }
+
+    /** Remembers that [a] and [b] are the same word in the two languages. */
+    suspend fun addTranslation(a: String, b: String) {
+        val pair = listOf(a.trim().lowercase(), b.trim().lowercase())
+        if (pair.any { it.isEmpty() }) return
+        change { d -> d.copy(translations = (d.translations + listOf(pair)).distinct()) }
+    }
+
+    /** Forgets a taught [word] wherever it is; whether it was there. */
+    suspend fun forgetWord(word: String): Boolean {
+        val w = word.trim().lowercase()
+        var found = false
+        change { d ->
+            found = d.cues.values.any { w in it } || d.translations.any { w in it }
+            d.copy(cues = d.cues.mapValues { (_, l) -> l - w }.filterValues { it.isNotEmpty() }, translations = d.translations.filterNot { w in it })
+        }
+        return found
+    }
+
     /** Adds the owner's [rule] to topic [id]. */
     suspend fun addRule(id: String, rule: String) {
         val text = rule.trim().takeIf { it.isNotEmpty() } ?: return
@@ -522,7 +632,7 @@ class KnowHowBook(private val dir: File, private val clock: () -> Long = System:
 
 /** teach and forget_rule: the owner's rules on a topic, added and removed by voice. The [Agent] answers guide itself. */
 class KnowHowTools(private val book: KnowHowBook, private val batteryReminders: () -> Boolean = { true }) {
-    val names = setOf("teach", "forget_rule")
+    val names = setOf("teach", "forget_rule", "teach_words", "forget_words")
 
     fun skills(): List<Skill> = KnowHow.graph(book.data.value, batteryReminders())
 
@@ -532,6 +642,16 @@ class KnowHowTools(private val book: KnowHowBook, private val batteryReminders: 
             string("rule", "The rule, in the user's words")
             string("words", "For a new topic: words that bring it up, comma-separated")
             required("topic", "rule")
+        },
+        tool("teach_words", "Remember that the user's words mean something the app listens for, e.g. \"sovdags\" means goodnight, \"tvättstugan\" is laundry room.") {
+            string("words", "The user's words, comma-separated")
+            string("means", "What they mean: goodnight, music, volume, pause, show, finished, bought, light_level, on_off, blinds, heat, mode_word, " +
+                "a tool name (calendar, timer, fridge_contents, read_recipe…), or a word in the other language")
+            required("words", "means")
+        },
+        tool("forget_words", "Forget words the user taught.") {
+            string("words", "The words, comma-separated")
+            required("words")
         },
         tool("forget_rule", "Forget a rule the user gave for a topic.") {
             string("rule", "Words from the rule to forget")
@@ -557,6 +677,22 @@ class KnowHowTools(private val book: KnowHowBook, private val batteryReminders: 
                     book.saveTopic(Skill(id = KnowHowBook.idFor(title), title = title, about = rule.take(60), words = words, rules = listOf(rule), own = true))
                     ToolResult("Made a new topic, $title, with that rule.")
                 }
+            }
+            "teach_words" -> {
+                val words = str("words").split(',').map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { return ToolResult("Say which words.") }
+                val means = NameMatch.normalize(str("means")).replace(' ', '_').ifEmpty { return ToolResult("Say what the words mean.") }
+                val cue = listOf(means, "needs_$means", means.removeSuffix("s")).firstOrNull { Cues.exists(it) }
+                if (cue != null) {
+                    book.addCueWords(cue, words)
+                    ToolResult("Remembered: ${words.joinToString()} now means ${cue.removePrefix("needs_")}.")
+                } else {
+                    words.forEach { book.addTranslation(it, str("means")) }
+                    ToolResult("Remembered: ${words.joinToString()} is ${str("means")} in the other language.")
+                }
+            }
+            "forget_words" -> {
+                val gone = str("words").split(',').map { it.trim() }.filter { it.isNotEmpty() }.filter { book.forgetWord(it) }
+                ToolResult(if (gone.isEmpty()) "I hadn't learned those words." else "Forgot ${gone.joinToString()}.")
             }
             "forget_rule" -> {
                 val id = str("topic").takeIf { it.isNotEmpty() }?.let { KnowHow.topic(skills, it)?.id }

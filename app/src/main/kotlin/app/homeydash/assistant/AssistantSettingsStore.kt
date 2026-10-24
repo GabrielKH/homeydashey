@@ -92,6 +92,11 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         knowHow = p[KNOW_HOW] != "false",
         logToken = p[LOG_TOKEN]?.let(KeystoreCipher::decrypt).orEmpty(),
         logRepo = p[LOG_REPO]?.takeIf { it.isNotBlank() } ?: AgentSettings().logRepo,
+        logLevel = enumOr(p[LOG_LEVEL], AgentSettings().logLevel),
+        logAreas = app.homeydash.agent.LogArea.entries.mapNotNull { a ->
+            p[logAreaKey(a)]?.let { v -> app.homeydash.agent.LogLevel.entries.firstOrNull { it.name == v } }?.let { a to it }
+        }.toMap(),
+        verboseUntil = p[VERBOSE_UNTIL]?.toLongOrNull() ?: 0L,
         spotifyClientId = p[SPOTIFY_ID].orEmpty(),
         spotifySecret = p[SPOTIFY_SECRET]?.let(KeystoreCipher::decrypt).orEmpty(),
         spotifyUser = p[SPOTIFY_USER]?.let(KeystoreCipher::decrypt).orEmpty(),
@@ -154,6 +159,12 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         p[KNOW_HOW] = s.knowHow.toString()
         p[LOG_TOKEN] = KeystoreCipher.encrypt(s.logToken.trim())
         p[LOG_REPO] = s.logRepo.trim()
+        p[LOG_LEVEL] = s.logLevel.name
+        app.homeydash.agent.LogArea.entries.forEach { a ->
+            val own = s.logAreas[a]
+            if (own != null) p[logAreaKey(a)] = own.name else p.remove(logAreaKey(a))
+        }
+        p[VERBOSE_UNTIL] = s.verboseUntil.toString()
         p[SPOTIFY_ID] = s.spotifyClientId.trim()
         p[SPOTIFY_SECRET] = KeystoreCipher.encrypt(s.spotifySecret.trim())
         p[SPOTIFY_USER] = KeystoreCipher.encrypt(s.spotifyUser.trim())
@@ -233,6 +244,9 @@ class AssistantSettingsStore(private val context: Context, private val scope: Co
         val KNOW_HOW = stringPreferencesKey("know_how")
         val LOG_TOKEN = stringPreferencesKey("log_token")
         val LOG_REPO = stringPreferencesKey("log_repo")
+        val LOG_LEVEL = stringPreferencesKey("log_level")
+        val VERBOSE_UNTIL = stringPreferencesKey("log_verbose_until")
+        fun logAreaKey(a: app.homeydash.agent.LogArea) = stringPreferencesKey("log_area_${a.name}")
 
         inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
             name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default

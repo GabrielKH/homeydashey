@@ -109,6 +109,36 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[COMPACT_SIDEBAR] = compact }
     }
 
+    /** The post-its show on the dark screen. */
+    val notesOnDark: Flow<Boolean> = context.dataStore.data.map { it[NOTES_ON_DARK] ?: true }
+
+    suspend fun setNotesOnDark(on: Boolean) {
+        context.dataStore.edit { it[NOTES_ON_DARK] = on }
+    }
+
+    /** The small Notes card on the overview; off until asked for, since the overview is full. */
+    val notesCard: Flow<Boolean> = context.dataStore.data.map { it[NOTES_CARD] ?: false }
+
+    suspend fun setNotesCard(on: Boolean) {
+        context.dataStore.edit { it[NOTES_CARD] = on }
+    }
+
+    /** Readings picked to show on a device's card, by device id (one "id<TAB>cap,cap" line each). */
+    val cardReadings: Flow<Map<String, List<String>>> = context.dataStore.data.map { prefs ->
+        prefs[CARD_READINGS].orEmpty().lines().mapNotNull { line ->
+            val (id, caps) = line.split('\t', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+            id to caps.split(',').filter { it.isNotBlank() }
+        }.toMap()
+    }
+
+    suspend fun setCardReadings(deviceId: String, capabilities: List<String>) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[CARD_READINGS].orEmpty().lines().filter { it.isNotBlank() && !it.startsWith(deviceId + "\t") }
+            val next = if (capabilities.isEmpty()) current else current + (deviceId + "\t" + capabilities.joinToString(","))
+            prefs[CARD_READINGS] = next.joinToString("\n")
+        }
+    }
+
     /** Rooms left off the dashboard on this tablet, by zone id. */
     val hiddenRooms: Flow<Set<String>> = context.dataStore.data.map { it[HIDDEN_ROOMS].orEmpty() }
 
@@ -116,6 +146,16 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit {
             val current = it[HIDDEN_ROOMS].orEmpty()
             it[HIDDEN_ROOMS] = if (hidden) current + zoneId else current - zoneId
+        }
+    }
+
+    /** Overview cards (widget keys and "room:" keys) taken off the overview with + Add card. */
+    val overviewOff: Flow<Set<String>> = context.dataStore.data.map { it[OVERVIEW_OFF].orEmpty() }
+
+    suspend fun setOverviewOff(key: String, off: Boolean) {
+        context.dataStore.edit {
+            val current = it[OVERVIEW_OFF].orEmpty()
+            it[OVERVIEW_OFF] = if (off) current + key else current - key
         }
     }
 
@@ -343,7 +383,11 @@ class SettingsRepository(private val context: Context) {
         val MODULES = stringSetPreferencesKey("modules")
         val SEEN_CHANGES = stringSetPreferencesKey("seen_changes")
         val COMPACT_SIDEBAR = booleanPreferencesKey("compact_sidebar")
+        val NOTES_ON_DARK = booleanPreferencesKey("notes_on_dark")
+        val NOTES_CARD = booleanPreferencesKey("notes_card")
         val HIDDEN_ROOMS = stringSetPreferencesKey("hidden_rooms")
+        val OVERVIEW_OFF = stringSetPreferencesKey("overview_off")
+        val CARD_READINGS = stringPreferencesKey("card_readings")
         val ROOM_ORDER = stringPreferencesKey("room_order")
         val ACCENT_OPACITY = floatPreferencesKey("accent_opacity")
 

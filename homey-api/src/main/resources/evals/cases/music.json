@@ -1,0 +1,82 @@
+{
+  "skill": "music",
+  "title": "Music and speakers",
+  "cases": [
+    {
+      "id": "music.p1_kitchen",
+      "about": "A radio station on the speaker in a room.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["spela P1 i köket", "sätt på P1 i köket", "kan du sätta på radio P1 i köket"],
+        "en": ["play P1 in the kitchen"]
+      },
+      "expect": {"did": ["play:kitchen_sonos:p1"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.jazz_living",
+      "about": "A favourite, said loosely.",
+      "say": {
+        "sv": ["sätt på lite morgonjazz i vardagsrummet", "spela morgonjazz på vardagsrummets sonos"],
+        "en": ["put on the morning jazz in the living room"]
+      },
+      "expect": {"did": ["play:living_sonos:morgonjazz"], "may_change": ["living_sonos"]}
+    },
+    {
+      "id": "music.pause",
+      "about": "Pausing what plays.",
+      "given": {"devices": {"kitchen_sonos": {"speaker_playing": true}}},
+      "say": {"sv": ["pausa musiken i köket", "stäng av musiken i köket"], "en": ["pause the music in the kitchen"]},
+      "expect": {"state": {"kitchen_sonos": {"speaker_playing": false}}}
+    },
+    {
+      "id": "music.louder",
+      "about": "Louder means a higher volume than now.",
+      "given": {"devices": {"kitchen_sonos": {"speaker_playing": true, "volume_set": 0.3}}},
+      "say": {"sv": ["höj volymen i köket", "lite högre i köket"], "en": ["turn the kitchen speaker up"]},
+      "expect": {"up": {"kitchen_sonos": ["volume_set"]}, "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.anything",
+      "about": "\"Play something\" picks something instead of asking.",
+      "say": {"sv": ["spela något i köket"], "en": ["play some music in the kitchen"]},
+      "expect": {"did": ["play:kitchen_sonos"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.album",
+      "about": "An album on Spotify, as an album.",
+      "say": {
+        "sv": ["spela albumet Abbey Road i köket", "sätt på Rumours med Fleetwood Mac i köket"],
+        "en": ["play the album Abbey Road in the kitchen"]
+      },
+      "expect": {"did": ["spotify:album:abbey road|spotify:album:rumours"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.podcast",
+      "about": "A podcast plays its newest episode.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["spela podden Värvet i köket", "sätt på senaste avsnittet av Alex och Sigge i köket"],
+        "en": ["play the Värvet podcast in the kitchen"]
+      },
+      "expect": {"did": ["spotify:podcast:varvet|spotify:podcast:alex"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.song",
+      "about": "A song by its name and artist.",
+      "say": {"sv": ["spela Dancing Queen med ABBA i vardagsrummet"], "en": ["play Dancing Queen by ABBA in the living room"]},
+      "expect": {"did": ["spotify:song:dancing queen"], "tools": ["play_music"], "may_change": ["living_sonos"]}
+    },
+    {
+      "id": "music.artist",
+      "about": "An artist named alone.",
+      "say": {"sv": ["spela Veronica Maggio i köket", "jag vill lyssna på Veronica Maggio i köket"], "en": ["play some Veronica Maggio in the kitchen"]},
+      "expect": {"did": ["spotify:artist:veronica maggio"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    },
+    {
+      "id": "music.my_playlist",
+      "about": "The owner's own playlist from their Spotify library.",
+      "say": {"sv": ["spela min spellista Middagsmusik i köket"], "en": ["play my playlist Middagsmusik in the kitchen"]},
+      "expect": {"did": ["spotify:playlist:middagsmusik"], "tools": ["play_music"], "may_change": ["kitchen_sonos"]}
+    }
+  ]
+}

@@ -36,3 +36,16 @@ tasks.test {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+
+// Asks a real AI brain every skill test case and writes build/evals/report.md; see EvalMain for the settings,
+// e.g. ./gradlew :homey-api:evals -Peval.brain=gemini
+tasks.register<JavaExec>("evals") {
+    group = "verification"
+    description = "Tests the assistant's skills against a real AI brain."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.homeydash.agent.evals.EvalMainKt")
+    workingDir = projectDir
+    defaultCharacterEncoding = "UTF-8"
+    jvmArgs("-Dstdout.encoding=UTF-8")
+    project.properties.filterKeys { it.startsWith("eval.") }.forEach { (k, v) -> systemProperty(k, v.toString()) }
+}

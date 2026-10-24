@@ -117,7 +117,7 @@ fun VacuumTile(device: Device, actions: DashboardActions, modifier: Modifier = M
         modifier
             .fillMaxWidth()
             .height(TileHeight)
-            .pressable({ actions.open(Sheet.Vacuum(device.id)) }, { actions.hold(Sheet.CardMenu(device.id)) })
+            .pressable({ actions.open(Sheet.Vacuum(device.id)) }, { actions.hold() })
             .glass(TileShape)
             .padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),

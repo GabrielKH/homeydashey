@@ -81,12 +81,18 @@ class FridgeTools(
         if (query.isNotBlank()) shown = shown.filter { (item, _) -> score(query, item) > 0 }
         within?.let { d -> shown = shown.filter { it.second.daysLeft <= d.toLong() } }
         if (shown.isEmpty()) return ok("Nothing matches. In there: " + all.take(20).joinToString { it.first.name } + ".")
+        // Small models tell only the warnings; what's there is all of it.
+        val hint = if (query.isBlank() && within == null && shown.size > 1) "\nAsked what's in there, name every item, not just the ones with a warning."
+            // It named only the chicken going off in two days, not the yoghurt already past its date: the names are spelled out.
+            else if (within != null) "\nThese go off first; anything past its date comes first. Name each one: " +
+                shown.take(10).joinToString { (item, e) -> item.name + if (e.daysLeft < 0) " (already past its date)" else "" } + "." else ""
         return ok("Today is ${fridge.today()}.\n" + shown.take(40).joinToString("\n") { (item, e) -> line(item, e) } +
-            if (shown.size > 40) "\n…and ${shown.size - 40} more." else "")
+            (if (shown.size > 40) "\n…and ${shown.size - 40} more." else "") + hint)
     }
 
     private suspend fun add(a: JsonObject): ToolResult {
-        val name = a.str("name").trim()
+        // Small models often call it "item", as the other fridge tools do.
+        val name = a.str("name").ifBlank { a.str("item") }.trim()
         if (name.isBlank()) return ok("Say what to add.")
         val category = a.str("category").takeIf { it.isNotBlank() }?.let { FoodRules.find(it) } ?: FoodRules.classify(name)
         val date = a.str("date").takeIf { it.isNotBlank() }?.let { parseDate(it) ?: return ok("The date must be yyyy-mm-dd.") }

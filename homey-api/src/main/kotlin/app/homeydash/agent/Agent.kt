@@ -140,8 +140,25 @@ class Agent(
     ): AgentReply {
         asking = settings.asker
         guestAsking = settings.guest
+        // The words the owner taught ("sovdags" is goodnight) count in every check from here on.
+        knowHow?.data?.value.let { Cues.useOwner(it?.cues.orEmpty(), it?.translations.orEmpty()) }
         val heard = Watch(listener)
+        // "Det där blev fel": marks the last answer for Claude to look at, and isn't a question itself.
+        if (WrongAnswer.matches(text, settings.wakeName)) {
+            heard.trace(AgentLog.FLAG, "Said the last answer was wrong: \"$text\"")
+            // What was just done is no example to copy.
+            if (knowHow?.forgetLastExample(System.currentTimeMillis() - FORGET_EXAMPLE_MS) == true) heard.trace("know-how", "Forgot the example kept from the last answer.")
+            return AgentReply(
+                if (swedish(text, settings)) "Okej, jag har markerat det för Claude." else "Got it, I've marked that for Claude.",
+                actions = listOf("Marked the last answer as wrong in the logs."),
+            )
+        }
         heard.trace("question", text)
+        // Heard after an answer and plainly said to someone else ("vad ska vi äta ikväll, älskling?").
+        if (context.followUp && context.routine == null && CallCheck.toSomeoneElse(text, settings)) {
+            heard.trace("guard", "Said to someone else while the microphone stayed open; let it pass.")
+            return AgentReply("", ignored = true)
+        }
         val reply = answer(text, settings, view, heard.tools(tools), context, heard, speech).copy(rounds = heard.rounds.toList())
         heard.trace(
             when {
@@ -217,7 +234,13 @@ class Agent(
             noticeNewKinds(skills, settings)
             // The topics this question needs that the conversation doesn't have yet.
             topicsBefore = kept.flatMap { it.topics }.toSet()
-            val found = if (!settings.knowHow) emptyList() else KnowHow.find(skills, text, homeView, active(context), already = topicsBefore)
+            val found = if (!settings.knowHow) emptyList() else KnowHow.find(skills, text, homeView, active(context), already = topicsBefore).let { f ->
+                // "Vad behöver jag till pannkakorna?" names no topic word, but plainly needs read_recipe: its topic comes too.
+                val tool = CallCheck.shouldCall(text, specs.map { it.name })
+                val topic = tool?.let { t -> skills.firstOrNull { t in it.tools && !it.always } }
+                if (topic == null || topic.id in topicsBefore || f.any { it.skill.id == topic.id } || f.any { tool in it.skill.tools }) f
+                else f + Found(topic, 1.0, "needs $tool")
+            }
             topicsNow.clear()
             topicsNow += found.map { it.skill.id }
             if (found.isNotEmpty()) heard.trace("know-how", found.joinToString("; ") { "${it.skill.id} (${it.why})" })
@@ -228,14 +251,40 @@ class Agent(
             var acted = false
             // A tool actually changed something; a failed or wrong call doesn't count.
             var changed = false
+            // The calls that changed something, kept as an example when the turn went cleanly.
+            val executed = mutableListOf<String>()
+            val guardsBefore = heard.guards
             var nudged = false
             var emptied = false
+            var relanguaged = false
             var reasked = false
             // Calls it asked for again after they were done: twice means it's going round in circles.
             var repeats = 0
             val actions = mutableListOf<String>()
             // What each call did this turn, so the same change asked for twice isn't done twice.
             val done = mutableMapOf<String, ToolResult>()
+            // Calls CallCheck doubted once; asked for again, they run.
+            val warned = mutableSetOf<String>()
+            // Calls CallCheck refused; asked for again with an answer beside them, the answer stands.
+            val refusedBefore = mutableSetOf<String>()
+            // The target of a change that failed: nothing else is switched instead of it.
+            var failedTarget: String? = null
+            // Looked up since the last change: the same look again only repeats it.
+            val looked = mutableMapOf<String, ToolResult>()
+            var toldToCall = false
+            // Tools that ran this turn, so a needed one still missing after others is asked for.
+            val ranTools = mutableSetOf<String>()
+            // Tools whose answer this turn was something (not "no recipe is open"), for spotting a rewrite already covered.
+            val workedTools = mutableSetOf<String>()
+            // Calls skipped because what they became was done; skipped again counts as a repeat.
+            val skipped = mutableSetOf<String>()
+            // A mood set the room: lamps and blinds the user didn't name are left as the mood made them.
+            var moodSet = false
+            // What a refusal said to tell the user ("there's no dishwasher"), if the AI keeps claiming otherwise.
+            var refusedSay: Pair<String, String>? = null
+            // What the user may be agreeing to: the question it asked just before, in a follow-up.
+            // Short answers ("ja", "gör det") count too: the eval and quick replies don't always come as follow-ups.
+            val lastAsked = if (!context.followUp && text.trim().split(Regex("\\s+")).size > 4) "" else history.lastOrNull()?.messages?.lastOrNull { it.role == "assistant" && !it.content.isNullOrBlank() }?.content.orEmpty()
             val out = voice?.let { SpeechStream(it, homeView::named) }
             heard.trace("brain", "${brain.provider.label} ${brain.model}" + if (brain.local) " (local)" else " (internet)")
             try {
@@ -248,8 +297,9 @@ class Agent(
                     // the AI talking to itself before its next call.
                     out?.next(hold = acted)
                     val live = out?.takeIf { !command || changed }
+                    if (heard.wants(AgentLog.PROMPT)) heard.trace(AgentLog.PROMPT, prompt(messages, tools.sent), brain.local && settings.keepsLocal())
                     // Always streamed, also when nothing is spoken yet, so the first word can be timed.
-                    val answer = try {
+                    var answer = try {
                         chat.stream(brain, messages, tools.sent, requireTool = nudged && !acted, onText = { piece: String -> live?.feed(piece) })
                     } catch (e: IOException) {
                         heard.step(AgentStep(step, thinking, StepState.Failed, e.message, thinking = true))
@@ -259,6 +309,10 @@ class Agent(
                         throw e
                     }
                     heard.step(AgentStep(step, thinking, StepState.Done, thinking = true))
+                    // It sometimes writes the prompt's own "The user said: …" line back into its answer.
+                    answer = answer.content?.takeIf { it.contains(QUESTION_LABEL) }?.let { c ->
+                        answer.copy(content = c.lines().filterNot { it.trim().startsWith(QUESTION_LABEL) }.joinToString("\n").trim())
+                    } ?: answer
                     answer.stats?.let { st ->
                         heard.rounds += st
                         heard.trace("speed", "round ${heard.rounds.size}: ${st.text()}")
@@ -287,6 +341,17 @@ class Agent(
                             }
                             return AgentReply("", brain, ignored = true)
                         }
+                        // "Vad händer i morgon?" answered with the weather: the tool it needs, asked for once.
+                        if (!toldToCall && context.routine == null) {
+                            CallCheck.shouldCall(text, specs.map { it.name }, answer.content)?.takeIf { !acted || it !in ranTools }?.let { tool ->
+                                toldToCall = true
+                                heard.trace("guard", "Answered without $tool; asked it to call it.")
+                                // The tool may not be in this question's list: its line comes with the nudge.
+                                val line = if (compact) specs.filter { it.name == tool }.let { ToolText.lines(it) } else ""
+                                turn += ChatMessage.user(nudgeCall(tool) + if (line.isBlank()) "" else "\n$line")
+                                return@repeat
+                            }
+                        }
                         // An empty answer: the server hid what the model wrote (vMLX drops tool tags
                         // when no tool schemas were sent), or it wrote nothing. Ask once, then say so.
                         if (answer.content.isNullOrBlank()) {
@@ -303,7 +368,9 @@ class Agent(
                         // "I'll turn on the light", or "the light is on" without doing it: small models
                         // sometimes stop at the promise, or claim it's done.
                         val said = answer.content.orEmpty()
-                        val claims = PROMISE.containsMatchIn(said) || (command && (CLAIM.containsMatchIn(said) || ECHO.containsMatchIn(said)))
+                        // "Want me to try turning on the kitchen lamp instead?" offers; it claims nothing.
+                        val stated = statements(said)
+                        val claims = PROMISE.containsMatchIn(stated) || (command && (CLAIM.containsMatchIn(stated) || ECHO.containsMatchIn(stated)))
                         if (!changed && !nudged && claims) {
                             nudged = true
                             heard.trace("guard", if (acted) "It said it did something a tool didn't do; asked it to try again." else "It promised or claimed without calling a tool; asked it to do it.")
@@ -311,29 +378,108 @@ class Agent(
                             return@repeat
                         }
                         // Still nothing done after the nudge: never let it say it did something.
-                        if (!changed && nudged && command && CLAIM.containsMatchIn(said)) {
+                        if (!changed && nudged && command && CLAIM.containsMatchIn(stated)) {
                             heard.trace("guard", "Still claimed a change after the nudge; told the user nothing was done.", keepLocal)
                             remember(turn.take(1) + ChatMessage("assistant", nothingDone(text, settings)), localOnly)
                             actions += "The AI said it changed something, but no tool changed anything."
+                            refusedSay?.let { (en, sv) -> return AgentReply(if (swedish(text, settings)) sv else en, brain, actions = actions) }
                             return AgentReply(nothingDone(text, settings), brain, actions = actions, error = true)
+                        }
+                        // Set to one language but answered in the other, as the local AI does after a Swedish question.
+                        val wrongLanguage = answersSwedish(settings)?.let { sv -> inOtherLanguage(said, sv, homeView) } == true
+                        if (wrongLanguage && !relanguaged && live?.spokeThisRound != true) {
+                            relanguaged = true
+                            val sv = answersSwedish(settings) == true
+                            heard.trace("guard", "Answered in the wrong language; asked for it in ${if (sv) "Swedish" else "English"}.")
+                            turn += ChatMessage.user(if (sv) NUDGE_SWEDISH else NUDGE_ENGLISH)
+                            return@repeat
                         }
                         remember(turn, localOnly)
                         if (actions.isEmpty()) actions += "No tool was used; nothing in the home was changed."
+                        // Done without any guard stepping in: kept, so the next time it's said the same way it's copied.
+                        if (changed && executed.isNotEmpty() && heard.guards == guardsBefore && context.routine == null && !settings.guest && settings.knowHow) {
+                            runCatching { knowHow?.learnExample(text, executed.distinct()) }
+                        }
                         live?.finish()
                         return AgentReply(homeView.named(answer.content.orEmpty()).ifBlank { "Okay." }, brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
                     }
+                    var refusedAgain = false
+                    var refusedNow = false
+                    var ran = false
                     for (asked in answer.toolCalls) {
                         acted = true
-                        val call = lightsOnly(asked, text)
+                        val names = specs.map { it.name }
+                        val real = CallCheck.renamed(asked, names)?.also { heard.trace("guard", "No tool called ${asked.name}; ran ${it.name} ${it.arguments}.") } ?: asked
+                        var call = lightsOnly(real, text)?.let { c ->
+                            CallCheck.recipeInstead(c, text, names)?.also { heard.trace("guard", "Opened the recipe instead of the recipes page.") }
+                                ?: CallCheck.rewrite(c, text, names, homeView)?.also { heard.trace("guard", "Asked for ${c.name} ${c.arguments}; ran ${it.name} ${it.arguments}, as the question said.") }
+                                ?: c
+                        }
                         if (call == null) {
                             heard.trace("guard", "Skipped ${asked.name} ${asked.arguments}: the user only asked about lights.")
                             turn += ChatMessage.tool(asked.id, NOT_LIGHTS)
+                            // The same skipped call again: it's going round in circles.
+                            if (!skipped.add("${asked.name} ${asked.arguments}")) repeats++
                             continue
                         }
-                        val key = "${call.name} ${call.arguments}"
+                        var key = "${call.name} ${call.arguments}"
+                        // Its call turned into one already done this turn (rooms one by one as the whole house,
+                        // lamps as goodnight): the model didn't ask twice, so it's no repeat.
+                        if (call != real && (key in done || key in looked || (call.name != real.name && call.name in workedTools))) {
+                            val realKey = "${real.name} ${real.arguments}"
+                            if (real.name in LOOKS && realKey !in looked && real.name in names && call.name !in workedTools) {
+                                // The rewrite was tried already (no recipe "pancakes"); its own look-up may find more.
+                                heard.trace("guard", "The call it became was already done; ran ${real.name} as asked instead.")
+                                call = real
+                                key = realKey
+                            } else {
+                                // Skipped the same call before: it's going round in circles.
+                                if (!skipped.add(realKey)) repeats++
+                                heard.trace("guard", "Skipped ${real.name} ${real.arguments}: the call it became was already done.")
+                                turn += ChatMessage.tool(asked.id, ALREADY_COVERED)
+                                continue
+                            }
+                        }
+                        // Goodnight asks the user first; its answer comes in their next words, not this turn.
+                        if (call.name == "goodnight" && "goodnight" in ranTools) {
+                            heard.trace("guard", "Skipped ${call.name} ${call.arguments}: goodnight already asked the user.")
+                            turn += ChatMessage.tool(asked.id, WAIT_FOR_ANSWER)
+                            // What it said beside the call ("say yes if that sounds right") is the answer.
+                            repeats = MAX_REPEATS
+                            continue
+                        }
+                        val refused = (if (context.routine != null) null else CallCheck.refuse(call, text, homeView, names, lastAsked))
+                            // A doubt gives way when asked again, unless something was already done for the question.
+                            ?.takeUnless { it.soft && !warned.add(key) && !changed }
+                            ?: failedTarget?.takeIf { call.name in SETS && target(call) != it }?.let {
+                                CallCheck.Refusal("Not done: what the user asked for didn't respond, so nothing else is changed instead. Tell them it didn't respond.")
+                            }
+                            ?: CallCheck.Refusal(AFTER_MOOD).takeIf {
+                                moodSet && call.name in SETS && call.name != "set_mood" && !CallCheck.names(text, target(call), homeView)
+                            }
+                        if (refused != null) {
+                            if (refused.say != null) refusedSay = refused.say
+                            if (!refusedBefore.add(key)) refusedAgain = true
+                            refusedNow = true
+                            heard.trace("guard", "Skipped ${call.name} ${call.arguments}: ${refused.text}")
+                            turn += ChatMessage.tool(asked.id, refused.text)
+                            continue
+                        }
+                        ran = true
+                        ranTools += call.name
+                        val seen = looked[key]?.takeIf { call.name in LOOKS && call.name != KnowHow.GUIDE }
                         val before = done[key]?.takeIf { call.name !in LOOKS }
-                        val result = if (call.name == KnowHow.GUIDE) {
-                            guide(call, skills, specs, compact, text, homeView, heard)
+                        val result = if (call.name == KnowHow.GUIDE && key in done) {
+                            // "guide {}" over and over (P: six times for the pancakes) is going round in circles.
+                            repeats++
+                            heard.trace("guard", "Asked for $key again; not given twice.")
+                            ToolResult("You have that already. Call the tool the question needs now, or answer the user.")
+                        } else if (call.name == KnowHow.GUIDE) {
+                            guide(call, skills, specs, compact, text, homeView, heard).also { done[key] = it }
+                        } else if (seen != null) {
+                            repeats++
+                            heard.trace("guard", "Looked up $key again; nothing changed since.")
+                            ToolResult("You looked this up a moment ago and nothing has changed since: ${seen.text} Answer the user now.", seen.localOnly)
                         } else if (before != null && StepText.failed(before.text)) {
                             // The same failing call over and over only made the user wait (P1 radio: four times).
                             heard.trace("guard", "Asked for $key again after it failed; not tried again.")
@@ -346,11 +492,19 @@ class Agent(
                             toolbox.run(call).also { done[key] = it }
                         }
                         val did = when (call.name) {
-                            in LOOKS, in MEMORY_TOOLS -> false
+                            in LOOKS, in READS, in MEMORY_TOOLS -> false
                             in SETS -> CHANGED.any { result.text.startsWith(it) } && !result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
                             else -> true // Timers, pages, recipes and the fridge answer in their own words.
                         }
                         changed = changed || did
+                        if (did && before == null) executed += homeView.named("${call.name} ${call.arguments}")
+                        if (!StepText.failed(result.text) && !NOTHING_FOUND.containsMatchIn(result.text)) workedTools += call.name
+                        if (did && call.name == "set_mood" && !StepText.failed(result.text)) moodSet = true
+                        if (call.name in LOOKS) looked[key] = result
+                        if (call.name in SETS && seen == null) {
+                            if (StepText.failed(result.text)) failedTarget = target(call)
+                            if (did) looked.clear()
+                        }
                         if (did && before == null && call.name in SETS) learnHabit(call, homeView, settings)
                         actions += homeView.named("${call.name} ${call.arguments} → ${result.text.take(140)}")
                         localOnly = localOnly || result.localOnly
@@ -364,13 +518,39 @@ class Agent(
                         val last = turn.removeAt(turn.lastIndex)
                         turn += ChatMessage.tool(last.toolCallId.orEmpty(), last.content.orEmpty() + "\n" + alreadySaid(said))
                     }
+                    // The same refused call again, with an answer beside it ("the hall lamp is off"): the answer is given.
+                    // Looked it up, answered, and then asked for a change nobody wanted ("tick the car service"
+                    // after reading the list): the answer it gave stands.
+                    val answeredLook = refusedNow && !ran && !changed && workedTools.any { it in LOOKS || it in READS } &&
+                        !answer.content.isNullOrBlank() && !PROMISE.containsMatchIn(statements(answer.content.orEmpty()))
+                    // Refused twice and still saying it will do it ("I'll turn on the kitchen lamp"): what the refusal asks is said instead.
+                    if (refusedAgain && !ran && !changed && refusedSay != null && statements(answer.content.orEmpty()).let { PROMISE.containsMatchIn(it) || CLAIM.containsMatchIn(it) }) {
+                        heard.trace("guard", "Asked again for a refused call while promising it; asked the user instead.")
+                        remember(turn, localOnly)
+                        live?.finish()
+                        val (en, sv) = refusedSay!!
+                        return AgentReply(if (swedish(text, settings)) sv else en, brain, pending, actions = actions)
+                    }
+                    if ((refusedAgain || answeredLook) && !ran && !answer.content.isNullOrBlank()) {
+                        heard.trace("guard", if (refusedAgain) "Asked again for a call that was refused; gave its answer instead." else "Answered from what it looked up beside a refused change; gave that answer.")
+                        remember(turn, localOnly)
+                        live?.finish()
+                        return AgentReply(homeView.named(answer.content.orEmpty()), brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
+                    }
                     if (repeats >= MAX_REPEATS) {
                         heard.trace("guard", "Kept asking for calls already done; stopped.")
                         remember(turn, localOnly)
+                        // It had its answer all along ("yes, rain tomorrow"), beside the repeated call.
+                        if (!answer.content.isNullOrBlank()) {
+                            live?.finish()
+                            return AgentReply(homeView.named(answer.content.orEmpty()), brain, pending, actions = actions, spoken = live?.spokeThisRound == true)
+                        }
                         return AgentReply("Sorry, I got stuck going round in circles.", brain, pending, error = true, actions = actions)
                     }
                 }
                 remember(turn, localOnly)
+                // It wandered off a refused ask ("lås upp ytterdörren" into the garage and the lamps): what the refusal says is the answer.
+                if (!changed) refusedSay?.let { (en, sv) -> return AgentReply(if (swedish(text, settings)) sv else en, brain, pending, actions = actions) }
                 return AgentReply("Sorry, that took too many steps.", brain, pending, error = true, actions = actions)
             } catch (e: IOException) {
                 lastError = e.message ?: e.toString()
@@ -559,10 +739,23 @@ class Agent(
         val extra = if (tools.extra.isEmpty()) "" else "\nMore tools for this question:\n" + ToolText.lines(tools.extra)
         val states = view.stateLines()
         val message = ChatMessage.user(
-            situation(settings, view, context, since) + KnowHow.note(topics) + extra + remembered(settings, view, question) + QUESTION + question,
+            situation(settings, view, context, since) + KnowHow.note(topics) + extra + examples(settings, view, question) + remembered(settings, view, question) + QUESTION + question,
         )
         opened = message to Noted(view.local, states, context.weather, full = since == null)
         return message
+    }
+
+    /** [text] without the questions in it, which offer or ask and never claim. */
+    private fun statements(text: String): String =
+        text.split(SENTENCE_END).filterNot { it.trim().endsWith("?") }.joinToString(" ")
+
+    /** The few worked examples closest to [question]: the home's own learned ones and the built-in ones. */
+    private fun examples(settings: AgentSettings, view: HomeView, question: String): String {
+        if (!settings.knowHow) return ""
+        val learned = if (settings.guest) emptyList() else knowHow?.data?.value?.examples.orEmpty()
+        val found = Examples.find(question, learned, names = view.rooms.values + view.devices.map { it.name })
+        if (found.isNotEmpty()) listener?.trace("know-how", "Examples: " + found.joinToString("; ") { it.say })
+        return Examples.note(found)
     }
 
     /**
@@ -666,7 +859,8 @@ class Agent(
             } else if (skills != null) {
                 // Everyday tools stay in the fixed part even when a topic names them too.
                 val topical = skills.filter { !it.always }.flatMap { it.tools }.toSet() - CORE_TOOLS
-                val wanted = found.flatMap { it.tools }.toSet()
+                // No topic found ("gör något åt det"): the everyday tools, as before, rather than too few.
+                val wanted = found.flatMap { it.tools }.toSet().ifEmpty { EVERYDAY_TOOLS }
                 core = all.filter { it.name !in topical }
                 extra = all.filter { it.name in topical && it.name in wanted }
             } else {
@@ -674,6 +868,7 @@ class Agent(
                 val wanted = buildSet {
                     if (context.kitchen != null || RECIPE_WORDS.containsMatchIn(said)) addAll(RECIPE_TOOLS)
                     if (FRIDGE_WORDS.containsMatchIn(said)) addAll(FRIDGE_TOOLS)
+                    if (NOTE_WORDS.containsMatchIn(said)) addAll(NOTE_TOOLS)
                     if (ROUTINE_WORDS.containsMatchIn(said)) addAll(ROUTINE_TOOLS + MEMORY_PACK + KNOW_HOW_PACK)
                     if (HOUSEHOLD_WORDS.containsMatchIn(said)) addAll(HOUSEHOLD_TOOLS)
                 }
@@ -716,7 +911,7 @@ class Agent(
      */
     fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null, skills: List<Skill>? = null): String =
         (if (skills != null) core(settings) + KnowHow.index(skills) else shared(settings, view.local)) +
-            "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
+            "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; light_temperature 0 is cold white, 1 warm yellow; " +
             "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n" +
             // The tools after the devices: which ones there are depends on who asks (a guest has
             // fewer), and everything before this point is then the same for everyone.
@@ -824,8 +1019,8 @@ class Agent(
                 settings.persona == Persona.Tars ->
                     "Always answer in English, even when the user speaks Swedish or any other language; understand them, but reply in English.\n"
                 settings.language == Language.Auto -> "Answer in the language the user spoke: Swedish or English.\n"
-                settings.language == Language.Swedish -> "Always answer in Swedish.\n"
-                else -> "Always answer in English.\n"
+                settings.language == Language.Swedish -> "Always answer in Swedish, even when the user speaks English; understand them, but reply in Swedish.\n"
+                else -> "Always answer in English, even when the user speaks Swedish; understand them, but reply in English.\n"
             },
         )
         val own = settings.traits[settings.persona]?.trim().orEmpty()
@@ -965,9 +1160,17 @@ class Agent(
     }
 
     internal companion object {
+        /** Whether [answer] is plainly in the language the owner didn't pick, once the home's own names are left out. */
+        internal fun inOtherLanguage(answer: String, swedish: Boolean, view: HomeView): Boolean {
+            val names = (view.devices.map { it.name } + view.rooms.values).filter { it.length > 2 }.sortedByDescending { it.length }
+            val bare = names.fold(answer) { t, n -> t.replace(n, " ", ignoreCase = true) }
+            return app.homeydash.agent.evals.Lang.of(bare) == if (swedish) "en" else "sv"
+        }
+
         const val MAX_ROUNDS = 6
         const val IGNORE = "[ignore]"
         const val QUESTION_LABEL = "The user said:"
+        private val SENTENCE_END = Regex("""(?<=[.!?])\s+|\n+""")
         const val QUESTION = "\n\n$QUESTION_LABEL "
         // Word edges that count å, ä and ö as letters, which \b doesn't. Not (?U): Android's
         // regex engine refuses it, and the app crashed on start.
@@ -976,6 +1179,8 @@ class Agent(
         /** Tools that only look. */
         /** Repeated calls before it stops instead of using up every round. */
         const val MAX_REPEATS = 2
+        /** Tools that only read, besides [LOOKS]: an answer given from them stands when a change beside it is refused. */
+        val READS = setOf("read_recipe", "find_recipes", "fridge_contents", "notes")
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines", KnowHow.GUIDE)
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
         val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "save_favourite", "run_device_action", "press_remote")
@@ -991,6 +1196,20 @@ class Agent(
         fun alreadySaid(said: String) = "(From the app: the user already heard you say \"$said\" Don't say that again; " +
             "answer with only what these results add, in a few words, or just confirm it briefly.)"
         const val NUDGE_ADDRESSED = "(From the app, not the user: that was said to you. Answer it now.)"
+        fun nudgeCall(tool: String) = "(From the app, not the user: this needs the $tool tool. Call it now, then answer from what it says.)"
+
+        /** What a change is aimed at: its device, room or player. */
+        fun target(call: ToolCall): String = listOf("device", "room", "player").firstNotNullOfOrNull { k ->
+            (call.arguments[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+        }.orEmpty().lowercase()
+
+        private val NOTHING_FOUND = Regex("""^(No |There's no|There is no|I can't|Nothing|Couldn't)""")
+        const val ALREADY_COVERED = "Already done by the call above; nothing more for this one."
+        const val WAIT_FOR_ANSWER = "Not done: goodnight has asked; wait for the user's answer. Ask them to confirm and stop."
+        const val AFTER_MOOD = "Not done: the mood already set the room the way its owner made it. Don't change other lamps, " +
+            "blinds or players unless the user named them; tell the user the mood is on."
+        const val NUDGE_ENGLISH = "(From the app, not the user: the user set answers to English only. Say your last answer again in English, and nothing else.)"
+        const val NUDGE_SWEDISH = "(From the app, not the user: the user set answers to Swedish only. Say your last answer again in Swedish, and nothing else.)"
         const val NUDGE_EMPTY = "(From the app, not the user: your answer was empty. Call the tool you need now, or answer the user in words.)"
         const val NUDGE_EMPTY_WRITTEN = "(From the app, not the user: your answer came back empty. Write tool calls only as CALL lines, " +
             "like CALL play_music {\"player\": \"player_1\"}, never in <tool_call> tags; or answer the user in words.)"
@@ -998,7 +1217,7 @@ class Agent(
             "Call the tool now, or say plainly why you can't.)"
         val PROMISE = Regex(
             // "Setting" alone is also a noun ("my honesty setting"); only "setting the …" is a promise.
-            """$W(i'?ll|i will|i'?m going to|let me|(turning|switching|setting|dimming|starting|playing) (on|off|up|down|it|them|the|a|your|some)|""" +
+            """$W(i'?ll|i will|i'?m going to|let me|(turning|switching|setting|dimming|starting|playing|closing|opening|stopping|pausing|adding|removing|cancell?ing|putting) (on|off|up|down|it|them|the|a|your|some|that|this)|""" +
                 """jag (ska|kommer att|tänder|släcker|sätter|slår|startar|spelar|höjer|sänker|öppnar|stänger|dimmar|pausar|byter)|tänder|släcker|slår (på|av)|sätter (på|igång))$E""",
             RegexOption.IGNORE_CASE,
         )
@@ -1016,11 +1235,12 @@ class Agent(
         )
         /** The user asked for a change, rather than how things are. */
         val COMMAND = Regex(
-            """$W(tänd|tända|släck|släcka|sätt|sätta|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|gör|fixa|spela|pausa|stoppa|stanna|skicka|kör|turn|switch|put|set|start|dim|raise|lower|open|make|play|pause|stop|send|dock)$E""",
+            """$W(tänd|tända|släck|släcka|sätt|sätta|ställ|ställa|slå|stäng|stänga|starta|dimma|dimra|höj|sänk|öppna|gör|fixa|spela|pausa|stoppa|stanna|skicka|kör|avbryt|ta bort|lägg|lägga|skriv|boka|turn|switch|put|set|start|dim|raise|lower|open|close|make|play|pause|stop|send|dock|cancel|remove|delete|add|write|book)$E""",
             RegexOption.IGNORE_CASE,
         )
         val RECIPE_TOOLS = setOf("find_recipes", "open_recipe", "read_recipe", "recipe_step", "close_recipe", "recipe_timers")
         val FRIDGE_TOOLS = setOf("fridge_contents", "add_to_fridge", "update_fridge_item", "remove_from_fridge")
+        val NOTE_TOOLS = setOf("notes", "write_note", "change_note", "add_todo", "change_todo")
         val ROUTINE_TOOLS = setOf("list_routines", "save_routine", "delete_routine", "remember_instruction", "forget_instruction")
         /** Remembering and forgetting facts only come with "kom ihåg", "glöm" and the like; recall is always there. */
         val MEMORY_PACK = setOf("remember", "forget_memory")
@@ -1028,13 +1248,13 @@ class Agent(
         /** Marking people home or asleep and wake-up alarms: only when the question is about them. */
         val HOUSEHOLD_TOOLS = setOf("set_presence", "alarms")
         /** Tools every question has, whatever topics name them: devices, rooms, moods, Flows, pages and looking things up. */
-        val CORE_TOOLS = setOf(
-            "set_device", "set_room", "get_device", "set_mood", "set_scene", "list_flows", "run_flow", "open_page", "open_device",
-            "goodnight", "weather", "set_theme", "ask_internet", "recall", KnowHow.GUIDE,
-        )
+        /** The tools every question gets; the rest come with their topic, so a small AI picks from a few. */
+        val CORE_TOOLS = setOf("set_device", "set_room", "get_device", "recall", KnowHow.GUIDE)
+        /** Everyday tools that used to be in every question: all of them come when no topic is found. */
+        val EVERYDAY_TOOLS = setOf("set_mood", "set_scene", "list_flows", "run_flow", "open_page", "open_device", "goodnight", "weather", "set_theme", "ask_internet")
         /** Teaching and forgetting a topic's rules by voice. */
-        val KNOW_HOW_PACK = setOf("teach", "forget_rule")
-        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK
+        val KNOW_HOW_PACK = setOf("teach", "forget_rule", "teach_words", "forget_words")
+        val PACKS = RECIPE_TOOLS + FRIDGE_TOOLS + NOTE_TOOLS + ROUTINE_TOOLS + MEMORY_PACK + HOUSEHOLD_TOOLS + KNOW_HOW_PACK
         /** The guide tool, which every AI gets when topic know-how is on; the [Agent] answers it itself. */
         val GUIDE_SPEC = tool(KnowHow.GUIDE, "Get the rules and tools for one of the know-how topics listed in the rules, when the note doesn't have them.") {
             string("topic", "The topic's name, e.g. music or timers")
@@ -1046,8 +1266,9 @@ class Agent(
             RegexOption.IGNORE_CASE,
         )
         val RECIPE_WORDS = Regex("""$W(recept\w*|recipe\w*|laga\w*|cook\w*|baka\w*|middag|lunch|frukost|dinner|ingrediens\w*|ingredient\w*|steg|step|timers?)$E""", RegexOption.IGNORE_CASE)
+        val NOTE_WORDS = Regex("""$W(lapp\w*|post-?it\w*|note\w*|anteckn\w*|todo\w*|to-?do\w*|att göra|att-göra|göra-?list\w*|uppgift\w*|bocka\w*|avbock\w*|tick\w*|task\w*|meddelande\w*|message|skriv upp|skriv en|write (a|it|that|down)|jot)$E""", RegexOption.IGNORE_CASE)
         val FRIDGE_WORDS = Regex("""$W(kyl\w*|frys\w*|skafferi\w*|fridge|freezer|pantry|köpt\w*|bought|åt|ate|slut|utgång\w*|bäst före|expir\w*|öppnat|opened|mat|food|hemma)$E""", RegexOption.IGNORE_CASE)
-        val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
+        val ROUTINE_WORDS = Regex("""$W(rutin\w*|routine\w*|när jag säger|when i say|betyder|menar jag|i mean|means|kom ihåg|remember|glöm\w*|forget|alltid|always|instruktion\w*|instruction\w*)$E""", RegexOption.IGNORE_CASE)
         val STATUS_QUESTION = Regex("""^\s*(är|is|are|vad|what|vilka|which|hur|how|varför|why)$E""", RegexOption.IGNORE_CASE)
         const val MAX_TURNS = 12
         const val REWARM_AFTER_MS = 5 * 60 * 1000L
@@ -1079,6 +1300,8 @@ class Agent(
         const val WARM_UP = ToolText.START
         // Long enough to remember answers across a stretch of cooking between questions.
         const val FORGET_AFTER_MS = 20 * 60 * 1000L
+        /** "Det där blev fel" within this long forgets the example the last answer left. */
+        const val FORGET_EXAMPLE_MS = 10 * 60 * 1000L
         /** Conversations kept for [digest] when the AI couldn't be asked yet. */
         const val MAX_FINISHED = 60
         /** Shorter than this ("tänd i köket", "Done") has nothing to learn from. */
@@ -1087,6 +1310,34 @@ class Agent(
 }
 
 /** Spots a spoken yes or no in Swedish or English. */
+/** The whole prompt of one round as text, for the log at Verbose. */
+internal fun prompt(messages: List<ChatMessage>, tools: List<ToolSpec>): String = buildString {
+    for (m in messages) {
+        append("[").append(m.role).append("]")
+        m.toolCallId?.let { append(" (").append(it).append(")") }
+        append("\n")
+        m.content?.let { append(it).append("\n") }
+        m.toolCalls.forEach { append("CALL ").append(it.name).append(' ').append(it.arguments).append("\n") }
+    }
+    if (tools.isNotEmpty()) append("[tools] ").append(tools.joinToString { it.name })
+}
+
+/** "Det där blev fel", "that was wrong": said about the last answer, alone, maybe with the wake name. */
+object WrongAnswer {
+    private val PHRASE = Regex(
+        // Matched on normalized words: no accents ("dar" for "där"), no apostrophes ("that s").
+        """(det dar |det |nu )?(blev|var|gick) (det )?(helt )?fel( svar)?|fel svar|du (gjorde|svarade|tog) fel|det (dar )?stammer inte|""" +
+            """that( s| is| was) (wrong|not right|incorrect)|wrong answer|you got (that|it) wrong|that s not what i (asked|said|meant)""",
+    )
+
+    fun matches(text: String, wakeName: String = ""): Boolean {
+        var t = NameMatch.normalize(text)
+        val name = NameMatch.normalize(wakeName)
+        if (name.isNotEmpty()) t = t.removePrefix("hej $name").removePrefix("hey $name").removePrefix(name).removeSuffix(name).trim()
+        return PHRASE.matches(t.removeSuffix(" nova").trim())
+    }
+}
+
 object Confirmation {
     private val SPACES = Regex("\\s+")
     private val SWEDISH_WORD = Regex("""\b(och|jag|du|det|är|inte|på|av|ja|nej|tänd|släck|hur|vad)\b""", RegexOption.IGNORE_CASE)

@@ -76,6 +76,7 @@ private val GROUPS = listOf(
     "App" to listOf(
         Category("app", Sym.download, "App and updates"),
         Category("logs", Sym.send, "Logs for Claude"),
+        Category("tests", Sym.check, "Skill tests"),
     ),
 )
 

@@ -207,6 +207,7 @@ internal fun AssistantPage(
         "privacy" -> PrivacyPage(settings, update, onDevices = { nav.page = "devices" }, onPreview = { nav.page = "preview" }, onFaces = onFaces)
         "spotify" -> Spotify(services, settings, update)
         "logs" -> Logs(services, settings, update)
+        "tests" -> SkillTestsPage(services)
         "memory" -> MemoryPage(services, settings, update)
         else -> Main(services, settings, update, onPage = { nav.page = it }, onRoutines = { nav.page = "routines" }, menu = menu)
     }
@@ -220,6 +221,7 @@ private val PAGES = mapOf(
     "privacy" to "Privacy and security",
     "spotify" to "Spotify on Sonos",
     "logs" to "Logs for Claude",
+    "tests" to "Skill tests",
     "memory" to "Memory",
     "phones" to "Find my phone",
 )
@@ -262,7 +264,7 @@ private fun Main(
 
     if (!menu) return
     SettingsBox("Settings") {
-        // Two to a row, so the nine pages take five rows instead of nine.
+        // Two to a row, so the ten pages take five rows instead of ten.
         val pages = listOf(
             Triple(Sym.speaker, "Voice and character") { onPage("voice") },
             Triple(Sym.mic, "Listening") { onPage("listen") },
@@ -273,6 +275,7 @@ private fun Main(
             Triple(Sym.phone, "Find my phone") { onPage("phones") },
             Triple(Sym.musicNote, "Spotify on Sonos") { onPage("spotify") },
             Triple(Sym.send, "Logs for Claude") { onPage("logs") },
+            Triple(Sym.check, "Skill tests") { onPage("tests") },
         )
         pages.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -819,6 +822,11 @@ private fun SpotifyAccount(services: AssistantServices, settings: AgentSettings,
 private fun Logs(services: AssistantServices, settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
     val g = GlassTheme.colors
     val scope = rememberCoroutineScope()
+    LogLevels(settings, update)
+    Hint(
+        "Say \"det där blev fel\" or \"that was wrong\", or hold an answer on the screen, and that answer is marked as wrong in the logs, so Claude sees what to fix.",
+        short = "Say \"det där blev fel\" or hold an answer to mark it for Claude.",
+    )
     SettingsBox(null) {
         SwitchRow(
             "Send logs",
@@ -850,6 +858,58 @@ private fun Logs(services: AssistantServices, settings: AgentSettings, update: (
         }
     }
 }
+
+/**
+ * How much the log keeps, from nothing to every prompt, and per part of the assistant where
+ * it should differ. Verbose holds for an hour, then the log keeps Detailed again.
+ */
+@Composable
+private fun LogLevels(settings: AgentSettings, update: ((AgentSettings) -> AgentSettings) -> Unit) {
+    val g = GlassTheme.colors
+    val now = System.currentTimeMillis()
+    fun pick(s: AgentSettings, level: app.homeydash.agent.LogLevel?, area: app.homeydash.agent.LogArea?): AgentSettings {
+        val until = if (level == app.homeydash.agent.LogLevel.Verbose) System.currentTimeMillis() + VERBOSE_MS else s.verboseUntil
+        return if (area == null) s.copy(logLevel = level ?: s.logLevel, verboseUntil = until)
+        else s.copy(logAreas = if (level == null) s.logAreas - area else s.logAreas + (area to level), verboseUntil = until)
+    }
+    SettingsBox("How much is kept") {
+        Segmented(app.homeydash.agent.LogLevel.entries, settings.logLevel, { it.label }) { l -> update { pick(it, l, null) } }
+        Hint(
+            settings.logLevel.detail + if (settings.logLevel == app.homeydash.agent.LogLevel.Verbose) {
+                if (now < settings.verboseUntil) " Verbose until " + java.time.LocalTime.now().plusSeconds((settings.verboseUntil - now) / 1000).withNano(0).toString().take(5) + "."
+                else " The hour is up, so it keeps Detailed now; pick Verbose again for another hour."
+            } else "",
+        )
+        var open by remember { mutableStateOf(settings.logAreas.isNotEmpty()) }
+        Text(
+            if (open) "Hide the parts" else "Set a part on its own" + if (settings.logAreas.isNotEmpty()) " (${settings.logAreas.size} set)" else "",
+            style = MaterialTheme.typography.labelLarge,
+            color = g.fg,
+            modifier = Modifier.pressable({ open = !open }).glass(PillShape).padding(horizontal = 18.dp, vertical = 10.dp),
+        )
+        if (open) {
+            app.homeydash.agent.LogArea.entries.forEach { area ->
+                SettingsDivider()
+                val own = settings.logAreas[area]
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(area.label, style = MaterialTheme.typography.bodyLarge, color = g.fg, modifier = Modifier.weight(1f))
+                    // Each tap goes to the next level, and after Verbose back to the level above.
+                    val order = listOf<app.homeydash.agent.LogLevel?>(null) + app.homeydash.agent.LogLevel.entries
+                    Text(
+                        own?.label ?: "Like the rest",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (own == null) g.muted else g.fg,
+                        modifier = Modifier.pressable({ update { pick(it, order[(order.indexOf(own) + 1) % order.size], area) } })
+                            .glass(PillShape).padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+            }
+            Hint("Tap a part to step through the levels. With the full prompt sent to the local AI, anything set to Local AI only stays on the tablet.")
+        }
+    }
+}
+
+private const val VERBOSE_MS = 60 * 60_000L
 
 /** Whisper on the computer and/or OpenAI turn questions into text instead of Google. */
 @Composable

@@ -121,7 +121,8 @@ class Transcriber(http: OkHttpClient, private val openAiUrl: String = "https://a
          */
         fun cleanUp(text: String): String {
             // Whisper's own markers ("<|nospeech|>") and sound notes ("[music]") aren't words.
-            val t = text.replace(Regex("""<\|[^|]*\|>|\[[^]]*]|\([^)]*\)"""), " ").replace(Regex("\\s+"), " ").trim()
+            // Timestamps it sometimes writes into the text ("00:10:32.04>") aren't either.
+            val t = text.replace(Regex("""<\|[^|]*\|>|\[[^]]*]|\([^)]*\)|\d{1,2}:\d{2}(:\d{2})?([.,]\d+)?\s*(-->|>)|\d{1,2}:\d{2}:\d{2}[.,]\d+"""), " ").replace(Regex("\\s+"), " ").trim()
             val plain = NameMatch.normalize(t)
             return if (plain.isEmpty() || HALLUCINATIONS.any { plain == it }) "" else t
         }

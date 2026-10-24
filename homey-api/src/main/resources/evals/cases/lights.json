@@ -1,0 +1,105 @@
+{
+  "skill": "lights",
+  "title": "Lights and devices",
+  "cases": [
+    {
+      "id": "lights.kitchen_off",
+      "about": "A room's lights off, said many ways.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["släck i köket", "kan du släcka lamporna i köket?", "stäng av köksljuset", "släck lampan i kök"],
+        "en": ["turn off the kitchen lights", "kitchen lights off please"]
+      },
+      "expect": {
+        "state": {"kitchen_ceiling": {"onoff": false}, "kitchen_spots": {"onoff": false}},
+        "tools": ["set_room|set_device"],
+        "max_sentences": 3
+      }
+    },
+    {
+      "id": "lights.sofa_dim",
+      "about": "One lamp dimmed to a percentage.",
+      "say": {
+        "sv": ["dimma soffbordslampan till 30 procent", "sätt soffbordslampan på 30 %"],
+        "en": ["dim the sofa table lamp to 30 percent"]
+      },
+      "expect": {
+        "state": {"sofa_lamp": {"dim": 0.3}},
+        "may_change": ["sofa_lamp"],
+        "tools": ["set_device"]
+      }
+    },
+    {
+      "id": "lights.bedroom_on",
+      "about": "One lamp on by its room.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["tänd i sovrummet", "tänd sänglampan"],
+        "en": ["turn on the bedroom lamp"]
+      },
+      "expect": {"state": {"bedroom_lamp": {"onoff": true}}}
+    },
+    {
+      "id": "lights.everything_off",
+      "about": "All lights in the house off in one go.",
+      "given": {"devices": {"sofa_lamp": {"onoff": true}, "hall_light": {"onoff": true}}},
+      "say": {
+        "sv": ["släck alla lampor", "släck överallt"],
+        "en": ["turn off all the lights"]
+      },
+      "expect": {
+        "state": {
+          "kitchen_ceiling": {"onoff": false}, "kitchen_spots": {"onoff": false}, "sofa_lamp": {"onoff": false},
+          "hall_light": {"onoff": false}, "bedroom_lamp": {"onoff": false}, "floor_lamp": {"onoff": false}
+        },
+        "tools_never": ["goodnight"]
+      }
+    },
+    {
+      "id": "lights.coffee_on",
+      "about": "A socket that isn't a light.",
+      "say": {
+        "sv": ["sätt på kaffebryggaren", "starta kaffet"],
+        "en": ["switch on the coffee maker"]
+      },
+      "expect": {"state": {"coffee": {"onoff": true}}}
+    },
+    {
+      "id": "lights.thermostat",
+      "about": "Heating to a temperature.",
+      "say": {
+        "sv": ["sätt värmen på 22 grader i vardagsrummet", "höj termostaten till 22"],
+        "en": ["set the living room to 22 degrees"]
+      },
+      "expect": {"state": {"thermostat": {"target_temperature": 22}}, "tools": ["set_device|set_room"]}
+    },
+    {
+      "id": "lights.status_question",
+      "about": "A question about a lamp must not switch it.",
+      "tags": ["smoke"],
+      "say": {
+        "sv": ["är lampan i hallen tänd?", "lyser hallampan?"],
+        "en": ["is the hall light on?"]
+      },
+      "expect": {"unchanged": true, "reply": ["släckt|av|inte|nej|off|not|no"]}
+    },
+    {
+      "id": "lights.unclear_lamp",
+      "about": "\"The lamp\" with six lamps in the house: ask which one instead of guessing.",
+      "tags": ["capability"],
+      "say": {"sv": ["tänd lampan"], "en": ["turn on the lamp"]},
+      "expect": {"unchanged": true, "asks": true}
+    },
+    {
+      "id": "lights.homey_fails",
+      "about": "When Homey can't reach the lamp, say so; never say it's on.",
+      "given": {"failing": ["hall_light"]},
+      "say": {"sv": ["tänd i hallen"], "en": ["turn on the hall light"]},
+      "expect": {
+        "state": {"hall_light": {"onoff": false}},
+        "reply": ["kunde inte|gick inte|lyckades inte|svarar inte|fel|problem|couldn't|could not|can't|cannot|failed|unavailable|didn't|not respond|isn't responding|aren't responding|arent responding|not responding|no response|won't|not available|isn't available|unresponsive|offline|not working|isn't working|svarar inte|går inte att nå|inte tillgänglig"],
+        "error": true
+      }
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -94,7 +95,7 @@ fun Modifier.glass(shape: Shape = PanelShape): Modifier = composed {
 
 /**
  * The assistant's side window look: the wall's own dark (or light) colour, a little
- * see-through, under the glass. The kitchen timers wear it too, so they match.
+ * see-through, under the glass.
  */
 fun Modifier.windowGlass(shape: Shape = PanelShape): Modifier = composed {
     val g = GlassTheme.colors
@@ -157,13 +158,26 @@ fun GlassPanel(
     )
 }
 
+/**
+ * The width of the device tile being drawn, so its icon and buttons can shrink on narrow
+ * tiles (small display sizes, Gabriel 2026-10-22). Unspecified outside tiles.
+ */
+val LocalTileWidth = compositionLocalOf { Dp.Unspecified }
+
+/** A bubble's size: 46 dp, or about a fifth of the tile's width on a narrow tile (30 dp at least). */
+@Composable
+fun bubbleSize(): Dp {
+    val width = LocalTileWidth.current
+    return if (width == Dp.Unspecified) 46.dp else (width * 0.2f).coerceIn(30.dp, 46.dp)
+}
+
 /** An icon in a circle: glass when off, warm and filled when on. */
 @Composable
 fun Bubble(
     icon: Ic,
     on: Boolean,
     modifier: Modifier = Modifier,
-    size: Dp = 46.dp,
+    size: Dp = bubbleSize(),
     onColor: Color? = null,
     tint: Color? = null,
 ) {

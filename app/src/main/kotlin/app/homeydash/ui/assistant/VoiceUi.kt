@@ -257,6 +257,9 @@ private suspend fun judgeHit(
     val t = taught.getOrNull(names.indexOf(name))
     val witnesses = listOf(
         WakeJudge.Witness { if (hit.spotted) WakeJudge.spotter(hit.greeting) else null },
+        // Before the voice: a held "aaaaa", or a short "a" like the end of "Nova", in the right voice must not get its two backers.
+        WakeJudge.Witness { hit.sound?.let { WakeJudge.held(app.homeydash.agent.HeldSound.change(it)) } },
+        WakeJudge.Witness { hit.sound?.let { WakeJudge.syllables(app.homeydash.agent.HeldSound.syllables(it), name) } },
         WakeJudge.Witness {
             when {
                 hit.said != null -> WakeJudge.said(hit.said, hit.bar)

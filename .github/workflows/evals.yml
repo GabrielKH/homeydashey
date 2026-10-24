@@ -1,0 +1,46 @@
+name: Skill tests
+
+# Asks a cloud AI brain every skill test case (homey-api/src/main/resources/evals) and puts the
+# report on the run's page. Started by hand from the Actions tab; the keys are repository secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      brain:
+        description: "gemini or openai"
+        default: gemini
+      quick:
+        description: "Only the first way of asking each case, one try"
+        type: boolean
+        default: false
+      only:
+        description: "Only these skills, case ids or tags, comma separated (empty for all)"
+        default: ""
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run the skill tests
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EVAL_BRAIN: ${{ inputs.brain }}
+          EVAL_QUICK: ${{ inputs.quick }}
+          EVAL_ONLY: ${{ inputs.only }}
+        run: ./gradlew :homey-api:evals
+      - name: Show the report
+        if: always()
+        run: cat homey-api/build/evals/report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: skill-tests
+          path: |
+            homey-api/build/evals/report.md
+            homey-api/build/evals/run.json

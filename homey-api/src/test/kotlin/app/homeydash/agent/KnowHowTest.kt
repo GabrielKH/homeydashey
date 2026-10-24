@@ -84,6 +84,48 @@ class KnowHowTest {
         assertFalse("tv" in topics("tänd lamporna i vardagsrummet"))
     }
 
+    @Test fun `the new topics come with their own questions`() {
+        assertTrue("weather" in topics("behöver jag paraply imorgon?"))
+        assertTrue("goodnight" in topics("god natt"))
+        assertTrue("moods" in topics("gör det mysigt i vardagsrummet"))
+    }
+
+    @Test fun `the closest worked examples come with a question, the home's own first`() {
+        val found = Examples.find("spela P1 i köket", names = listOf("Kök", "Taklampa"))
+        assertTrue(found.isNotEmpty())
+        assertTrue(found.first().calls.first().startsWith("play_music"))
+        assertTrue(Examples.find("xyzzy").isEmpty())
+        val learned = listOf(Examples.Example("spela lugnt i köket", listOf("play_music {\"player\":\"Kök\",\"query\":\"lugnt\"}")))
+        assertEquals("spela lugnt i köket", Examples.find("spela lugnt i köket", learned).first().say)
+        assertTrue(Examples.note(found).startsWith("\nHow similar requests were done"))
+    }
+
+    @Test fun `a turn that went well is kept as an example, and forgotten when it was wrong`() = runTest {
+        var clock = 1_000L
+        val book = KnowHowBook(folder.root) { clock }
+        book.load()
+        book.learnExample("släck i tvättstugan", listOf("set_room {\"room\":\"Tvättstuga\"}"))
+        book.learnExample("släck i tvättstugan", listOf("set_room {\"room\":\"Tvättstuga\",\"value\":\"false\"}"))
+        assertEquals(1, book.data.value.examples.size)
+        assertEquals(1, KnowHowBook(folder.root).apply { load() }.data.value.examples.size)
+        clock = 5_000L
+        assertFalse(book.forgetLastExample(since = 2_000L))
+        assertTrue(book.forgetLastExample(since = 500L))
+        assertTrue(book.data.value.examples.isEmpty())
+    }
+
+    @Test fun `no built-in example is a skill test sentence, so the tests still measure something`() {
+        val dir = java.io.File(javaClass.classLoader.getResource("evals/cases")!!.toURI())
+        val tested = dir.listFiles()!!.flatMap { f ->
+            Regex("\"say\"\\s*:\\s*\\{(.*?)\\}", RegexOption.DOT_MATCHES_ALL).findAll(f.readText()).flatMap { m ->
+                Regex("\"([^\"]+)\"").findAll(m.groupValues[1]).map { NameMatch.normalize(it.groupValues[1]) }
+            }.toList()
+        }.toSet()
+        assertTrue(tested.size > 50)
+        val same = Examples.builtIn.filter { NameMatch.normalize(it.say) in tested }
+        assertTrue("Examples copied from the tests: ${same.map { it.say }}", same.isEmpty())
+    }
+
     @Test fun `what is going on brings its topic, and a recipe brings the timers along`() {
         val found = topics("och sen då?", active = setOf("recipes"))
         assertEquals(listOf("recipes", "timers"), found)
@@ -138,14 +180,14 @@ class KnowHowTest {
         val book = KnowHowBook(folder.root)
         val s = AgentSettings(local = Connection(Provider.Ollama, server.url("/v1").toString(), "", "m"), mode = BrainMode.Local)
         val agent = Agent(ChatClient(OkHttpClient()), knowHow = book)
-        agent.ask("sätt på lite jazzigt", s, { view(s, it) }, { AgentTools(it, Home(), Dash()) })
+        agent.ask("sätt på lite groovigt", s, { view(s, it) }, { AgentTools(it, Home(), Dash()) })
         server.takeRequest()
         val second = server.takeRequest().body.readUtf8()
         assertTrue(second.contains("[Music and speakers]"))
         assertTrue(second.contains("play_music(player"))
-        assertEquals(listOf("jazzigt"), book.data.value.learned["music"])
+        assertEquals(listOf("groovigt"), book.data.value.learned["music"])
         // Next time the question brings music by itself.
-        assertEquals("music", KnowHow.find(agent.skills(s), "något jazzigt i köket", view()).first().skill.id)
+        assertEquals("music", KnowHow.find(agent.skills(s), "något groovigt i köket", view()).first().skill.id)
         server.shutdown()
     }
 
@@ -164,6 +206,21 @@ class KnowHowTest {
         assertEquals("Forgot 1 rule.", gone?.text)
         val reloaded = KnowHowBook(folder.root).apply { load() }
         assertEquals(1, reloaded.data.value.own.size)
+    }
+
+    @Test fun `words taught by voice are kept in the book and forgotten by voice`() = runTest {
+        val book = KnowHowBook(folder.root)
+        val tools = KnowHowTools(book)
+        fun call(name: String, vararg a: Pair<String, String>) = ToolCall("t", name, kotlinx.serialization.json.JsonObject(a.associate { it.first to JsonPrimitive(it.second) }))
+        assertEquals("Remembered: sovdags now means goodnight.", tools.run(call("teach_words", "words" to "sovdags", "means" to "goodnight"))?.text)
+        assertTrue(tools.run(call("teach_words", "words" to "almanackan", "means" to "calendar"))!!.text.contains("calendar"))
+        tools.run(call("teach_words", "words" to "tvättstugan", "means" to "laundry room"))
+        val data = KnowHowBook(folder.root).apply { load() }.data.value
+        assertEquals(listOf("sovdags"), data.cues["goodnight"])
+        assertEquals(listOf("almanackan"), data.cues["needs_calendar"])
+        assertEquals(listOf(listOf("tvättstugan", "laundry room")), data.translations)
+        assertEquals("Forgot sovdags.", tools.run(call("forget_words", "words" to "sovdags"))?.text)
+        org.junit.Assert.assertNull(book.data.value.cues["goodnight"])
     }
 
     @Test fun `memory facts the question names come without a cue word`() {

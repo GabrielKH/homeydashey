@@ -399,6 +399,7 @@ private fun changeLook(change: Change): Pair<Ic, Color> {
 }
 
 private val CHANGE_LOOKS: List<Triple<List<String>, Ic, Color>> = listOf(
+    Triple(listOf("post-it", "to-do", "notes page"), Sym.sticker, Color(0xFFE7B416)),
     Triple(listOf("timer"), Sym.timer, Color(0xFFE08A3C)),
     Triple(listOf("memory", "remember"), Sym.lightbulb, Color(0xFF3A8DDE)),
     Triple(listOf("module"), Sym.apps, Color(0xFF1A9A52)),

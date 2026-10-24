@@ -1,0 +1,38 @@
+{
+  "skill": "fridge",
+  "title": "Fridge and pantry",
+  "cases": [
+    {
+      "id": "fridge.add_eggs",
+      "about": "Adding food by voice.",
+      "tags": ["smoke"],
+      "say": {"sv": ["jag har köpt ägg", "lägg till ägg i kylen"], "en": ["I bought eggs, add them to the fridge"]},
+      "expect": {"fridge_has": ["agg|egg"], "tools": ["add_to_fridge"]}
+    },
+    {
+      "id": "fridge.milk_finished",
+      "about": "Something eaten up comes out.",
+      "say": {"sv": ["mjölken är slut", "vi har druckit upp mjölken"], "en": ["the milk is finished"]},
+      "expect": {"fridge_not": ["mjolk"], "fridge_has": ["yoghurt", "cheddar"], "tools": ["remove_from_fridge"]}
+    },
+    {
+      "id": "fridge.whats_in",
+      "about": "What's in the fridge, without changing it.",
+      "tags": ["smoke"],
+      "say": {"sv": ["vad finns i kylen?", "vad har vi i kylskåpet?"], "en": ["what's in the fridge?"]},
+      "expect": {"reply": ["mjolk|milk", "cheddar|ost|cheese"], "fridge_has": ["mjolk", "yoghurt", "cheddar", "kyckling", "smor"]}
+    },
+    {
+      "id": "fridge.going_off",
+      "about": "What to eat first: the yoghurt is past its date.",
+      "say": {"sv": ["vad går ut snart?", "vad måste vi äta upp först?"], "en": ["what's about to go off?"]},
+      "expect": {"reply": ["yoghurt|yogurt"]}
+    },
+    {
+      "id": "fridge.to_freezer",
+      "about": "Moving something to the freezer.",
+      "say": {"sv": ["lägg kycklingen i frysen", "jag flyttade kycklingfilén till frysen"], "en": ["I put the chicken in the freezer"]},
+      "expect": {"fridge_place": {"kyckling": "Freezer"}, "tools": ["update_fridge_item"]}
+    }
+  ]
+}

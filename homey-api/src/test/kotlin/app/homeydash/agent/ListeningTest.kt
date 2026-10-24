@@ -73,6 +73,28 @@ class ListeningTest {
     }
 
     @Test
+    fun `the right voice and a near-name shape don't wake it until the words are sure`() {
+        // Real log 2026-10-24: Gabriel's "Ja, det är vadå?" to the children came 96 % of the bar from "Nova" as taught.
+        fun run(text: String?, spotted: Boolean = false) = WakeJudge().judge(
+            0.47,
+            listOf(
+                WakeJudge.Witness { if (spotted) WakeJudge.spotter(withGreeting = false) else null },
+                WakeJudge.Witness { WakeJudge.held(1.3) },
+                WakeJudge.Witness { WakeJudge.said(0.96f * 0.2f, 0.2f) },
+                WakeJudge.Witness { WakeJudge.voice(margin = 0.24f, who = "Gabriel") },
+                WakeJudge.Witness { text?.let { WakeJudge.whisper(it, listOf("Nova", "TARS")) } },
+            ),
+        )
+        assertFalse(run("Ja, det är vadå?").line(), run("Ja, det är vadå?").wake)
+        assertFalse(run("").wake)
+        assertTrue(run("Nova.").wake)
+        // "TARS" spotted alone in chatter, in his voice: Whisper hears the chatter.
+        assertFalse(run("Hur många barn var det som inte var utflödda?", spotted = true).wake)
+        // The Mac away: no Whisper to ask, so the score decides as before.
+        assertTrue(run(null).wake)
+    }
+
+    @Test
     fun `undecided is dropped, but arms a lower bar for the repeat`() {
         val witnesses = listOf(WakeJudge.Witness { WakeJudge.spotter(withGreeting = false) })
         val first = WakeJudge().judge(0.5, witnesses)
@@ -98,6 +120,61 @@ class ListeningTest {
         assertEquals(0.005, MicSensitivity.alpha(0), 1e-6)
         assertEquals(0.05, MicSensitivity.alpha(100), 1e-6)
         assertTrue(MicSensitivity.alpha(50) in 0.015..0.017)
+    }
+
+    @Test
+    fun aHeldSoundIsNoName() {
+        // "aaaaa" held in the right voice: spotter and voice both back it, the held sound stops it.
+        val aaa = voiced(1.5, 140.0)
+        val hiss = Random(4).let { r -> ShortArray(24000) { r.nextInt(-5000, 5000).toShort() } }
+        val held = HeldSound.change(aaa)!!
+        assertTrue("held vowel $held", held < 0.9)
+        assertTrue("hiss", HeldSound.change(hiss)!! < 0.9)
+        // A word moves from sound to sound: a hiss, a vowel, a low hum, another vowel.
+        val word = listOf(hiss.copyOf(2400), voiced(0.15, 140.0), voiced(0.12, 140.0, bright = 0.6), hiss.copyOf(1600), voiced(0.2, 180.0, bright = 0.98)).let { parts ->
+            ShortArray(parts.sumOf { it.size }).also { out -> var at = 0; for (p in parts) { p.copyInto(out, at); at += p.size } }
+        }
+        assertTrue("word ${HeldSound.change(word)}", HeldSound.change(word)!! > 1.0)
+        val v = WakeJudge().judge(
+            WakeJudge.prior(mediaPlaying = false, nobodyHome = false, faceKnown = true),
+            listOf(
+                WakeJudge.Witness { WakeJudge.spotter(withGreeting = false) },
+                WakeJudge.Witness { WakeJudge.held(held) },
+                WakeJudge.Witness { WakeJudge.voice(margin = 0.2f, who = "Gabriel") },
+            ),
+        )
+        assertFalse(v.line(), v.wake)
+        assertEquals(0.2, WakeJudge.held(1.8)!!.lambda, 1e-9)
+    }
+
+    @Test
+    fun oneSyllableIsNotNova() {
+        val quiet = ShortArray(1600)
+        fun join(vararg parts: ShortArray) = ShortArray(parts.sumOf { it.size }).also { out -> var at = 0; for (p in parts) { p.copyInto(out, at); at += p.size } }
+        // "A" or "Ja": one vowel; "Nova": two vowels with a quieter consonant between.
+        val a = join(quiet, voiced(0.35, 150.0), quiet)
+        val nova = join(quiet, voiced(0.2, 150.0), voiced(0.08, 140.0, bright = 0.97).map { (it / 6).toShort() }.toShortArray(), voiced(0.25, 135.0, seed = 2), quiet)
+        assertEquals(1, HeldSound.syllables(a))
+        assertEquals(2, HeldSound.syllables(nova))
+        assertEquals(2, HeldSound.syllables("Nova"))
+        assertEquals(1, HeldSound.syllables("TARS"))
+        assertEquals(-5.0, WakeJudge.syllables(1, "Nova")!!.lambda, 1e-9)
+        assertEquals(0.0, WakeJudge.syllables(2, "Nova")!!.lambda, 1e-9)
+        assertNull(WakeJudge.syllables(1, "TARS"))
+    }
+
+    /** A voice holding a vowel: a slightly unsteady pulse train, its brightness set by [bright], and a little room noise. */
+    private fun voiced(seconds: Double, hz: Double, bright: Double = 0.9, seed: Int = 1): ShortArray {
+        val r = Random(seed)
+        val n = (seconds * 16000).toInt()
+        var phase = 0.0
+        var y = 0.0
+        return ShortArray(n) { i ->
+            phase += hz * (1 + 0.01 * r.nextDouble(-1.0, 1.0)) / 16000
+            val pulse = if (phase >= 1) { phase -= 1; 8000.0 } else 0.0
+            y = bright * y + pulse
+            (y * (1 - bright) * 10 + r.nextDouble(-60.0, 60.0)).toInt().coerceIn(-32768, 32767).toShort()
+        }
     }
 
     /** A note as an instrument plays it: many harmonics, a little vibrato and tremolo, plus the room's noise. */
@@ -358,8 +435,10 @@ class SaidNameTest {
                 WakeJudge.Witness { WakeJudge.whisper(words, listOf("Nova")) },
             ),
         )
-        assertTrue(sung(50, "pam param pam").wake)
-        assertEquals(1, asked)
+        // Close to the name and his voice used to wake it; now Whisper hears the singing.
+        assertFalse(sung(50, "pam param pam").wake)
+        assertTrue(sung(50, "Nova").wake)
+        assertEquals(2, asked)
         val strict = sung(80, "pam param pam")
         assertFalse(strict.line(), strict.wake)
         assertTrue(sung(80, "Hej Nova").wake)
@@ -409,4 +488,5 @@ class SaidNameTest {
             assertTrue(ThinkingSounds.everything(p, sv).containsAll(acks + ThinkingSounds.all(p, sv) + ThinkingSounds.answers(p, sv)))
         }
     }
+
 }

@@ -101,8 +101,10 @@ class HomeView(
         val q = alias.trim().trim('"').trim()
         byAlias[q.lowercase()]?.let { return it }
         ALIAS.find(q)?.takeIf { it.range.first == 0 }?.let { m ->
-            val rest = q.substring(m.range.last + 1).trim(' ', '"', ':', '-', '(', ')').trim()
+            val rest = q.substring(m.range.last + 1).trim(' ', '"', ':', '-', '(', ')', ',').trim()
             val said = byAlias["${m.groupValues[1].lowercase()}_${m.groupValues[2]}"]
+            // "light_1, Sovrum": the room the list shows after the name, not a name of its own.
+            rooms.entries.firstOrNull { it.value.equals(rest, ignoreCase = true) }?.let { if (said != null && inRoom(said, it.key)) return said }
             return if (rest.isEmpty()) said else named(rest, devices) ?: said
         }
         ROOMED.matchEntire(q)?.let { m ->

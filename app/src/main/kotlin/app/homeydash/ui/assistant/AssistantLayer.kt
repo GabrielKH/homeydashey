@@ -238,7 +238,7 @@ private fun Panel(
             )
         } else {
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp), state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(assistant.lines) { _, line -> Bubble(line) }
+                itemsIndexed(assistant.lines) { i, line -> Bubble(line, onFlag = { assistant.flag(i) }.takeIf { !line.fromUser && !line.flagged }) }
                 if (assistant.partial.isNotBlank()) item { Bubble(Line(true, assistant.partial), partial = true) }
                 if (showSteps) {
                     item { StepList(assistant.steps(), Modifier.widthIn(max = 340.dp).glass(RoundedCornerShape(20.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) }
@@ -317,7 +317,7 @@ private fun SpeakerPicker(assistant: Assistant, settings: AgentSettings, onChoos
 }
 
 @Composable
-private fun Bubble(line: Line, partial: Boolean = false) {
+private fun Bubble(line: Line, partial: Boolean = false, onFlag: (() -> Unit)? = null) {
     val g = GlassTheme.colors
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.fromUser) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -333,8 +333,18 @@ private fun Bubble(line: Line, partial: Boolean = false) {
             modifier = Modifier
                 .widthIn(max = 340.dp)
                 .then(if (line.fromUser) Modifier.background(g.fg.copy(alpha = if (partial) 0.55f else 0.9f), shape) else Modifier.glass(shape))
+                // A long press marks a wrong answer for Claude, like saying "det där blev fel".
+                .then(if (onFlag != null) Modifier.pressable(null, onLongClick = onFlag) else Modifier)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         )
+        if (line.flagged) {
+            Text(
+                "Marked as wrong for Claude",
+                style = MaterialTheme.typography.labelSmall,
+                color = g.danger,
+                modifier = Modifier.widthIn(max = 340.dp).padding(horizontal = 6.dp),
+            )
+        }
         if (line.steps.isNotEmpty()) {
             StepList(line.steps, Modifier.widthIn(max = 340.dp).padding(horizontal = 6.dp), max = 10, style = MaterialTheme.typography.bodySmall, icon = 14.dp)
         } else if (line.actions.isNotEmpty()) {
