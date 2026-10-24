@@ -324,6 +324,8 @@ class AgentTest {
         assertEquals("", Transcriber.cleanUp(" Tack för att du tittade! "))
         assertEquals("", Transcriber.cleanUp("[BLANK_AUDIO]"))
         assertEquals("Tänd taklampan.", Transcriber.cleanUp(" Tänd taklampan. "))
+        assertEquals("No, they are not set to pure white!", Transcriber.cleanUp("00:10:32.04> No, they are not set to pure white!"))
+        assertEquals("Väck mig 07:30", Transcriber.cleanUp("Väck mig 07:30"))
         assertEquals("http://192.168.1.2:8080", Transcriber.guessUrl(Connection(Provider.Ollama)))
     }
 

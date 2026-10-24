@@ -501,6 +501,16 @@ class SkillEvalsTest {
         assertEquals(CallCheck.NO_UNLOCK, garage?.text)
         assertEquals(CallCheck.NO_UNLOCK_SAY, garage?.say)
         assertEquals(CallCheck.NO_UNLOCK, CallCheck.refuse(call("set_device", "device" to "Taklampa kök", "capability" to "onoff", "value" to "true"), "unlock the front door", view, more)?.text)
+        // Real log 2026-10-24: "vitt ljus" sent as 6500 became Homey's warmest; chatter switched Maja's night lamp off.
+        assertEquals(0.0, app.homeydash.agent.AgentTools.warmth("6500")!!, 1e-9)
+        assertEquals(1.0, app.homeydash.agent.AgentTools.warmth("2200")!!, 1e-9)
+        assertEquals(0.0, app.homeydash.agent.AgentTools.warmth("vitt")!!, 1e-9)
+        assertEquals(1.0, app.homeydash.agent.AgentTools.warmth("warm")!!, 1e-9)
+        assertNull(app.homeydash.agent.AgentTools.warmth("0.3"))
+        val nightLamp = view.devices.first { it.deviceClass == "light" }
+        assertEquals(CallCheck.NOT_SWITCH, CallCheck.refuse(call("set_device", "device" to nightLamp.alias, "capability" to "onoff", "value" to "false"), "No, they are not set to pure white! God damn it! Men Gaby sluta då.", view, more)?.text)
+        assertNull(CallCheck.refuse(call("set_room", "room" to "Kök", "capability" to "onoff", "value" to "false"), "kitchen lights off please", view, more))
+        assertNull(CallCheck.refuse(call("set_room", "room" to "Kök", "capability" to "onoff", "value" to "true"), "ja", view, more, "Ska jag tända i köket?"))
         val gabriel = HomeView.build(sim.zones, sim.devices, sim.moods, emptySet(), AgentSettings(people = mapOf("p-gabriel" to "Gabriel"), asker = app.homeydash.agent.Asker("p-gabriel", "Gabriel")), local = true)
         assertNull(arg(CallCheck.rewrite(call("add_todo", "text" to "Change hallway bulb", "who" to "Gabriel"), "put change the hallway bulb on the to-do list", more, gabriel), "who"))
         assertEquals("Gabriel", arg(CallCheck.rewrite(call("add_todo", "text" to "Ring tandläkaren", "who" to "Gabriel"), "jag måste ringa tandläkaren", more, gabriel) ?: call("add_todo", "who" to "Gabriel"), "who"))

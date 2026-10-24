@@ -911,7 +911,7 @@ class Agent(
      */
     fun fixed(settings: AgentSettings, view: HomeView, compactTools: List<ToolSpec>? = null, skills: List<Skill>? = null): String =
         (if (skills != null) core(settings) + KnowHow.index(skills) else shared(settings, view.local)) +
-            "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; " +
+            "\nThe home (alias \"name\" class: capabilities; a bare capability is set with true|false or 0..1, others show their range or choices; light_temperature 0 is cold white, 1 warm yellow; " +
             "(read) only reads; get_device has the rest):\n" + view.catalog() + "\n" +
             // The tools after the devices: which ones there are depends on who asks (a guest has
             // fewer), and everything before this point is then the same for everyone.

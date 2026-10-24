@@ -71,6 +71,13 @@ internal object CallCheck {
             val room = if (call.name == "set_room") str(call.arguments, "room") else view.device(str(call.arguments, "device"))?.takeIf { it.deviceClass == "light" }?.room
             if (room != null && onlyForMusic(folded, room)) return Refusal(NO_LIGHTS)
         }
+        // "No, they are not pure white! … Men Gaby sluta då": a lamp nobody named switched off from words to someone else.
+        if (call.name in setOf("set_device", "set_room") && str(call.arguments, "capability") == "onoff") {
+            val target = if (call.name == "set_room") str(call.arguments, "room") else str(call.arguments, "device")
+            val lamp = call.name == "set_room" || view.device(target)?.deviceClass == "light"
+            if (lamp && !SWITCH_SAID.containsMatchIn(asked) && !ON_OFF.containsMatchIn(asked) && !LIGHT_WORDS.containsMatchIn(asked) &&
+                !LIGHT_LEVEL.containsMatchIn(asked) && !names(question, target, view)) return Refusal(NOT_SWITCH, soft = true)
+        }
         if (call.name !in Agent.SETS) return null
         // "How warm is it outside?" then the heating turned up because it offered to: a question changes nothing.
         if (QUESTION.containsMatchIn(folded) && !ASKS_TO_CHANGE.containsMatchIn(q) && !ON_OFF.containsMatchIn(asked)) return Refusal(STATUS_ONLY)
@@ -528,6 +535,9 @@ internal object CallCheck {
     private val FINISHED get() = Cues.regex("finished")
     private val FRIDGE_NAMES = setOf("fridge", "freezer", "kyl", "kylen", "kylskap", "kylskapet", "frys", "frysen", "pantry", "skafferi", "skafferiet")
     private val PLACES = setOf("fridge", "freezer", "pantry", "kyl", "kylen", "kylskap", "kylskapet", "frys", "frysen", "skafferi", "skafferiet")
+    const val NOT_SWITCH = "Not done: the user didn't ask to switch anything on or off, and didn't name it. Answer what they said; if they really want it, they'll say so."
+    /** Short words that switch: "på", "av", "on", "off", and how dark or light it is. */
+    private val SWITCH_SAID = Regex("""(^| )(pa|av|on|off|mork\w*|morkt|ljust|dark|darker|bright\w*|ljus\w*)( |$)""")
     const val NO_TIMER = "Not done: the user didn't ask for a timer; answer what they asked."
     const val NO_STEP = "Not done: the user didn't ask to move on in the recipe; stay on the step it is on and answer what they asked."
     const val NO_UNLOCK = "Not done: unlocking a door isn't allowed for the assistant, and nothing else is changed instead. Tell the user you can't unlock doors."

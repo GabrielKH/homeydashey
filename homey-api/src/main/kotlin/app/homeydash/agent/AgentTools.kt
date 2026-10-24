@@ -1345,6 +1345,8 @@ class AgentTools(
                     else -> null
                 })?.let(::JsonPrimitive)
                 "number" -> {
+                    // "Vitt ljus" sent as 6500 (kelvin) or "white" was clamped to 1, Homey's warmest yellow.
+                    if (c.id == "light_temperature") warmth(s)?.let { return JsonPrimitive(it) }
                     var n = p.doubleOrNull ?: s.removeSuffix("%").trim().replace(',', '.').toDoubleOrNull() ?: return null
                     // "60%" for a 0..1 capability such as dim.
                     if (c.max == 1.0 && n > 1.0 && n <= 100.0) n /= 100.0
@@ -1356,6 +1358,26 @@ class AgentTools(
                 else -> JsonPrimitive(s)
             }
         }
+
+        /**
+         * Homey's light_temperature (0 cold white, 1 warm yellow) from kelvin ("6500") or a word
+         * ("white", "varmt"); null for a plain 0..1 or percent, which the number rules handle.
+         */
+        internal fun warmth(raw: String): Double? {
+            val w = NameMatch.normalize(raw)
+            if (w in COLD_WORDS) return 0.0
+            if (w in WARM_WORDS) return 1.0
+            if (w in NEUTRAL_WORDS) return 0.5
+            val k = w.removeSuffix(" k").removeSuffix("k").trim().toDoubleOrNull() ?: return null
+            if (k <= 100.0) return null
+            return ((COLDEST_K - k) / (COLDEST_K - WARMEST_K)).coerceIn(0.0, 1.0)
+        }
+
+        private const val COLDEST_K = 6500.0
+        private const val WARMEST_K = 2200.0
+        private val COLD_WORDS = setOf("white", "pure white", "cold", "cool", "daylight", "vit", "vitt", "vita", "kall", "kallt", "kalla", "dagsljus", "bla", "blue")
+        private val WARM_WORDS = setOf("warm", "yellow", "varm", "varmt", "varma", "gul", "gult", "gula", "orange")
+        private val NEUTRAL_WORDS = setOf("neutral", "neutralt", "mellan", "medium")
 
         /** Everyday words models use for capabilities, mapped to Homey's ids. */
         private val CAPABILITY_WORDS = mapOf(
