@@ -28,6 +28,16 @@ internal object CallCheck {
         // "Vad har jag att göra?", "vad måste vi äta upp först?": a question changes no list.
         if (call.name in LIST_CHANGES && QUESTION.containsMatchIn(folded) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(JUST_ASKED)
         if (call.name == "open_device" && !SHOW.containsMatchIn(asked)) return Refusal(NO_PAGE)
+        // "Hur lång tid är det kvar på pastan?" and then the pasta timer stopped because it offered to.
+        if (call.name == "timer" && str(call.arguments, "action").lowercase() !in setOf("", "list") && QUESTION.containsMatchIn(folded) && !ASKS_TO_CHANGE.containsMatchIn(q)) return Refusal(JUST_ASKED)
+        // "Vi ska laga lasagne, visa receptet": it opens at step 1; timers and moving on are the user's to ask for.
+        if ((call.name == "recipe_timers" || (call.name == "timer" && str(call.arguments, "action").lowercase() in setOf("start", "set"))) && !TIMER_ASKED.containsMatchIn(asked)) return Refusal(NO_TIMER)
+        if (call.name == "recipe_step" && str(call.arguments, "action").lowercase() !in setOf("", "first", "current") && !STEP_ASKED.containsMatchIn(asked)) return Refusal(NO_STEP)
+        // "Lås upp ytterdörren": only the lock itself, and only when unlocking is allowed (the tool asks for a tap). Never the garage or a lamp instead.
+        if (UNLOCK.containsMatchIn(folded) && (call.name in Agent.SETS || call.name in setOf("run_device_action", "run_flow", "set_scene", "set_mood"))) {
+            val lock = view.device(str(call.arguments, "device"))?.takeIf { it.deviceClass == "lock" || it.capability("locked") != null }
+            if (lock == null || !view.allows(Secret.Unlock)) return Refusal(NO_UNLOCK, say = NO_UNLOCK_SAY)
+        }
         // "Kör städläget": a mode or flow, never the lights instead (also not after the flow wasn't found).
         if (call.name in setOf("set_scene", "set_room", "set_device") && MODE_WORD.containsMatchIn(folded) && !LIGHT_LEVEL.containsMatchIn(folded) && !ON_OFF.containsMatchIn(folded)) return Refusal(FLOW_NOT_LOOK)
         // A look nobody asked for ("berätta ett skämt", "sätt på morgonjazz"): the lights stay as they are.
@@ -518,6 +528,13 @@ internal object CallCheck {
     private val FINISHED get() = Cues.regex("finished")
     private val FRIDGE_NAMES = setOf("fridge", "freezer", "kyl", "kylen", "kylskap", "kylskapet", "frys", "frysen", "pantry", "skafferi", "skafferiet")
     private val PLACES = setOf("fridge", "freezer", "pantry", "kyl", "kylen", "kylskap", "kylskapet", "frys", "frysen", "skafferi", "skafferiet")
+    const val NO_TIMER = "Not done: the user didn't ask for a timer; answer what they asked."
+    const val NO_STEP = "Not done: the user didn't ask to move on in the recipe; stay on the step it is on and answer what they asked."
+    const val NO_UNLOCK = "Not done: unlocking a door isn't allowed for the assistant, and nothing else is changed instead. Tell the user you can't unlock doors."
+    val NO_UNLOCK_SAY = "I'm not allowed to open the door lock. The owner can allow it under Settings." to "Jag får inte låsa upp dörrar. Det kan ägaren tillåta i inställningarna."
+    private val TIMER_ASKED = Regex("""(timer|timern|timrar|klock|minut|sekund|minute|second|tid|time|alarm|paminn|remind|ring)""")
+    private val STEP_ASKED = Regex("""(nasta|next|forra|foregaende|previous|tillbaka|back|steg|step|sista|last|hoppa|skip|fortsatt|continue|vidare|klar|done|gjort|sen da|sedan|and then|vad nu|what now)""")
+    private val UNLOCK = Regex("""(^| )(las upp|lasa upp|lases upp|unlock\w*)( |$)""")
     const val JUST_ASKED = "Not done: the user only asked a question; nothing on the lists was changed. Answer it from what you looked up."
     private val ROOM_WORDS = listOf("living room", "kitchen", "bedroom", "hallway", "hall", "bathroom", "office", "dining room", "kids room")
     private val SWITCH_NAMES = setOf("light", "lights", "on", "power", "switch", "lamp", "state", "onoff_light")

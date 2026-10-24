@@ -83,7 +83,9 @@ class FridgeTools(
         if (shown.isEmpty()) return ok("Nothing matches. In there: " + all.take(20).joinToString { it.first.name } + ".")
         // Small models tell only the warnings; what's there is all of it.
         val hint = if (query.isBlank() && within == null && shown.size > 1) "\nAsked what's in there, name every item, not just the ones with a warning."
-            else if (within != null) "\nThese go off first; anything past its date comes first. Name each one." else ""
+            // It named only the chicken going off in two days, not the yoghurt already past its date: the names are spelled out.
+            else if (within != null) "\nThese go off first; anything past its date comes first. Name each one: " +
+                shown.take(10).joinToString { (item, e) -> item.name + if (e.daysLeft < 0) " (already past its date)" else "" } + "." else ""
         return ok("Today is ${fridge.today()}.\n" + shown.take(40).joinToString("\n") { (item, e) -> line(item, e) } +
             (if (shown.size > 40) "\n…and ${shown.size - 40} more." else "") + hint)
     }

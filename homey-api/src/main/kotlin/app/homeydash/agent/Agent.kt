@@ -492,7 +492,7 @@ class Agent(
                             toolbox.run(call).also { done[key] = it }
                         }
                         val did = when (call.name) {
-                            in LOOKS, in MEMORY_TOOLS -> false
+                            in LOOKS, in READS, in MEMORY_TOOLS -> false
                             in SETS -> CHANGED.any { result.text.startsWith(it) } && !result.text.contains(QuickCommand.NOT_CHANGED_PREFIX)
                             else -> true // Timers, pages, recipes and the fridge answer in their own words.
                         }
@@ -521,7 +521,7 @@ class Agent(
                     // The same refused call again, with an answer beside it ("the hall lamp is off"): the answer is given.
                     // Looked it up, answered, and then asked for a change nobody wanted ("tick the car service"
                     // after reading the list): the answer it gave stands.
-                    val answeredLook = refusedNow && !ran && !changed && workedTools.any { it in LOOKS } &&
+                    val answeredLook = refusedNow && !ran && !changed && workedTools.any { it in LOOKS || it in READS } &&
                         !answer.content.isNullOrBlank() && !PROMISE.containsMatchIn(statements(answer.content.orEmpty()))
                     // Refused twice and still saying it will do it ("I'll turn on the kitchen lamp"): what the refusal asks is said instead.
                     if (refusedAgain && !ran && !changed && refusedSay != null && statements(answer.content.orEmpty()).let { PROMISE.containsMatchIn(it) || CLAIM.containsMatchIn(it) }) {
@@ -549,6 +549,8 @@ class Agent(
                     }
                 }
                 remember(turn, localOnly)
+                // It wandered off a refused ask ("lås upp ytterdörren" into the garage and the lamps): what the refusal says is the answer.
+                if (!changed) refusedSay?.let { (en, sv) -> return AgentReply(if (swedish(text, settings)) sv else en, brain, pending, actions = actions) }
                 return AgentReply("Sorry, that took too many steps.", brain, pending, error = true, actions = actions)
             } catch (e: IOException) {
                 lastError = e.message ?: e.toString()
@@ -1177,6 +1179,8 @@ class Agent(
         /** Tools that only look. */
         /** Repeated calls before it stops instead of using up every round. */
         const val MAX_REPEATS = 2
+        /** Tools that only read, besides [LOOKS]: an answer given from them stands when a change beside it is refused. */
+        val READS = setOf("read_recipe", "find_recipes", "fridge_contents", "notes")
         val LOOKS = setOf("get_device", "device_actions", "list_flows", "weather", "calendar", "who_is_home", "variables", "ask_internet", "list_routines", KnowHow.GUIDE)
         /** Tools that change the home, and say how it went in a way [CHANGED] can read. */
         val SETS = setOf("set_device", "set_room", "set_scene", "run_flow", "play_music", "save_favourite", "run_device_action", "press_remote")
