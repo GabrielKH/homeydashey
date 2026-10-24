@@ -19,7 +19,8 @@ import kotlin.math.pow
  */
 class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, strictness: Int = STRICTNESS) {
     /** What one witness said: its [name] for the log, its evidence [lambda] (log-likelihood ratio), and a few words. */
-    data class Evidence(val name: String, val lambda: Double, val note: String = "")
+    /** [words] marks a witness sure the name was said: the spotter hearing "hej Nova", or Whisper writing it. */
+    data class Evidence(val name: String, val lambda: Double, val note: String = "", val words: Boolean = false)
 
     /** A witness: null when it has nothing to say (no voiceprints taught, no model yet). */
     fun interface Witness {
@@ -49,6 +50,12 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, stri
      * a wake needs the evidence. One witness is never enough while another can be asked: a
      * sung "la la la" can come close to the name as taught, and only the voice or the words
      * tell it apart.
+     *
+     * The voice says who spoke, not that they called: Gabriel talking to the children is his voice
+     * every time, and "Ja, det är vadå?" can come as close to "Nova" as taught as the real call
+     * does (96 % against 80 % of the bar). So it wakes early only once a witness is sure of the
+     * words; "Nova" alone goes on to Whisper. Without Whisper (the Mac away), or for a quick
+     * repeat ([armed]), the score decides as before.
      */
     fun judge(prior: Double, witnesses: List<Witness>, armed: Boolean = false): Verdict {
         val p = prior.coerceIn(0.01, 0.99)
@@ -56,13 +63,15 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, stri
         val top = if (armed) upper / 2 else upper
         val heard = ArrayList<Evidence>()
         var backers = 0
+        var sure = armed
         for (w in witnesses) {
-            if (score >= top && backers >= 2) return Verdict(true, score, heard, false)
+            if (score >= top && backers >= 2 && sure) return Verdict(true, score, heard, false)
             if (score <= lower) return Verdict(false, score, heard, false)
             val e = w.hear() ?: continue
             heard += e
             score += e.lambda
             if (e.lambda >= BACKS) backers++
+            if (e.words && e.lambda > 0) sure = true
         }
         return when {
             score >= top -> Verdict(true, score, heard, false)
@@ -102,7 +111,7 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, stri
          * The spotter's word: a hit over its threshold is evidence for, more when the name came
          * with a greeting ("hey Nova": two words are harder to hear by chance than one).
          */
-        fun spotter(withGreeting: Boolean): Evidence = Evidence("spotter", if (withGreeting) 3.5 else 2.5, if (withGreeting) "with greeting" else "name alone")
+        fun spotter(withGreeting: Boolean): Evidence = Evidence("spotter", if (withGreeting) 3.5 else 2.5, if (withGreeting) "with greeting" else "name alone", words = withGreeting)
 
         /**
          * The voiceprint's word from how far over (or under) their bar the closest known voice
@@ -192,9 +201,10 @@ class WakeJudge(alpha: Double = DEFAULT_ALPHA, beta: Double = DEFAULT_BETA, stri
                 NameMatch.normalize(n).let { name -> name.isNotEmpty() && words.any { it == name || (it.endsWith(name) && it.length <= name.length + 2) } }
             }
             return when {
-                said -> Evidence("whisper", 3.0, "\"$text\"")
+                said -> Evidence("whisper", 3.0, "\"$text\"", words = true)
                 plain.isBlank() -> Evidence("whisper", -3.0, "heard nothing")
-                else -> Evidence("whisper", -4.0, "heard \"$text\"")
+                // Other words, clearly heard: it outweighs the spotter, the shape and the voice together (TARS "spotted" in chatter).
+                else -> Evidence("whisper", -6.0, "heard \"$text\"")
             }
         }
     }

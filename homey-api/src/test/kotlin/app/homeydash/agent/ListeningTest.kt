@@ -73,6 +73,28 @@ class ListeningTest {
     }
 
     @Test
+    fun `the right voice and a near-name shape don't wake it until the words are sure`() {
+        // Real log 2026-10-24: Gabriel's "Ja, det är vadå?" to the children came 96 % of the bar from "Nova" as taught.
+        fun run(text: String?, spotted: Boolean = false) = WakeJudge().judge(
+            0.47,
+            listOf(
+                WakeJudge.Witness { if (spotted) WakeJudge.spotter(withGreeting = false) else null },
+                WakeJudge.Witness { WakeJudge.held(1.3) },
+                WakeJudge.Witness { WakeJudge.said(0.96f * 0.2f, 0.2f) },
+                WakeJudge.Witness { WakeJudge.voice(margin = 0.24f, who = "Gabriel") },
+                WakeJudge.Witness { text?.let { WakeJudge.whisper(it, listOf("Nova", "TARS")) } },
+            ),
+        )
+        assertFalse(run("Ja, det är vadå?").line(), run("Ja, det är vadå?").wake)
+        assertFalse(run("").wake)
+        assertTrue(run("Nova.").wake)
+        // "TARS" spotted alone in chatter, in his voice: Whisper hears the chatter.
+        assertFalse(run("Hur många barn var det som inte var utflödda?", spotted = true).wake)
+        // The Mac away: no Whisper to ask, so the score decides as before.
+        assertTrue(run(null).wake)
+    }
+
+    @Test
     fun `undecided is dropped, but arms a lower bar for the repeat`() {
         val witnesses = listOf(WakeJudge.Witness { WakeJudge.spotter(withGreeting = false) })
         val first = WakeJudge().judge(0.5, witnesses)
@@ -413,8 +435,10 @@ class SaidNameTest {
                 WakeJudge.Witness { WakeJudge.whisper(words, listOf("Nova")) },
             ),
         )
-        assertTrue(sung(50, "pam param pam").wake)
-        assertEquals(1, asked)
+        // Close to the name and his voice used to wake it; now Whisper hears the singing.
+        assertFalse(sung(50, "pam param pam").wake)
+        assertTrue(sung(50, "Nova").wake)
+        assertEquals(2, asked)
         val strict = sung(80, "pam param pam")
         assertFalse(strict.line(), strict.wake)
         assertTrue(sung(80, "Hej Nova").wake)
